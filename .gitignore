@@ -1,0 +1,28 @@
+# OS and editor noise
+.DS_Store
+*.swp
+*.swo
+
+# Flutter and Dart generated state
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.pub-cache/
+**/.pub/
+**/coverage/
+
+# Local platform/tool state
+**/local.properties
+**/Flutter/ephemeral/
+**/xcuserdata/
+**/*.iml
+**/.idea/
+
+# Local signing and environment files
+**/*.keystore
+**/*.jks
+**/.env
+**/.env.*
+!.env.example
