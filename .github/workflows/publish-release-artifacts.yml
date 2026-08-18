@@ -1,0 +1,258 @@
+name: Publish release artifacts
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub Release tag to build and update
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifacts-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.44.9'
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+
+jobs:
+  checks:
+    name: Flutter checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Resolve dependencies
+        working-directory: app
+        run: flutter --no-version-check pub get
+
+      - name: Analyze
+        working-directory: app
+        run: flutter --no-version-check analyze
+
+      - name: Test
+        working-directory: app
+        run: flutter --no-version-check test
+
+  android:
+    name: Build Android APK
+    needs: checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: app/android/**/*.gradle*
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Resolve dependencies
+        working-directory: app
+        run: flutter --no-version-check pub get
+
+      - name: Build release APK
+        working-directory: app
+        run: flutter --no-version-check build apk --release
+
+      - name: Prepare APK asset
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG//\//-}"
+          apk="app/build/app/outputs/flutter-apk/app-release.apk"
+          test -s "$apk"
+          mkdir -p dist
+          cp "$apk" "dist/JFZ-Reader-${tag}-android.apk"
+
+      - name: Upload Android build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jfzreader-release-android
+          path: dist/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+
+  ios:
+    name: Build unsigned iOS IPA
+    needs: checks
+    runs-on: macos-14
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Resolve dependencies
+        working-directory: app
+        run: flutter --no-version-check pub get
+
+      - name: Build unsigned iOS app
+        working-directory: app
+        run: flutter --no-version-check build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG//\//-}"
+          ios_app="$(find app/build/ios/iphoneos -type d -name '*.app' -print -prune | head -n 1)"
+          test -n "$ios_app"
+          test -d "$ios_app"
+          test ! -d "$ios_app/_CodeSignature"
+
+          rm -rf ios-payload dist
+          mkdir -p ios-payload/Payload dist
+          ditto "$ios_app" "ios-payload/Payload/$(basename "$ios_app")"
+          (
+            cd ios-payload
+            zip -qry "../dist/JFZ-Reader-${tag}-ios-unsigned.ipa" Payload
+          )
+          test -s "dist/JFZ-Reader-${tag}-ios-unsigned.ipa"
+
+      - name: Upload iOS build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jfzreader-release-ios
+          path: dist/*.ipa
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+
+  macos:
+    name: Build macOS DMG
+    needs: checks
+    runs-on: macos-14
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Resolve dependencies
+        working-directory: app
+        run: flutter --no-version-check pub get
+
+      - name: Build macOS app
+        working-directory: app
+        run: flutter --no-version-check build macos --release
+
+      - name: Package DMG
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG//\//-}"
+          macos_app="$(find app/build/macos/Build/Products/Release -type d -name '*.app' -print -prune | head -n 1)"
+          test -n "$macos_app"
+          test -d "$macos_app"
+
+          rm -rf dmg-root dist
+          mkdir -p dmg-root dist
+          ditto "$macos_app" "dmg-root/JFZ Reader.app"
+          ln -s /Applications "dmg-root/Applications"
+          hdiutil create \
+            -volname "JFZ Reader ${tag}" \
+            -srcfolder dmg-root \
+            -ov \
+            -format UDZO \
+            "dist/JFZ-Reader-${tag}-macos.dmg"
+          test -s "dist/JFZ-Reader-${tag}-macos.dmg"
+
+      - name: Upload macOS build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jfzreader-release-macos
+          path: dist/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+
+  publish:
+    name: Attach assets to GitHub Release
+    needs: [android, ios, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jfzreader-release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Validate release assets
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG//\//-}"
+          for asset in \
+            "dist/JFZ-Reader-${tag}-android.apk" \
+            "dist/JFZ-Reader-${tag}-ios-unsigned.ipa" \
+            "dist/JFZ-Reader-${tag}-macos.dmg"; do
+            test -s "$asset"
+          done
+          find dist -maxdepth 1 -type f -print
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG//\//-}"
+          gh release upload "$RELEASE_TAG" \
+            "dist/JFZ-Reader-${tag}-android.apk" \
+            "dist/JFZ-Reader-${tag}-ios-unsigned.ipa" \
+            "dist/JFZ-Reader-${tag}-macos.dmg" \
+            --repo "$GH_REPO" \
+            --clobber
