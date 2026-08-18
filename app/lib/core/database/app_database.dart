@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 4;
+  static const int currentSchemaVersion = 5;
   static const String defaultFileName = 'novelia-reader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -86,6 +86,12 @@ final class NoveliaDatabase {
       _transaction(database, () {
         _migrateVersion3To4(database);
         database.userVersion = 4;
+      });
+    }
+    if (database.userVersion == 4) {
+      _transaction(database, () {
+        _migrateVersion4To5(database);
+        database.userVersion = 5;
       });
     }
   }
@@ -300,6 +306,21 @@ final class NoveliaDatabase {
       CREATE INDEX cached_payload_novel_idx
         ON cached_chapter_payloads
           (novel_id, chapter_index, fetched_at_us DESC, payload_id DESC);
+    ''');
+  }
+
+  static void _migrateVersion4To5(Database database) {
+    database.execute('''
+      CREATE TABLE remote_history_outbox (
+        novel_id TEXT NOT NULL PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        service_novel_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        occurred_at_us INTEGER NOT NULL
+      );
+
+      CREATE INDEX remote_history_outbox_time_idx
+        ON remote_history_outbox (occurred_at_us, novel_id);
     ''');
   }
 

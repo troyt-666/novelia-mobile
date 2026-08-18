@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../core/model/reader_models.dart';
 import '../../features/discover/catalog_models.dart';
 import 'novelia_content_coordinator.dart';
@@ -126,6 +128,8 @@ class _NoveliaReaderWindowSession {
   final List<ReaderChapterCatalogEntry> _catalog;
   final Map<String, int> _indexById;
   final Map<String, NovelChapter> _loaded = <String, NovelChapter>{};
+  final Set<String> _refreshing = <String>{};
+  final Set<String> _unavailable = <String>{};
 
   late final ReaderChapterDataSource dataSource = ReaderChapterDataSource(
     catalog: _catalog,
@@ -143,13 +147,8 @@ class _NoveliaReaderWindowSession {
       );
     }
 
-    final indices = <int>[
-      if (targetIndex > 0) targetIndex - 1,
-      targetIndex,
-      if (targetIndex + 1 < chapters.length) targetIndex + 1,
-    ];
-    final loadedByIndex = await _loadIndices(indices);
-    if (!loadedByIndex.containsKey(targetIndex)) {
+    final target = await _loadRequired(targetIndex);
+    if (target == null) {
       return const ReaderChapterWindow(
         chapters: [],
         before: ReaderBoundaryStatus.unavailable,
@@ -159,19 +158,37 @@ class _NoveliaReaderWindowSession {
 
     final beforeIndex = targetIndex - 1;
     final afterIndex = targetIndex + 1;
+    final loadedByIndex = <int, NovelChapter>{targetIndex: target};
+    if (beforeIndex >= 0) {
+      final before = _loadCachedOptional(beforeIndex);
+      if (before != null) loadedByIndex[beforeIndex] = before;
+    }
+    if (afterIndex < chapters.length) {
+      final after = _loadCachedOptional(afterIndex);
+      if (after != null) loadedByIndex[afterIndex] = after;
+    }
+    final indices = <int>[
+      if (beforeIndex >= 0) beforeIndex,
+      targetIndex,
+      if (afterIndex < chapters.length) afterIndex,
+    ];
     return ReaderChapterWindow(
       chapters: [for (final index in indices) ?loadedByIndex[index]],
       before: beforeIndex < 0
           ? ReaderBoundaryStatus.endOfCatalog
           : !loadedByIndex.containsKey(beforeIndex)
-          ? ReaderBoundaryStatus.unavailable
+          ? _unavailable.contains(chapters[beforeIndex].id)
+                ? ReaderBoundaryStatus.unavailable
+                : ReaderBoundaryStatus.loadable
           : beforeIndex == 0
           ? ReaderBoundaryStatus.endOfCatalog
           : ReaderBoundaryStatus.loadable,
       after: afterIndex >= chapters.length
           ? ReaderBoundaryStatus.endOfCatalog
           : !loadedByIndex.containsKey(afterIndex)
-          ? ReaderBoundaryStatus.unavailable
+          ? _unavailable.contains(chapters[afterIndex].id)
+                ? ReaderBoundaryStatus.unavailable
+                : ReaderBoundaryStatus.loadable
           : afterIndex == chapters.length - 1
           ? ReaderBoundaryStatus.endOfCatalog
           : ReaderBoundaryStatus.loadable,
@@ -203,8 +220,7 @@ class _NoveliaReaderWindowSession {
       );
     }
 
-    final loaded = await _loadIndices([neighborIndex]);
-    final chapter = loaded[neighborIndex];
+    final chapter = await _loadRequired(neighborIndex);
     if (chapter == null) {
       return ReaderChapterWindow(
         chapters: const [],
@@ -227,27 +243,75 @@ class _NoveliaReaderWindowSession {
     );
   }
 
-  Future<Map<int, NovelChapter>> _loadIndices(Iterable<int> indices) async {
-    final result = <int, NovelChapter>{};
-    for (final index in indices) {
-      final metadata = chapters[index];
-      var loaded = _loaded[metadata.id];
-      if (loaded == null) {
-        final response = await contentCoordinator.loadChapter(
-          novel,
-          chapterId: metadata.id,
-          cacheTranslationSource: translationSource,
-        );
-        loaded = response.data;
-        if (loaded != null && loaded.id == metadata.id) {
-          _loaded[metadata.id] = loaded;
-        } else {
-          loaded = null;
-        }
-      }
-      if (loaded != null) result[index] = loaded;
+  Future<NovelChapter?> _loadRequired(int index) async {
+    final metadata = chapters[index];
+    final memory = _loaded[metadata.id];
+    if (memory != null) return memory;
+
+    final cached = _readCached(metadata);
+    if (cached != null) {
+      _loaded[metadata.id] = cached;
+      _unavailable.remove(metadata.id);
+      _scheduleRefresh(metadata);
+      return cached;
     }
-    return result;
+
+    final response = await contentCoordinator.loadChapter(
+      novel,
+      chapterId: metadata.id,
+      cacheTranslationSource: translationSource,
+    );
+    final loaded = response.data;
+    if (loaded != null && loaded.id == metadata.id) {
+      _loaded[metadata.id] = loaded;
+      _unavailable.remove(metadata.id);
+      return loaded;
+    }
+    _unavailable.add(metadata.id);
+    return null;
+  }
+
+  NovelChapter? _loadCachedOptional(int index) {
+    final metadata = chapters[index];
+    final memory = _loaded[metadata.id];
+    if (memory != null) return memory;
+    final cached = _readCached(metadata);
+    if (cached == null) return null;
+    _loaded[metadata.id] = cached;
+    _unavailable.remove(metadata.id);
+    _scheduleRefresh(metadata);
+    return cached;
+  }
+
+  NovelChapter? _readCached(NovelChapter metadata) {
+    if (contentCoordinator is! NoveliaChapterCacheReader) return null;
+    final cacheReader = contentCoordinator as NoveliaChapterCacheReader;
+    final cached = cacheReader.cachedChapter(novel, chapterId: metadata.id);
+    return cached != null && cached.id == metadata.id ? cached : null;
+  }
+
+  void _scheduleRefresh(NovelChapter metadata) {
+    if (!_refreshing.add(metadata.id)) return;
+    unawaited(
+      Future<void>(() async {
+        try {
+          final response = await contentCoordinator.loadChapter(
+            novel,
+            chapterId: metadata.id,
+            cacheTranslationSource: translationSource,
+          );
+          final refreshed = response.data;
+          if (refreshed != null && refreshed.id == metadata.id) {
+            _loaded[metadata.id] = refreshed;
+            _unavailable.remove(metadata.id);
+          }
+        } on Object {
+          // Cached content is already readable; revalidation is best effort.
+        } finally {
+          _refreshing.remove(metadata.id);
+        }
+      }),
+    );
   }
 
   ReaderBoundaryStatus _oppositeBoundary(

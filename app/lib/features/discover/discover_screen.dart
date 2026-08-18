@@ -313,6 +313,10 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         ? List<CatalogNovel>.of(widget.mostClickedNovels)
         : (widget.novels.where((novel) => novel.views != null).toList()
             ..sort((a, b) => _compareNullableDescending(a.views, b.views)));
+    final compactTextScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    final mostClickedShelfHeight = (194 + (compactTextScale - 1) * 220)
+        .clamp(194, 420)
+        .toDouble();
     final recentlyUpdated =
         widget.novels.where((novel) => novel.updatedAt != null).toList()..sort(
           (a, b) => _compareNullableDescending(a.updatedAt, b.updatedAt),
@@ -378,9 +382,14 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 child: CatalogNovelCard(
                   novel: continued,
                   progress: widget.continuedProgress,
+                  openKey: ValueKey('continue-reading-${continued.id}'),
+                  openSemanticLabel: '继续阅读：${continued.chineseTitle}',
                   onOpen:
                       widget.onContinueReading ??
                       () => widget.onOpenNovel(continued),
+                  onOpenDetails: widget.onContinueReading == null
+                      ? null
+                      : () => widget.onOpenNovel(continued),
                 ),
               ),
             ),
@@ -389,7 +398,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             _SectionHeader(title: '最多点击'),
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 190,
+                height: mostClickedShelfHeight,
                 child: ListView.separated(
                   key: const ValueKey('most-clicked-shelf'),
                   padding: const EdgeInsets.symmetric(horizontal: 20),

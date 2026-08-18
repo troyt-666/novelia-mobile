@@ -2,14 +2,18 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/account/account_models.dart';
 import '../../core/model/reader_models.dart';
 import '../../core/offline/offline_models.dart';
 import '../discover/catalog_models.dart';
 import '../discover/catalog_search_results_screen.dart';
 import '../discover/discover_screen.dart';
 import '../discover/rankings_screen.dart';
+import '../account/account_screen.dart';
+import '../account/remote_novel_list_screen.dart';
 import '../novel_details/novel_details_loader_screen.dart';
 import '../novel_details/novel_details_screen.dart';
+import 'download_management_screen.dart';
 import 'library_screen.dart';
 import 'reader_launch_loader_screen.dart';
 import 'settings_screen.dart';
@@ -24,6 +28,18 @@ typedef ReaderRouteOpened =
 typedef NovelDownloadRequested =
     FutureOr<void> Function(CatalogNovel catalogNovel);
 
+typedef FavoriteToFolderRequested =
+    FutureOr<void> Function(CatalogNovel catalogNovel, String folderId);
+
+typedef FavoriteFromFolderRemoveRequested =
+    FutureOr<void> Function(CatalogNovel catalogNovel, String folderId);
+
+typedef FavoriteFolderCreateRequested =
+    Future<LibraryFavoriteFolder> Function(String title);
+
+typedef NovelOriginalRequested =
+    FutureOr<void> Function(CatalogNovel catalogNovel);
+
 class NoveliaShell extends StatefulWidget {
   const NoveliaShell({
     required this.novels,
@@ -35,14 +51,24 @@ class NoveliaShell extends StatefulWidget {
     this.readerLaunchLoader,
     this.commentPageLoader,
     this.onFavoriteRequested,
+    this.onFavoriteToFolderRequested,
+    this.onFavoriteFromFolderRemoveRequested,
+    this.onFavoriteFolderCreateRequested,
     this.onDownloadRequested,
+    this.onDownloadManagementRequested,
     this.onOpenOriginalRequested,
     this.onLoginRequested,
+    this.accountSession = const AccountSessionSnapshot.signedOut(),
+    this.onAccountLogin,
+    this.onAccountLogout,
+    this.onHostedAccountHelp,
     this.onReleasesRequested,
     this.continuedReads = const [],
     this.protectedDownloads = const [],
     this.bookmarks = const [],
     this.remoteFavorites = const RemoteFavoritesViewModel.unavailable(),
+    this.favoriteFolderLoader,
+    this.readingHistoryLoader,
     this.storageSummary = const OfflineStorageSummary(
       cacheBytes: 0,
       offlineDownloadBytes: 0,
@@ -81,14 +107,24 @@ class NoveliaShell extends StatefulWidget {
   final ReaderLaunchLoader? readerLaunchLoader;
   final NovelCommentPageLoader? commentPageLoader;
   final ValueChanged<CatalogNovel>? onFavoriteRequested;
+  final FavoriteToFolderRequested? onFavoriteToFolderRequested;
+  final FavoriteFromFolderRemoveRequested? onFavoriteFromFolderRemoveRequested;
+  final FavoriteFolderCreateRequested? onFavoriteFolderCreateRequested;
   final NovelDownloadRequested? onDownloadRequested;
-  final ValueChanged<CatalogNovel>? onOpenOriginalRequested;
+  final DownloadManagementHandler? onDownloadManagementRequested;
+  final NovelOriginalRequested? onOpenOriginalRequested;
   final VoidCallback? onLoginRequested;
+  final AccountSessionSnapshot accountSession;
+  final AccountLogin? onAccountLogin;
+  final Future<void> Function()? onAccountLogout;
+  final VoidCallback? onHostedAccountHelp;
   final VoidCallback? onReleasesRequested;
   final List<LibraryContinuedRead> continuedReads;
   final List<LibraryProtectedDownload> protectedDownloads;
   final List<LibraryBookmarkItem> bookmarks;
   final RemoteFavoritesViewModel remoteFavorites;
+  final FavoriteFolderPageLoader? favoriteFolderLoader;
+  final RemoteNovelPageLoader? readingHistoryLoader;
   final OfflineStorageSummary storageSummary;
   final int? cacheLimitBytes;
   final CatalogCriteria initialCatalogCriteria;
@@ -124,6 +160,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
   );
   late CatalogCriteria _catalogCriteria = widget.initialCatalogCriteria;
   var _restoringInitialReader = false;
+  String? _lastFavoriteFolderId;
 
   @override
   void initState() {
@@ -193,6 +230,232 @@ class _NoveliaShellState extends State<NoveliaShell> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _requestFavorite(CatalogNovel novel) async {
+    if (widget.onFavoriteToFolderRequested == null &&
+        widget.onFavoriteRequested != null) {
+      widget.onFavoriteRequested!(novel);
+      return;
+    }
+    if (!widget.accountSession.isSignedIn) {
+      final login = widget.onAccountLogin;
+      if (login == null) {
+        widget.onLoginRequested?.call();
+        return;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => AccountScreen(
+            onLogin: login,
+            onHostedAccountHelp: widget.onHostedAccountHelp,
+          ),
+          settings: const RouteSettings(name: '/account/login'),
+        ),
+      );
+      if (!mounted) return;
+      if (widget.accountSession.isSignedIn) {
+        _showFixtureAction('登录成功，请再次点击收藏');
+      }
+      return;
+    }
+    final callback = widget.onFavoriteToFolderRequested;
+    if (callback == null) {
+      widget.onFavoriteRequested?.call(novel);
+      return;
+    }
+    if (widget.remoteFavorites.status == RemoteFavoritesStatus.unavailable) {
+      _showFixtureAction('收藏夹暂不可用，请稍后重试');
+      return;
+    }
+    final folders = widget.remoteFavorites.folders;
+    try {
+      if (folders.isEmpty) {
+        final created = await _createFavoriteFolder();
+        if (created == null || !mounted) return;
+        await callback(novel, created.id);
+        _lastFavoriteFolderId = created.id;
+      } else if (folders.length == 1) {
+        await callback(novel, folders.single.id);
+        _lastFavoriteFolderId = folders.single.id;
+      } else {
+        final folderId = await _chooseFavoriteFolder(folders);
+        if (folderId == null || !mounted) return;
+        if (folderId == _createFolderChoice) {
+          final created = await _createFavoriteFolder();
+          if (created == null || !mounted) return;
+          await callback(novel, created.id);
+          _lastFavoriteFolderId = created.id;
+        } else {
+          await callback(novel, folderId);
+          _lastFavoriteFolderId = folderId;
+        }
+      }
+      if (mounted) _showFixtureAction('已加入收藏夹');
+    } on Object {
+      if (mounted) _showFixtureAction('收藏失败，请检查网络后重试');
+    }
+  }
+
+  static const _createFolderChoice = '__create_favorite_folder__';
+
+  Future<String?> _chooseFavoriteFolder(
+    List<LibraryFavoriteFolder> folders,
+  ) async {
+    var selected = folders.any((folder) => folder.id == _lastFavoriteFolderId)
+        ? _lastFavoriteFolderId!
+        : folders.first.id;
+    return showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('收藏到…'),
+          content: SizedBox(
+            width: 360,
+            child: RadioGroup<String>(
+              groupValue: selected,
+              onChanged: (value) {
+                if (value != null) setDialogState(() => selected = value);
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final folder in folders)
+                    RadioListTile<String>(
+                      key: ValueKey('favorite-folder-choice-${folder.id}'),
+                      value: folder.id,
+                      title: Text(folder.title),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            if (widget.onFavoriteFolderCreateRequested != null)
+              TextButton.icon(
+                key: const ValueKey('create-favorite-folder-button'),
+                onPressed: () => Navigator.of(context).pop(_createFolderChoice),
+                icon: const Icon(Icons.create_new_folder_outlined),
+                label: const Text('新建收藏夹'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm-favorite-folder'),
+              onPressed: () => Navigator.of(context).pop(selected),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<LibraryFavoriteFolder?> _createFavoriteFolder() async {
+    final callback = widget.onFavoriteFolderCreateRequested;
+    if (callback == null) return null;
+    final controller = TextEditingController();
+    try {
+      final title = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('新建收藏夹'),
+          content: TextField(
+            key: const ValueKey('favorite-folder-title-field'),
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (value) {
+              final normalized = value.trim();
+              if (normalized.isNotEmpty) {
+                Navigator.of(context).pop(normalized);
+              }
+            },
+            decoration: const InputDecoration(
+              labelText: '收藏夹名称',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm-create-favorite-folder'),
+              onPressed: () {
+                final normalized = controller.text.trim();
+                if (normalized.isNotEmpty) {
+                  Navigator.of(context).pop(normalized);
+                }
+              },
+              child: const Text('创建'),
+            ),
+          ],
+        ),
+      );
+      if (title == null || !mounted) return null;
+      return await callback(title);
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  void _openFavoriteFolder(LibraryFavoriteFolder folder) {
+    final loader = widget.favoriteFolderLoader;
+    if (loader == null) return;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => RemoteNovelListScreen(
+          title: folder.title,
+          loader: (page) => loader(folder.id, page),
+          onOpenNovel: _openNovel,
+          onRemoveNovel: widget.onFavoriteFromFolderRemoveRequested == null
+              ? null
+              : (novel) => widget.onFavoriteFromFolderRemoveRequested!(
+                  novel,
+                  folder.id,
+                ),
+        ),
+        settings: RouteSettings(name: '/favorite/${folder.id}'),
+      ),
+    );
+  }
+
+  Future<void> _openReadingHistory() async {
+    final loader = widget.readingHistoryLoader;
+    if (loader == null) return;
+    if (!widget.accountSession.isSignedIn) {
+      final login = widget.onAccountLogin;
+      if (login == null) {
+        widget.onLoginRequested?.call();
+        return;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => AccountScreen(
+            onLogin: login,
+            onHostedAccountHelp: widget.onHostedAccountHelp,
+          ),
+          settings: const RouteSettings(name: '/account/login'),
+        ),
+      );
+      if (!mounted || !widget.accountSession.isSignedIn) return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => RemoteNovelListScreen(
+          title: '阅读历史',
+          loader: loader,
+          onOpenNovel: _openNovel,
+        ),
+        settings: const RouteSettings(name: '/read-history'),
+      ),
+    );
   }
 
   Future<void> _openReader(
@@ -342,9 +605,12 @@ class _NoveliaShellState extends State<NoveliaShell> {
             novel: novel,
             commentPageLoader: widget.commentPageLoader,
             onOpenReader: (chapter) => _openReader(novel, chapter),
-            onFavorite: widget.onFavoriteRequested == null
+            onFavorite:
+                widget.onFavoriteRequested == null &&
+                    widget.onFavoriteToFolderRequested == null &&
+                    widget.onAccountLogin == null
                 ? null
-                : () => widget.onFavoriteRequested!(novel),
+                : () => _requestFavorite(novel),
             onDownload: () async {
               final callback = widget.onDownloadRequested;
               if (callback != null) {
@@ -408,6 +674,21 @@ class _NoveliaShellState extends State<NoveliaShell> {
           onOpenNovel: _openNovel,
         ),
         settings: const RouteSettings(name: '/catalog/search'),
+      ),
+    );
+  }
+
+  Future<void> _openDownloadsManager() async {
+    final handler = widget.onDownloadManagementRequested;
+    if (handler == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => DownloadManagementScreen(
+          downloads: widget.protectedDownloads,
+          onAction: handler,
+          onOpenNovel: _openNovel,
+        ),
+        settings: const RouteSettings(name: '/library/downloads'),
       ),
     );
   }
@@ -477,9 +758,20 @@ class _NoveliaShellState extends State<NoveliaShell> {
         protectedDownloads: widget.protectedDownloads,
         bookmarks: widget.bookmarks,
         remoteFavorites: widget.remoteFavorites,
+        onFavoriteFolderRequested: widget.favoriteFolderLoader == null
+            ? null
+            : _openFavoriteFolder,
+        onReadingHistoryRequested: widget.readingHistoryLoader == null
+            ? null
+            : _openReadingHistory,
         onOpenNovel: _openNovel,
         onOpenPosition: (novel, position) =>
             _openReader(novel, null, requestedPosition: position),
+        onDownloadsManageRequested:
+            widget.onDownloadManagementRequested == null ||
+                widget.protectedDownloads.isEmpty
+            ? null
+            : _openDownloadsManager,
       ),
       SettingsScreen(
         themeMode: widget.themeMode,
@@ -491,6 +783,10 @@ class _NoveliaShellState extends State<NoveliaShell> {
           _notifyRecentSearchesChanged();
           _showFixtureAction('已清除本机搜索历史');
         },
+        accountSession: widget.accountSession,
+        onAccountLogin: widget.onAccountLogin,
+        onAccountLogout: widget.onAccountLogout,
+        onHostedAccountHelp: widget.onHostedAccountHelp,
         onLoginRequested:
             widget.onLoginRequested ??
             () => _showFixtureAction('尚未接入 Novelia 托管登录'),

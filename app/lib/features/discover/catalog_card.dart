@@ -9,6 +9,10 @@ class CatalogNovelCard extends StatelessWidget {
     this.onTagSelected,
     this.compact = false,
     this.progress,
+    this.openKey,
+    this.openSemanticLabel,
+    this.onOpenDetails,
+    this.footer,
     super.key,
   });
 
@@ -17,6 +21,10 @@ class CatalogNovelCard extends StatelessWidget {
   final ValueChanged<String>? onTagSelected;
   final bool compact;
   final double? progress;
+  final Key? openKey;
+  final String? openSemanticLabel;
+  final VoidCallback? onOpenDetails;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -26,110 +34,132 @@ class CatalogNovelCard extends StatelessWidget {
       novel.publicationState.label,
       if (novel.knownChapterCount case final chapterCount?) '$chapterCount 章',
     ].join(' · ');
-    return Semantics(
-      button: true,
-      label: '打开小说：${novel.chineseTitle}',
-      child: Card(
-        key: ValueKey('catalog-card-${novel.id}'),
-        clipBehavior: Clip.antiAlias,
-        margin: EdgeInsets.zero,
-        child: InkWell(
-          key: ValueKey('open-details-${novel.id}'),
-          onTap: onOpen,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
+    return Card(
+      key: ValueKey('catalog-card-${novel.id}'),
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            button: true,
+            label: openSemanticLabel ?? '打开小说：${novel.chineseTitle}',
+            child: InkWell(
+              key: openKey ?? ValueKey('open-details-${novel.id}'),
+              onTap: onOpen,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                novel.chineseTitle,
+                                maxLines: compact ? 2 : null,
+                                overflow: compact
+                                    ? TextOverflow.ellipsis
+                                    : null,
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                novel.japaneseTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                locale: const Locale('ja', 'JP'),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _SourceBadge(source: novel.source),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      metadata,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final coverage in novel.translationCoverage)
+                          _CoverageBadge(coverage: coverage),
+                      ],
+                    ),
+                    if (!compact) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
                         children: [
-                          Text(
-                            novel.chineseTitle,
-                            maxLines: compact ? 2 : null,
-                            overflow: compact ? TextOverflow.ellipsis : null,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            novel.japaneseTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            locale: const Locale('ja', 'JP'),
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: colorScheme.onSurfaceVariant),
-                          ),
+                          for (final tag in novel.tags.take(4))
+                            ActionChip(
+                              key: ValueKey('catalog-tag-${novel.id}-$tag'),
+                              visualDensity: VisualDensity.compact,
+                              label: Text(tag),
+                              onPressed: onTagSelected == null
+                                  ? null
+                                  : () => onTagSelected!(tag),
+                            ),
                         ],
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    _SourceBadge(source: novel.source),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  metadata,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final coverage in novel.translationCoverage)
-                      _CoverageBadge(coverage: coverage),
-                  ],
-                ),
-                if (!compact) ...[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      for (final tag in novel.tags.take(4))
-                        ActionChip(
-                          key: ValueKey('catalog-tag-${novel.id}-$tag'),
-                          visualDensity: VisualDensity.compact,
-                          label: Text(tag),
-                          onPressed: onTagSelected == null
-                              ? null
-                              : () => onTagSelected!(tag),
+                      if (novel.updatedAt case final updatedAt?) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          '更新于 ${formatCatalogDate(updatedAt)}',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: colorScheme.onSurfaceVariant),
                         ),
+                      ],
                     ],
-                  ),
-                  if (novel.updatedAt case final updatedAt?) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      '更新于 ${formatCatalogDate(updatedAt)}',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
+                    if (progress case final value?) ...[
+                      const SizedBox(height: 14),
+                      Semantics(
+                        label: '阅读进度 ${(value * 100).round()}%',
+                        child: LinearProgressIndicator(
+                          key: ValueKey('reading-progress-${novel.id}'),
+                          value: value,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
-                if (progress case final value?) ...[
-                  const SizedBox(height: 14),
-                  Semantics(
-                    label: '阅读进度 ${(value * 100).round()}%',
-                    child: LinearProgressIndicator(
-                      key: ValueKey('reading-progress-${novel.id}'),
-                      value: value,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ],
-              ],
+                ),
+              ),
             ),
           ),
-        ),
+          if (onOpenDetails != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+                child: TextButton.icon(
+                  key: ValueKey('continued-details-${novel.id}'),
+                  onPressed: onOpenDetails,
+                  icon: const Icon(Icons.info_outline),
+                  label: const Text('小说详情'),
+                ),
+              ),
+            ),
+          ?footer,
+        ],
       ),
     );
   }

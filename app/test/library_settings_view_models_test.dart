@@ -43,6 +43,7 @@ void main() {
       tester,
     ) async {
       final openedNovelIds = <String>[];
+      final openedFolderIds = <String>[];
       final firstNovel = fixtureCatalogNovels.first;
       final secondNovel = fixtureCatalogNovels[1];
       const continuedPosition = ReadingPosition(
@@ -98,6 +99,7 @@ void main() {
           remoteFavorites: RemoteFavoritesViewModel.available(const [
             LibraryFavoriteFolder(id: 'later', title: '稍后阅读', novelCount: 12),
           ]),
+          onFavoriteFolderRequested: (folder) => openedFolderIds.add(folder.id),
         ),
       );
 
@@ -116,7 +118,9 @@ void main() {
         find.byKey(ValueKey('offline-download-${firstNovel.id}')),
       );
       await tester.tap(find.byKey(const ValueKey('bookmark-bookmark-real')));
+      await tester.tap(find.byKey(const ValueKey('favorite-folder-later')));
       expect(openedNovelIds, [firstNovel.id, firstNovel.id, secondNovel.id]);
+      expect(openedFolderIds, ['later']);
     });
 
     testWidgets('remote empty is distinct from remote unavailable', (
@@ -132,6 +136,40 @@ void main() {
 
       expect(find.text('收藏夹为空'), findsOneWidget);
       expect(find.text('远程收藏夹暂不可用'), findsNothing);
+    });
+
+    testWidgets('continued reading separates resume from novel details', (
+      tester,
+    ) async {
+      final novel = fixtureCatalogNovels.first;
+      const position = ReadingPosition(chapterId: 'chapter-2', blockId: 'c2-0');
+      final resumedPositions = <ReadingPosition>[];
+      final detailNovelIds = <String>[];
+
+      await pumpScreen(
+        tester,
+        LibraryScreen(
+          onOpenNovel: (value) => detailNovelIds.add(value.id),
+          onOpenPosition: (_, value) => resumedPositions.add(value),
+          continuedReads: [
+            LibraryContinuedRead(
+              novel: novel,
+              position: position,
+              progress: 0.4,
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.byKey(ValueKey('continued-read-${novel.id}')));
+      expect(resumedPositions, [position]);
+      expect(detailNovelIds, isEmpty);
+
+      await tester.tap(
+        find.byKey(ValueKey('continued-read-details-${novel.id}')),
+      );
+      expect(resumedPositions, [position]);
+      expect(detailNovelIds, [novel.id]);
     });
   });
 

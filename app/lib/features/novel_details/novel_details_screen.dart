@@ -24,7 +24,7 @@ class NovelDetailsScreen extends StatefulWidget {
   final ValueChanged<NovelChapter?> onOpenReader;
   final VoidCallback? onFavorite;
   final FutureOr<void> Function()? onDownload;
-  final VoidCallback? onOpenOriginal;
+  final FutureOr<void> Function()? onOpenOriginal;
   final ValueChanged<String>? onAuthorSelected;
   final ValueChanged<String>? onTagSelected;
   final NovelCommentPageLoader? commentPageLoader;
@@ -35,6 +35,7 @@ class NovelDetailsScreen extends StatefulWidget {
 }
 
 class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
+  bool _chaptersExpanded = false;
   bool _chaptersReversed = false;
   int _commentPage = 0;
   NovelCommentPage? _loadedCommentPage;
@@ -43,6 +44,7 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
   int _commentRequestGeneration = 0;
   int _requestedCommentPage = 1;
   bool _downloadStarting = false;
+  bool _openingOriginal = false;
 
   bool get _usesRemoteComments => widget.commentPageLoader != null;
 
@@ -95,6 +97,22 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
         ..showSnackBar(const SnackBar(content: Text('离线下载创建失败，请稍后重试')));
     } finally {
       if (mounted) setState(() => _downloadStarting = false);
+    }
+  }
+
+  Future<void> _openOriginal() async {
+    final callback = widget.onOpenOriginal;
+    if (callback == null || _openingOriginal) return;
+    setState(() => _openingOriginal = true);
+    try {
+      await callback();
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('无法打开原作网站')));
+    } finally {
+      if (mounted) setState(() => _openingOriginal = false);
     }
   }
 
@@ -369,89 +387,118 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
                     const SizedBox(height: 14),
                     TextButton.icon(
                       key: const ValueKey('open-original-site-button'),
-                      onPressed: widget.onOpenOriginal,
-                      icon: const Icon(Icons.open_in_new),
-                      label: const Text('前往原作网站'),
+                      onPressed: _openingOriginal
+                          ? null
+                          : () => unawaited(_openOriginal()),
+                      icon: _openingOriginal
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.open_in_new),
+                      label: Text(_openingOriginal ? '正在打开…' : '前往原作网站'),
                     ),
                   ],
                   const SizedBox(height: 28),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       const Expanded(child: _DetailSectionTitle(title: '章节目录')),
                       TextButton.icon(
-                        key: const ValueKey('reverse-chapters-button'),
+                        key: const ValueKey('toggle-chapters-button'),
                         onPressed: () => setState(
-                          () => _chaptersReversed = !_chaptersReversed,
+                          () => _chaptersExpanded = !_chaptersExpanded,
                         ),
-                        icon: const Icon(Icons.swap_vert),
-                        label: Text(_chaptersReversed ? '倒序' : '正序'),
+                        icon: Icon(
+                          _chaptersExpanded
+                              ? Icons.expand_less
+                              : Icons.expand_more,
+                        ),
+                        label: Text(_chaptersExpanded ? '收起目录' : '展开目录'),
                       ),
                     ],
                   ),
-                  Text(
-                    '${novel.knownChapterCount == null ? '章节数未知' : '${novel.knownChapterCount} 章'} · '
-                    '${_chaptersReversed ? '从新到旧' : '从旧到新'}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${novel.knownChapterCount == null ? '章节数未知' : '${novel.knownChapterCount} 章'} · '
+                          '${_chaptersReversed ? '从新到旧' : '从旧到新'}',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: colors.onSurfaceVariant),
+                        ),
+                      ),
+                      if (_chaptersExpanded)
+                        TextButton.icon(
+                          key: const ValueKey('reverse-chapters-button'),
+                          onPressed: () => setState(
+                            () => _chaptersReversed = !_chaptersReversed,
+                          ),
+                          icon: const Icon(Icons.swap_vert),
+                          label: Text(_chaptersReversed ? '倒序' : '正序'),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                 ],
               ),
             ),
           ),
-          for (final section in _chapterSections) ...[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-              sliver: SliverToBoxAdapter(
-                child: Text(
-                  section.title,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: colors.primary,
-                    fontWeight: FontWeight.w700,
+          if (_chaptersExpanded)
+            for (final section in _chapterSections) ...[
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+                sliver: SliverToBoxAdapter(
+                  child: Text(
+                    section.title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: colors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverList.separated(
-                itemCount: section.chapters.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final chapter = section.chapters[index];
-                  return Semantics(
-                    button: true,
-                    label: '阅读第 ${chapter.index} 章，${chapter.chineseTitle}',
-                    child: ListTile(
-                      key: ValueKey('chapter-${chapter.id}'),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                      leading: SizedBox(
-                        width: 34,
-                        child: Text(
-                          '${chapter.index}',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.titleMedium,
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                sliver: SliverList.separated(
+                  itemCount: section.chapters.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final chapter = section.chapters[index];
+                    return Semantics(
+                      button: true,
+                      label: '阅读第 ${chapter.index} 章，${chapter.chineseTitle}',
+                      child: ListTile(
+                        key: ValueKey('chapter-${chapter.id}'),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
                         ),
+                        leading: SizedBox(
+                          width: 34,
+                          child: Text(
+                            '${chapter.index}',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        title: Text(chapter.chineseTitle),
+                        subtitle: Text(
+                          [
+                            chapter.japaneseTitle,
+                            if (chapter.publishedAt case final publishedAt?)
+                              formatCatalogDate(publishedAt),
+                          ].join('\n'),
+                          locale: const Locale('ja', 'JP'),
+                        ),
+                        isThreeLine: chapter.publishedAt != null,
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => widget.onOpenReader(chapter),
                       ),
-                      title: Text(chapter.chineseTitle),
-                      subtitle: Text(
-                        [
-                          chapter.japaneseTitle,
-                          if (chapter.publishedAt case final publishedAt?)
-                            formatCatalogDate(publishedAt),
-                        ].join('\n'),
-                        locale: const Locale('ja', 'JP'),
-                      ),
-                      isThreeLine: chapter.publishedAt != null,
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => widget.onOpenReader(chapter),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 30, 20, 12),
             sliver: SliverToBoxAdapter(

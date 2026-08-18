@@ -185,5 +185,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.listBookmarks(novelId: fixtureNovel.id), hasLength(1));
+
+    await tester.tap(find.byKey(const ValueKey('reader-back-button')));
+    await tester.pumpAndSettle();
+    Navigator.of(
+      tester.element(find.byKey(ValueKey('novel-details-${fixtureNovel.id}'))),
+    ).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    final manage = find.byKey(const ValueKey('downloads-manage-button'));
+    await tester.scrollUntilVisible(
+      manage,
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(manage);
+    await tester.pumpAndSettle();
+
+    final groupKey = '${fixtureNovel.id}::${TranslationSource.sakura.name}';
+    await tester.tap(find.byKey(ValueKey('pause-download-$groupKey')));
+    await tester.pumpAndSettle();
+    expect(repository.listIntents().single.enabled, isFalse);
+    expect(find.byKey(ValueKey('resume-download-$groupKey')), findsOneWidget);
+
+    await tester.tap(find.byKey(ValueKey('resume-download-$groupKey')));
+    await tester.pumpAndSettle();
+    expect(repository.listIntents().single.enabled, isTrue);
+
+    await tester.tap(find.byKey(ValueKey('remove-download-$groupKey')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-remove-download')));
+    await tester.pumpAndSettle();
+    expect(repository.listIntents(), isEmpty);
+    expect(
+      repository.listCopies(kind: OfflineCopyKind.offlineDownload),
+      isEmpty,
+    );
+    expect(repository.listBookmarks(novelId: fixtureNovel.id), hasLength(1));
+    expect(repository.readingProgressFor(fixtureNovel.id), isNotNull);
   });
 }

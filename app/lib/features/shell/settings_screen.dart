@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../core/account/account_models.dart';
 import '../../core/offline/offline_models.dart';
+import '../account/account_screen.dart';
 import 'shell_view_models.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -16,6 +18,10 @@ class SettingsScreen extends StatelessWidget {
       perNovel: [],
     ),
     this.cacheLimitBytes,
+    this.accountSession = const AccountSessionSnapshot.signedOut(),
+    this.onAccountLogin,
+    this.onAccountLogout,
+    this.onHostedAccountHelp,
     this.onLoginRequested,
     this.onReleasesRequested,
     super.key,
@@ -28,6 +34,10 @@ class SettingsScreen extends StatelessWidget {
 
   /// Null means that no cache limit is currently configured.
   final int? cacheLimitBytes;
+  final AccountSessionSnapshot accountSession;
+  final AccountLogin? onAccountLogin;
+  final Future<void> Function()? onAccountLogout;
+  final VoidCallback? onHostedAccountHelp;
   final VoidCallback? onLoginRequested;
   final VoidCallback? onReleasesRequested;
 
@@ -56,10 +66,14 @@ class SettingsScreen extends StatelessWidget {
               ListTile(
                 key: const ValueKey('settings-account'),
                 leading: const Icon(Icons.account_circle_outlined),
-                title: const Text('未登录'),
-                subtitle: const Text('登录后可使用远程收藏夹与阅读历史'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: onLoginRequested,
+                title: Text(_accountTitle(accountSession)),
+                subtitle: Text(_accountSubtitle(accountSession)),
+                trailing: _accountTrailing(context),
+                onTap: accountSession.status == AccountSessionStatus.signedOut
+                    ? () => _openAccount(context)
+                    : accountSession.status == AccountSessionStatus.unavailable
+                    ? onLoginRequested
+                    : null,
               ),
             ],
           ),
@@ -179,6 +193,78 @@ class SettingsScreen extends StatelessWidget {
   static String _cacheLimitLabel(int? cacheLimitBytes) {
     if (cacheLimitBytes == null) return '上限未设置';
     return '上限 ${formatStorageBytes(cacheLimitBytes)}';
+  }
+
+  Future<void> _openAccount(BuildContext context) async {
+    final login = onAccountLogin;
+    if (login == null) {
+      onLoginRequested?.call();
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AccountScreen(
+          onLogin: login,
+          onHostedAccountHelp: onHostedAccountHelp,
+        ),
+        settings: const RouteSettings(name: '/account/login'),
+      ),
+    );
+  }
+
+  String _accountTitle(AccountSessionSnapshot session) {
+    final username = session.profile?.username;
+    return username == null ? '未登录' : '@$username';
+  }
+
+  String _accountSubtitle(AccountSessionSnapshot session) {
+    return switch (session.status) {
+      AccountSessionStatus.signedOut => '登录后可使用远程收藏夹与阅读历史',
+      AccountSessionStatus.restoring => '正在检查账号状态',
+      AccountSessionStatus.signedIn => '已登录 · ${session.profile!.role}',
+      AccountSessionStatus.unavailable =>
+        session.message ?? '账号服务暂时不可用，本地阅读仍可使用',
+    };
+  }
+
+  Widget _accountTrailing(BuildContext context) {
+    if (accountSession.status == AccountSessionStatus.restoring) {
+      return const SizedBox.square(
+        dimension: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    if (accountSession.hasStoredAccount && onAccountLogout != null) {
+      return IconButton(
+        key: const ValueKey('account-logout-button'),
+        tooltip: '退出登录',
+        onPressed: () => _confirmLogout(context),
+        icon: const Icon(Icons.logout),
+      );
+    }
+    return const Icon(Icons.chevron_right);
+  }
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('退出登录？'),
+        content: const Text('本机阅读进度、书签、缓存与离线下载会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-account-logout'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('退出登录'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await onAccountLogout?.call();
   }
 }
 

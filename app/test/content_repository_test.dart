@@ -9,7 +9,7 @@ import 'package:sqlite3/sqlite3.dart';
 void main() {
   final t0 = DateTime.utc(2026, 8, 17, 12);
 
-  test('v3 to v4 migration preserves prior local and offline data', () {
+  test('v3 to current migration preserves prior local and offline data', () {
     final database = sqlite3.openInMemory();
     addTearDown(database.close);
     NoveliaDatabase.initialize(database);
@@ -20,6 +20,7 @@ void main() {
       DROP TABLE cached_chapter_payloads;
       DROP INDEX offline_copies_payload_idx;
       ALTER TABLE offline_chapter_copies DROP COLUMN payload_id;
+      DROP TABLE remote_history_outbox;
     ''');
     database.execute(
       'INSERT INTO recent_searches '
@@ -31,7 +32,7 @@ void main() {
     final repository = SqliteOfflineRepository.fromDatabase(database);
     addTearDown(repository.close);
 
-    expect(repository.schemaVersion, 4);
+    expect(repository.schemaVersion, NoveliaDatabase.currentSchemaVersion);
     expect(repository.recentSearches(), ['旧搜索']);
     expect(repository.listCachedNovels(), isEmpty);
     repository.upsertChapterPayload(_completePayload(t0));
@@ -51,7 +52,7 @@ void main() {
 
       final outline = repository.listCachedNovels().single;
       final restored = repository.novelDetail('novel')!;
-      expect(repository.schemaVersion, 4);
+      expect(repository.schemaVersion, NoveliaDatabase.currentSchemaVersion);
       expect(outline.chineseTitle, '');
       expect(outline.chapterCount, 3);
       expect(outline.tags, ['', '幻想']);

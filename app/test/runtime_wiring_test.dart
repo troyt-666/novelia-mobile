@@ -7,6 +7,7 @@ import 'package:novelia_reader/core/database/sqlite_offline_repository.dart';
 import 'package:novelia_reader/core/model/reader_models.dart';
 import 'package:novelia_reader/core/offline/content_models.dart';
 import 'package:novelia_reader/core/offline/offline_models.dart';
+import 'package:novelia_reader/core/platform/external_link_launcher.dart';
 import 'package:novelia_reader/features/discover/catalog_models.dart';
 import 'package:novelia_reader/gateway/novelia/novelia_content_coordinator.dart';
 import 'package:novelia_reader/gateway/novelia/novelia_domain_adapter.dart';
@@ -48,14 +49,14 @@ void main() {
       expect(find.text('线上目录小说'), findsWidgets);
       expect(find.text('星轨夹层'), findsNothing);
 
-      final detailsButton = find
-          .byKey(ValueKey('open-details-${coordinator.outline.id}'))
-          .first;
-      tester.widget<InkWell>(detailsButton).onTap!();
+      final continueButton = find.byKey(
+        ValueKey('continue-reading-${coordinator.outline.id}'),
+      );
+      tester.widget<InkWell>(continueButton).onTap!();
       await tester.pumpAndSettle();
       expect(coordinator.detailRequests, 1);
 
-      expect(coordinator.loadedChapterIds, ['chapter-2', 'chapter-3']);
+      expect(coordinator.loadedChapterIds, ['chapter-3']);
       expect(find.byKey(const ValueKey('reader-stream')), findsOneWidget);
       expect(repository.lastRoute()?.position?.chapterId, 'chapter-3');
     },
@@ -91,6 +92,11 @@ void main() {
       expect(find.textContaining('服务原生排序'), findsOneWidget);
       expect(coordinator.rankingQueries.single.providerId, 'syosetu');
       expect(coordinator.rankingQueries.single.parameters['genre'], '恋爱：异世界');
+      expect(coordinator.rankingQueries.single.parameters['page'], '1');
+      await tester.tap(find.byKey(const ValueKey('rankings-next-page')));
+      await tester.pumpAndSettle();
+      expect(find.text('服务排行第二'), findsWidgets);
+      expect(coordinator.rankingQueries.last.parameters['page'], '2');
       Navigator.of(
         tester.element(find.byKey(const ValueKey('rankings-screen'))),
       ).pop();
@@ -246,6 +252,15 @@ void main() {
     tester.widget<InkWell>(detailCards.at(1)).onTap!();
     await tester.pumpAndSettle();
 
+    final chapterToggle = find.byKey(const ValueKey('toggle-chapters-button'));
+    await tester.scrollUntilVisible(
+      chapterToggle,
+      500,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(chapterToggle);
+    await tester.pumpAndSettle();
+
     final firstChapter = find.byKey(const ValueKey('chapter-chapter-1'));
     await tester.scrollUntilVisible(
       firstChapter,
@@ -260,6 +275,46 @@ void main() {
       find.byKey(const ValueKey('block-chapter-1:0-japanese')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('original-site action uses the injected platform launcher', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = SqliteOfflineRepository.openInMemory();
+    addTearDown(repository.close);
+    final coordinator = _RuntimeCoordinator();
+    final launcher = _RecordingExternalLinkLauncher();
+    await tester.pumpWidget(
+      NoveliaReaderApp(
+        repository: repository,
+        contentCoordinator: coordinator,
+        externalLinkLauncher: launcher,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final details = find.byKey(
+      ValueKey('open-details-${coordinator.outline.id}'),
+    );
+    tester.widget<InkWell>(details.first).onTap!();
+    await tester.pumpAndSettle();
+    final original = find.byKey(const ValueKey('open-original-site-button'));
+    await tester.scrollUntilVisible(
+      original,
+      400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(original);
+    await tester.pumpAndSettle();
+
+    expect(launcher.opened, [
+      Uri.parse('https://ncode.syosetu.com/runtime-test'),
+    ]);
   });
 
   testWidgets('startup requeues an interrupted active download task', (
@@ -355,6 +410,7 @@ class _RuntimeCoordinator implements NoveliaContentCoordinator {
           chapterIds: ['chapter-1', 'chapter-2', 'chapter-3'],
         ),
       ],
+      originalUrl: Uri.parse('https://ncode.syosetu.com/runtime-test'),
     );
   }
 
@@ -495,11 +551,12 @@ class _PagedCatalogCoordinator implements NoveliaContentCoordinator {
     NoveliaRankingQuery query,
   ) async {
     rankingQueries.add(query);
+    final page = int.parse(query.parameters['page'] ?? '1');
     return NoveliaContentResult.available(
       NoveliaCatalogSlice(
-        pageIndex: 0,
-        totalPages: 1,
-        novels: [_outline('ranking-one', '服务排行第一')],
+        pageIndex: page - 1,
+        totalPages: 2,
+        novels: [_outline('ranking-$page', page == 1 ? '服务排行第一' : '服务排行第二')],
       ),
     );
   }
@@ -597,4 +654,11 @@ class _RecordingDownloadCoordinator implements NoveliaDownloadCoordinator {
       tasks: tasks,
     );
   }
+}
+
+class _RecordingExternalLinkLauncher implements ExternalLinkLauncher {
+  final List<Uri> opened = [];
+
+  @override
+  Future<void> open(Uri uri) async => opened.add(uri);
 }

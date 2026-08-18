@@ -4,20 +4,31 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/account/account_session_controller.dart';
+import 'core/account/account_models.dart';
+import 'core/account/account_sync_models.dart';
+import 'core/account/secure_session_store.dart';
 import 'core/database/local_state_repository.dart';
 import 'core/database/sqlite_offline_repository.dart';
 import 'core/model/reader_models.dart';
 import 'core/offline/offline_models.dart';
+import 'core/platform/external_link_launcher.dart';
 import 'features/discover/catalog_models.dart';
 import 'features/discover/rankings_screen.dart';
+import 'features/account/remote_novel_list_screen.dart';
 import 'features/reader/reader_screen.dart';
+import 'features/shell/download_management_screen.dart';
 import 'features/shell/novelia_shell.dart';
 import 'features/shell/shell_view_models.dart';
 import 'fixtures/catalog_fixture.dart';
 import 'gateway/novelia/http_novelia_gateway.dart';
+import 'gateway/novelia/http_novelia_auth_gateway.dart';
+import 'gateway/novelia/http_novelia_account_gateway.dart';
+import 'gateway/novelia/novelia_account_gateway.dart';
 import 'gateway/novelia/novelia_content_cache_adapter.dart';
 import 'gateway/novelia/novelia_content_coordinator.dart';
 import 'gateway/novelia/novelia_download_coordinator.dart';
+import 'gateway/novelia/novelia_domain_adapter.dart';
 import 'gateway/novelia/novelia_gateway.dart';
 import 'gateway/novelia/novelia_reader_window.dart';
 
@@ -27,7 +38,17 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     final repository = await SqliteOfflineRepository.openApplicationSupport();
-    final gateway = HttpNoveliaGateway();
+    final authGateway = HttpNoveliaAuthGateway();
+    final accountSessionController = AccountSessionController(
+      gateway: authGateway,
+      store: const MethodChannelAccountSessionStore(),
+    );
+    final gateway = HttpNoveliaGateway(
+      accessTokenProvider: accountSessionController.accessToken,
+    );
+    final accountGateway = HttpNoveliaAccountGateway(
+      accessTokenProvider: accountSessionController.accessToken,
+    );
     final contentCoordinator = LiveFirstNoveliaContentCoordinator(
       gateway: gateway,
       contentRepository: repository,
@@ -51,10 +72,17 @@ Future<void> main() async {
     runApp(
       NoveliaReaderApp(
         repository: repository,
+        accountSessionController: accountSessionController,
+        accountGateway: accountGateway,
         contentCoordinator: contentCoordinator,
         downloadCoordinator: downloadCoordinator,
+        externalLinkLauncher: const MethodChannelExternalLinkLauncher(),
         closeRepositoryOnDispose: true,
-        onRuntimeDispose: gateway.close,
+        onRuntimeDispose: () {
+          gateway.close();
+          authGateway.close();
+          accountGateway.close();
+        },
       ),
     );
   } on Object {
@@ -67,6 +95,9 @@ class NoveliaReaderApp extends StatefulWidget {
     required this.repository,
     this.contentCoordinator,
     this.downloadCoordinator,
+    this.accountSessionController,
+    this.accountGateway,
+    this.externalLinkLauncher,
     this.catalogQuery = const NoveliaCatalogQuery(),
     this.onRuntimeDispose,
     this.closeRepositoryOnDispose = false,
@@ -76,6 +107,9 @@ class NoveliaReaderApp extends StatefulWidget {
   final SqliteOfflineRepository repository;
   final NoveliaContentCoordinator? contentCoordinator;
   final NoveliaDownloadCoordinator? downloadCoordinator;
+  final AccountSessionController? accountSessionController;
+  final NoveliaAccountGateway? accountGateway;
+  final ExternalLinkLauncher? externalLinkLauncher;
   final NoveliaCatalogQuery catalogQuery;
   final VoidCallback? onRuntimeDispose;
   final bool closeRepositoryOnDispose;
@@ -105,7 +139,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _catalogLoadMoreFailed = false;
   var _mostClickedNovels = const <CatalogNovel>[];
   var _mostClickedGeneration = 0;
+  var _defaultRankingPageSize = 0;
   var _currentDestination = 0;
+  var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
+  var _favoriteFolderGeneration = 0;
+  var _historyFlushActive = false;
+  final Map<String, String> _lastHistoryChapterByNovel = {};
 
   SqliteOfflineRepository get _repository => widget.repository;
 
@@ -113,6 +152,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.accountSessionController?.addListener(_accountSessionChanged);
+    if (widget.accountSessionController != null) {
+      unawaited(widget.accountSessionController!.restore());
+    }
     final settings = _repository.appSettings();
     _readerSettings = settings?.readerSettings ?? const ReaderSettings();
     _themeMode = _themeModeFromPreference(
@@ -148,6 +191,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.accountSessionController?.removeListener(_accountSessionChanged);
     _catalogLoadGeneration += 1;
     _mostClickedGeneration += 1;
     widget.onRuntimeDispose?.call();
@@ -165,6 +209,210 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     if (widget.downloadCoordinator != null) {
       unawaited(_resumeDownloadIntents());
     }
+    if (widget.accountSessionController?.snapshot.status ==
+        AccountSessionStatus.unavailable) {
+      unawaited(widget.accountSessionController!.retry());
+    } else if (widget.accountSessionController?.snapshot.isSignedIn == true) {
+      unawaited(_refreshFavoriteFolders());
+      unawaited(_flushRemoteHistory());
+    }
+  }
+
+  void _accountSessionChanged() {
+    if (!mounted) return;
+    final session = widget.accountSessionController?.snapshot;
+    if (session?.isSignedIn == true) {
+      unawaited(_refreshFavoriteFolders());
+      unawaited(_flushRemoteHistory());
+    } else {
+      _favoriteFolderGeneration += 1;
+      _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
+      if (session?.status == AccountSessionStatus.signedOut) {
+        _repository.clearRemoteHistoryOutbox();
+        _lastHistoryChapterByNovel.clear();
+      }
+    }
+    setState(() {});
+  }
+
+  Future<void> _refreshFavoriteFolders() async {
+    final gateway = widget.accountGateway;
+    if (gateway == null ||
+        widget.accountSessionController?.snapshot.isSignedIn != true) {
+      return;
+    }
+    final generation = ++_favoriteFolderGeneration;
+    try {
+      final folders = await gateway.listFavoriteFolders();
+      if (!mounted || generation != _favoriteFolderGeneration) return;
+      setState(() {
+        _remoteFavorites = folders.isEmpty
+            ? const RemoteFavoritesViewModel.empty()
+            : RemoteFavoritesViewModel.available([
+                for (final folder in folders)
+                  LibraryFavoriteFolder(id: folder.id, title: folder.title),
+              ]);
+      });
+    } on Object {
+      if (!mounted || generation != _favoriteFolderGeneration) return;
+      setState(
+        () => _remoteFavorites = const RemoteFavoritesViewModel.unavailable(),
+      );
+    }
+  }
+
+  Future<LibraryFavoriteFolder> _createFavoriteFolder(String title) async {
+    final gateway = widget.accountGateway;
+    if (gateway == null) throw StateError('Account gateway is unavailable.');
+    final folder = await gateway.createFavoriteFolder(title);
+    await _refreshFavoriteFolders();
+    return LibraryFavoriteFolder(id: folder.id, title: folder.title);
+  }
+
+  Future<void> _favoriteNovel(CatalogNovel novel, String folderId) async {
+    final gateway = widget.accountGateway;
+    final key = _serviceNovelKey(novel.id);
+    if (gateway == null || key == null) {
+      throw StateError('Novel cannot be mapped to a service identity.');
+    }
+    await gateway.favoriteWebNovel(
+      folderId: folderId,
+      providerId: key.$1,
+      novelId: key.$2,
+    );
+  }
+
+  Future<void> _unfavoriteNovel(CatalogNovel novel, String folderId) async {
+    final gateway = widget.accountGateway;
+    final key = _serviceNovelKey(novel.id);
+    if (gateway == null || key == null) {
+      throw StateError('Novel cannot be mapped to a service identity.');
+    }
+    await gateway.unfavoriteWebNovel(
+      folderId: folderId,
+      providerId: key.$1,
+      novelId: key.$2,
+    );
+  }
+
+  Future<RemoteNovelPageView> _loadFavoriteFolderPage(
+    String folderId,
+    int pageNumber,
+  ) async {
+    final gateway = widget.accountGateway;
+    if (gateway == null) throw StateError('Account gateway is unavailable.');
+    final page = await gateway.listFavoriteWebNovels(
+      folderId: folderId,
+      page: pageNumber - 1,
+    );
+    return _mapAccountNovelPage(page, pageNumber);
+  }
+
+  Future<RemoteNovelPageView> _loadReadingHistoryPage(int pageNumber) async {
+    final gateway = widget.accountGateway;
+    if (gateway == null) throw StateError('Account gateway is unavailable.');
+    final page = await gateway.listReadHistory(page: pageNumber - 1);
+    return _mapAccountNovelPage(page, pageNumber);
+  }
+
+  RemoteNovelPageView _mapAccountNovelPage(
+    NoveliaPage<NoveliaNovelOutline> page,
+    int pageNumber,
+  ) {
+    const domainAdapter = NoveliaDomainAdapter();
+    const cacheAdapter = NoveliaContentCacheAdapter();
+    final fetchedAt = DateTime.now().toUtc();
+    final novels = <CatalogNovel>[];
+    for (final outline in page.items) {
+      try {
+        final novel = domainAdapter.mapOutline(outline);
+        novels.add(novel);
+        try {
+          _repository.upsertNovelOutline(
+            cacheAdapter.cacheOutline(outline, fetchedAt: fetchedAt),
+          );
+        } on Object {
+          // A cache failure must not hide an otherwise valid account row.
+        }
+      } on NoveliaRestrictedContentException {
+        // Phase 3 remains within the general-content boundary established by
+        // the anonymous catalog even if an account contains older R18 rows.
+      }
+    }
+    return RemoteNovelPageView(
+      novels: novels,
+      pageNumber: pageNumber,
+      totalPages: page.pageCount,
+    );
+  }
+
+  Future<void> _logoutAccount() async {
+    _repository.clearRemoteHistoryOutbox();
+    _lastHistoryChapterByNovel.clear();
+    await widget.accountSessionController?.logout();
+  }
+
+  void _queueRemoteHistory(
+    ReaderNovel novel,
+    ReadingPosition position,
+    DateTime occurredAt,
+  ) {
+    if (widget.accountSessionController?.snapshot.hasStoredAccount != true ||
+        widget.accountGateway == null ||
+        _lastHistoryChapterByNovel[novel.id] == position.chapterId) {
+      return;
+    }
+    final key = _serviceNovelKey(novel.id);
+    if (key == null) return;
+    _lastHistoryChapterByNovel[novel.id] = position.chapterId;
+    _repository.queueRemoteHistory(
+      RemoteHistoryOutboxEntry(
+        novelId: novel.id,
+        providerId: key.$1,
+        serviceNovelId: key.$2,
+        chapterId: position.chapterId,
+        occurredAt: occurredAt,
+      ),
+    );
+    unawaited(_flushRemoteHistory());
+  }
+
+  Future<void> _flushRemoteHistory() async {
+    final gateway = widget.accountGateway;
+    if (_historyFlushActive ||
+        gateway == null ||
+        widget.accountSessionController?.snapshot.isSignedIn != true) {
+      return;
+    }
+    _historyFlushActive = true;
+    try {
+      for (final entry in _repository.listRemoteHistoryOutbox()) {
+        if (widget.accountSessionController?.snapshot.isSignedIn != true) {
+          break;
+        }
+        try {
+          await gateway.updateReadHistory(
+            providerId: entry.providerId,
+            novelId: entry.serviceNovelId,
+            chapterId: entry.chapterId,
+          );
+          _repository.removeRemoteHistoryIfUnchanged(entry);
+        } on Object {
+          break;
+        }
+      }
+    } finally {
+      _historyFlushActive = false;
+    }
+  }
+
+  static (String, String)? _serviceNovelKey(String stableId) {
+    final separator = stableId.indexOf('/');
+    if (separator <= 0 || separator == stableId.length - 1) return null;
+    return (
+      stableId.substring(0, separator),
+      stableId.substring(separator + 1),
+    );
   }
 
   List<CatalogNovel> _restoreCachedCatalog() {
@@ -388,7 +636,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     }
   }
 
-  Future<RankingPageView> _loadDefaultRankings() async {
+  Future<RankingPageView> _loadDefaultRankings(int pageNumber) async {
     final coordinator = widget.contentCoordinator;
     if (coordinator == null) {
       throw StateError('No ranking loader is configured.');
@@ -399,18 +647,25 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         genre: '恋爱：异世界',
         range: '总计',
         status: '全部',
-        page: 1,
+        page: pageNumber,
       ),
     );
     final slice = result.data;
     if (slice == null) {
       throw result.failure ?? StateError('Rankings are unavailable.');
     }
+    if (pageNumber == 1 && slice.novels.isNotEmpty) {
+      _defaultRankingPageSize = slice.novels.length;
+    }
+    final pageSize = _defaultRankingPageSize > 0
+        ? _defaultRankingPageSize
+        : slice.novels.length;
     return RankingPageView(
       novels: slice.novels,
       pageNumber: slice.pageIndex + 1,
       totalPages: slice.totalPages,
       description: 'Syosetu · 恋爱：异世界 · 总计 · 服务原生排序',
+      firstRank: pageSize == 0 ? 1 : ((pageNumber - 1) * pageSize) + 1,
     );
   }
 
@@ -570,9 +825,14 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     );
   }
 
-  void _saveReaderPosition(ReaderNovel novel, ReadingPosition position) {
+  void _saveReaderPosition(
+    ReaderNovel novel,
+    ReadingPosition position, {
+    bool syncRemoteHistory = true,
+  }) {
     final now = DateTime.now().toUtc();
     _saveProgressOnly(novel, position, now);
+    if (syncRemoteHistory) _queueRemoteHistory(novel, position, now);
     _touchChapterCopies(novel.id, position.chapterId, now);
     _repository.evictCacheTo(
       maxBytes: _cacheLimitBytes,
@@ -643,25 +903,29 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     for (final candidate in _repository.listIntents()) {
       if (candidate is NovelDownloadIntent &&
           candidate.novelId == novel.id &&
-          candidate.translationSource == source &&
-          candidate.enabled) {
+          candidate.translationSource == source) {
         intent = candidate;
         break;
       }
     }
     final now = DateTime.now().toUtc();
-    intent ??= NovelDownloadIntent(
-      id: [
-        'novel',
-        novel.id,
-        source.name,
-        '${now.microsecondsSinceEpoch}',
-      ].map(Uri.encodeComponent).join('::'),
-      novelId: novel.id,
-      translationSource: source,
-      createdAt: now,
-    );
-    _repository.saveIntent(intent);
+    if (intent == null) {
+      intent = NovelDownloadIntent(
+        id: [
+          'novel',
+          novel.id,
+          source.name,
+          '${now.microsecondsSinceEpoch}',
+        ].map(Uri.encodeComponent).join('::'),
+        novelId: novel.id,
+        translationSource: source,
+        createdAt: now,
+      );
+      _repository.saveIntent(intent);
+    } else if (!intent.enabled) {
+      _repository.resumeIntent(intent.id, now);
+      intent = intent.withEnabled(true);
+    }
     final run = await _synchronizeIntent(intent.id, retryFailures: true);
     if (run == null) {
       throw StateError('The download is already running or unavailable.');
@@ -675,6 +939,58 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     if (failed.isNotEmpty) {
       throw StateError('${failed.length} chapters failed to download.');
     }
+  }
+
+  Future<LibraryProtectedDownload?> _manageDownload(
+    DownloadManagementAction action,
+    LibraryProtectedDownload download,
+  ) async {
+    if (download.intentIds.isEmpty) {
+      throw StateError('The protected download has no owning intent.');
+    }
+    final now = DateTime.now().toUtc();
+    final existingIntentIds = [
+      for (final intentId in download.intentIds)
+        if (_repository.intentById(intentId) != null) intentId,
+    ];
+    if (existingIntentIds.isEmpty) {
+      throw StateError('The protected download intent no longer exists.');
+    }
+
+    switch (action) {
+      case DownloadManagementAction.pause:
+        for (final intentId in existingIntentIds) {
+          final intent = _repository.intentById(intentId)!;
+          if (intent.enabled) _repository.pauseIntent(intentId, now);
+        }
+        break;
+      case DownloadManagementAction.resume:
+        for (final intentId in existingIntentIds) {
+          final intent = _repository.intentById(intentId)!;
+          if (!intent.enabled) _repository.resumeIntent(intentId, now);
+          await _synchronizeIntent(intentId, retryFailures: true);
+        }
+        break;
+      case DownloadManagementAction.retry:
+        for (final intentId in existingIntentIds) {
+          final intent = _repository.intentById(intentId)!;
+          if (!intent.enabled) _repository.resumeIntent(intentId, now);
+          await _synchronizeIntent(intentId, retryFailures: true);
+        }
+        break;
+      case DownloadManagementAction.remove:
+        for (final intentId in existingIntentIds) {
+          _repository.removeIntent(intentId, now);
+        }
+        break;
+    }
+
+    if (mounted) setState(() {});
+    if (action == DownloadManagementAction.remove) return null;
+    final updated = _libraryDownloads(_localNovelsById());
+    return updated
+        .where((candidate) => candidate.groupKey == download.groupKey)
+        .firstOrNull;
   }
 
   void _downloadFixtureNovel(CatalogNovel novel) {
@@ -845,6 +1161,13 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   List<LibraryProtectedDownload> _libraryDownloads(
     Map<String, CatalogNovel> novelsById,
   ) {
+    final intentsByGroup =
+        <(String, TranslationSource), List<DownloadIntent>>{};
+    for (final intent in _repository.listIntents()) {
+      final group = (intent.novelId, intent.translationSource);
+      intentsByGroup.putIfAbsent(group, () => []).add(intent);
+    }
+
     final copiesByGroup =
         <(String, TranslationSource), Map<String, OfflineChapterCopy>>{};
     for (final copy in _repository.listCopies(
@@ -870,15 +1193,22 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       }
     }
 
-    final groups = {...copiesByGroup.keys, ...tasksByGroup.keys}.toList()
-      ..sort((a, b) {
-        final novelOrder = a.$1.compareTo(b.$1);
-        return novelOrder == 0 ? a.$2.index.compareTo(b.$2.index) : novelOrder;
-      });
+    final groups =
+        {
+          ...intentsByGroup.keys,
+          ...copiesByGroup.keys,
+          ...tasksByGroup.keys,
+        }.toList()..sort((a, b) {
+          final novelOrder = a.$1.compareTo(b.$1);
+          return novelOrder == 0
+              ? a.$2.index.compareTo(b.$2.index)
+              : novelOrder;
+        });
     final downloads = <LibraryProtectedDownload>[];
     for (final group in groups) {
       final novel = novelsById[group.$1];
       if (novel == null) continue;
+      final intents = intentsByGroup[group] ?? const [];
       final copies = copiesByGroup[group] ?? const {};
       final tasks = tasksByGroup[group] ?? const {};
       final chapterIds = {...copies.keys, ...tasks.keys}.toList()
@@ -892,6 +1222,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         LibraryProtectedDownload(
           novel: novel,
           translationSource: group.$2,
+          intentIds: [for (final intent in intents) intent.id],
+          enabled: intents.any((intent) => intent.enabled),
           chapters: [
             for (final chapterId in chapterIds)
               LibraryDownloadChapter(
@@ -903,6 +1235,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
                   copies[chapterId],
                   tasks[chapterId],
                 ),
+                failure: tasks[chapterId]?.failure,
               ),
           ],
         ),
@@ -971,7 +1304,39 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         continuedReads: _libraryContinuedReads(localNovelsById),
         protectedDownloads: _libraryDownloads(localNovelsById),
         bookmarks: _libraryBookmarks(localNovelsById),
-        remoteFavorites: const RemoteFavoritesViewModel.unavailable(),
+        remoteFavorites: _remoteFavorites,
+        favoriteFolderLoader: widget.accountGateway == null
+            ? null
+            : _loadFavoriteFolderPage,
+        readingHistoryLoader: widget.accountGateway == null
+            ? null
+            : _loadReadingHistoryPage,
+        accountSession:
+            widget.accountSessionController?.snapshot ??
+            const AccountSessionSnapshot.signedOut(),
+        onAccountLogin: widget.accountSessionController == null
+            ? null
+            : ({required username, required password}) => widget
+                  .accountSessionController!
+                  .login(username: username, password: password),
+        onAccountLogout: widget.accountSessionController == null
+            ? null
+            : _logoutAccount,
+        onLoginRequested: widget.accountSessionController?.retry,
+        onHostedAccountHelp: widget.externalLinkLauncher == null
+            ? null
+            : () => widget.externalLinkLauncher!.open(
+                Uri.parse('https://auth.novelia.cc/?app=n'),
+              ),
+        onFavoriteToFolderRequested: widget.accountGateway == null
+            ? null
+            : _favoriteNovel,
+        onFavoriteFromFolderRemoveRequested: widget.accountGateway == null
+            ? null
+            : _unfavoriteNovel,
+        onFavoriteFolderCreateRequested: widget.accountGateway == null
+            ? null
+            : _createFavoriteFolder,
         storageSummary: _repository.storageSummary(),
         cacheLimitBytes: _cacheLimitBytes,
         initialCatalogCriteria: _catalogCriteria,
@@ -999,6 +1364,15 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         commentPageLoader: widget.contentCoordinator == null
             ? null
             : _loadCommentPage,
+        onOpenOriginalRequested: widget.externalLinkLauncher == null
+            ? null
+            : (novel) {
+                final uri = novel.originalUrl;
+                if (uri == null) {
+                  throw StateError('The novel has no original-site URL.');
+                }
+                return widget.externalLinkLauncher!.open(uri);
+              },
         themeMode: _themeMode,
         initialDestination: _initialDestination,
         initialRecentSearches: _initialRecentSearches,
@@ -1011,7 +1385,11 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           final readerNovel = data.novel;
           final position = data.initialPosition;
           if (position != null) {
-            _saveReaderPosition(readerNovel, position);
+            _saveReaderPosition(
+              readerNovel,
+              position,
+              syncRemoteHistory: false,
+            );
           }
         },
         onReaderClosed: () {
@@ -1022,6 +1400,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           if (mounted) setState(() {});
         },
         onDownloadRequested: _downloadNovel,
+        onDownloadManagementRequested: _manageDownload,
         readerBuilder: (context, data) {
           final novel = data.novel;
           // The shell has already resolved explicit chapter selection, saved

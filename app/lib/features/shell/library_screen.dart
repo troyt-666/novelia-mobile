@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/model/reader_models.dart';
-import '../../core/offline/offline_models.dart';
 import '../discover/catalog_models.dart';
 import 'shell_view_models.dart';
 
@@ -14,6 +13,7 @@ class LibraryScreen extends StatelessWidget {
     this.protectedDownloads = const [],
     this.bookmarks = const [],
     this.remoteFavorites = const RemoteFavoritesViewModel.unavailable(),
+    this.onFavoriteFolderRequested,
     this.onReadingHistoryRequested,
     this.onDownloadsManageRequested,
     super.key,
@@ -29,6 +29,7 @@ class LibraryScreen extends StatelessWidget {
   final List<LibraryProtectedDownload> protectedDownloads;
   final List<LibraryBookmarkItem> bookmarks;
   final RemoteFavoritesViewModel remoteFavorites;
+  final ValueChanged<LibraryFavoriteFolder>? onFavoriteFolderRequested;
   final VoidCallback? onReadingHistoryRequested;
   final VoidCallback? onDownloadsManageRequested;
 
@@ -67,9 +68,12 @@ class LibraryScreen extends StatelessWidget {
               continuedReads.map(
                 (item) => _ContinuedReadCard(
                   item: item,
-                  onOpen: () => onOpenPosition != null
+                  onResume: () => onOpenPosition != null
                       ? onOpenPosition!(item.novel, item.position)
                       : onOpenNovel(item.novel),
+                  onOpenDetails: onOpenPosition == null
+                      ? null
+                      : () => onOpenNovel(item.novel),
                 ),
               ),
             ),
@@ -79,11 +83,13 @@ class LibraryScreen extends StatelessWidget {
           _RemoteFavorites(
             key: const ValueKey('favorite-folders-grid'),
             favorites: remoteFavorites,
+            onOpenFolder: onFavoriteFolderRequested,
           ),
           const SizedBox(height: 28),
           _LibraryHeader(
             title: '离线下载',
             actionLabel: '管理',
+            actionKey: const ValueKey('downloads-manage-button'),
             onAction: onDownloadsManageRequested,
           ),
           const SizedBox(height: 10),
@@ -130,10 +136,16 @@ class LibraryScreen extends StatelessWidget {
 }
 
 class _LibraryHeader extends StatelessWidget {
-  const _LibraryHeader({required this.title, this.actionLabel, this.onAction});
+  const _LibraryHeader({
+    required this.title,
+    this.actionLabel,
+    this.actionKey,
+    this.onAction,
+  });
 
   final String title;
   final String? actionLabel;
+  final Key? actionKey;
   final VoidCallback? onAction;
 
   @override
@@ -149,17 +161,26 @@ class _LibraryHeader extends StatelessWidget {
           ),
         ),
         if (actionLabel != null && onAction != null)
-          TextButton(onPressed: onAction, child: Text(actionLabel!)),
+          TextButton(
+            key: actionKey,
+            onPressed: onAction,
+            child: Text(actionLabel!),
+          ),
       ],
     );
   }
 }
 
 class _ContinuedReadCard extends StatelessWidget {
-  const _ContinuedReadCard({required this.item, required this.onOpen});
+  const _ContinuedReadCard({
+    required this.item,
+    required this.onResume,
+    required this.onOpenDetails,
+  });
 
   final LibraryContinuedRead item;
-  final VoidCallback onOpen;
+  final VoidCallback onResume;
+  final VoidCallback? onOpenDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -169,36 +190,63 @@ class _ContinuedReadCard extends StatelessWidget {
         '${item.position.chapterId} · ${item.position.blockId}';
     return Card.outlined(
       margin: EdgeInsets.zero,
-      child: InkWell(
-        key: ValueKey('continued-read-${item.novel.id}'),
-        onTap: onOpen,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.novel.chineseTitle,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Semantics(
+            button: true,
+            label: '继续阅读：${item.novel.chineseTitle}，$positionLabel，$percent%',
+            child: InkWell(
+              key: ValueKey('continued-read-${item.novel.id}'),
+              onTap: onResume,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.novel.chineseTitle,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text('$positionLabel · $percent%'),
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(value: item.progress),
+                  ],
+                ),
               ),
-              const SizedBox(height: 5),
-              Text('$positionLabel · $percent%'),
-              const SizedBox(height: 10),
-              LinearProgressIndicator(value: item.progress),
-            ],
+            ),
           ),
-        ),
+          if (onOpenDetails != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+                child: TextButton.icon(
+                  key: ValueKey('continued-read-details-${item.novel.id}'),
+                  onPressed: onOpenDetails,
+                  icon: const Icon(Icons.info_outline),
+                  label: const Text('小说详情'),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 }
 
 class _RemoteFavorites extends StatelessWidget {
-  const _RemoteFavorites({required this.favorites, super.key});
+  const _RemoteFavorites({
+    required this.favorites,
+    required this.onOpenFolder,
+    super.key,
+  });
 
   final RemoteFavoritesViewModel favorites;
+  final ValueChanged<LibraryFavoriteFolder>? onOpenFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -220,6 +268,7 @@ class _RemoteFavorites extends StatelessWidget {
               key: ValueKey('favorite-folder-${folder.id}'),
               title: folder.title,
               count: folder.novelCount,
+              onOpen: onOpenFolder == null ? null : () => onOpenFolder!(folder),
             ),
         ],
       ),
@@ -228,10 +277,16 @@ class _RemoteFavorites extends StatelessWidget {
 }
 
 class _FolderCard extends StatelessWidget {
-  const _FolderCard({required this.title, required this.count, super.key});
+  const _FolderCard({
+    required this.title,
+    required this.count,
+    required this.onOpen,
+    super.key,
+  });
 
   final String title;
-  final int count;
+  final int? count;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -239,32 +294,40 @@ class _FolderCard extends StatelessWidget {
     return Card.filled(
       margin: EdgeInsets.zero,
       color: colors.secondaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Icon(
-              Icons.auto_stories_outlined,
-              color: colors.onSecondaryContainer,
+      clipBehavior: Clip.antiAlias,
+      child: Semantics(
+        button: onOpen != null,
+        label: '打开收藏夹：$title',
+        child: InkWell(
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Icon(
+                  Icons.auto_stories_outlined,
+                  color: colors.onSecondaryContainer,
+                ),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: colors.onSecondaryContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  count == null ? '远程收藏夹' : '$count 部小说',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colors.onSecondaryContainer,
+                  ),
+                ),
+              ],
             ),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: colors.onSecondaryContainer,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            Text(
-              '$count 部小说',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: colors.onSecondaryContainer,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -285,35 +348,11 @@ class _DownloadCard extends StatelessWidget {
         key: ValueKey('offline-download-${download.novel.id}'),
         leading: const CircleAvatar(child: Icon(Icons.download_done)),
         title: Text(download.novel.chineseTitle),
-        subtitle: Text(_downloadSummary(download)),
+        subtitle: Text(libraryDownloadSummary(download)),
         trailing: const Icon(Icons.chevron_right),
         onTap: onOpen,
       ),
     );
-  }
-
-  static String _downloadSummary(LibraryProtectedDownload download) {
-    final status = <String>[];
-    final failed = download.countWithState(DownloadTaskState.failed);
-    final paused = download.countWithState(DownloadTaskState.paused);
-    final active = download.chapters.where((chapter) {
-      return const {
-        DownloadTaskState.queued,
-        DownloadTaskState.fetching,
-        DownloadTaskState.validating,
-        DownloadTaskState.storing,
-      }.contains(chapter.taskState);
-    }).length;
-    if (failed > 0) status.add('$failed 章失败');
-    if (paused > 0) status.add('$paused 章暂停');
-    if (active > 0) status.add('$active 章下载中');
-    if (download.translationPendingCount > 0) {
-      status.add('${download.translationPendingCount} 章待翻译');
-    }
-    if (status.isEmpty) status.add('已存储');
-    return '${download.chapters.length} 章 · '
-        '${download.translationSource.label} · '
-        '${formatStorageBytes(download.totalBytes)} · ${status.join(' · ')}';
   }
 }
 

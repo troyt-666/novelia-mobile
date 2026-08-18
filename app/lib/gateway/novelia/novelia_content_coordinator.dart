@@ -97,6 +97,13 @@ abstract interface class NoveliaContentCoordinator {
   });
 }
 
+/// Optional synchronous cache boundary used by the reader to paint before a
+/// live revalidation completes. Implementations must apply the same content
+/// authorization rules as their live chapter path.
+abstract interface class NoveliaChapterCacheReader {
+  NovelChapter? cachedChapter(CatalogNovel novel, {required String chapterId});
+}
+
 typedef NoveliaClock = DateTime Function();
 
 typedef NoveliaChapterCachedCallback =
@@ -107,7 +114,8 @@ typedef NoveliaChapterCachedCallback =
 /// Catalog and detail operations never fetch chapter bodies. A chapter body is
 /// fetched only through [loadChapter], where its payload and evictable Cache
 /// Copy are stored atomically.
-class LiveFirstNoveliaContentCoordinator implements NoveliaContentCoordinator {
+class LiveFirstNoveliaContentCoordinator
+    implements NoveliaContentCoordinator, NoveliaChapterCacheReader {
   LiveFirstNoveliaContentCoordinator({
     required this.gateway,
     this.contentRepository,
@@ -129,6 +137,20 @@ class LiveFirstNoveliaContentCoordinator implements NoveliaContentCoordinator {
 
   final Set<String> _verifiedGeneralNovelIds = <String>{};
   final Set<String> _revokedRestrictedNovelIds = <String>{};
+
+  @override
+  NovelChapter? cachedChapter(CatalogNovel novel, {required String chapterId}) {
+    if (_revokedRestrictedNovelIds.contains(novel.id) ||
+        domainAdapter.isRestrictedCatalogNovel(novel)) {
+      return null;
+    }
+    final key = domainAdapter.keyFromStableId(novel.id);
+    final metadata = _chapterMetadata(novel, chapterId);
+    if (key == null || metadata == null || !_authorizeHydratedNovel(novel)) {
+      return null;
+    }
+    return _cachedChapter(novel.id, chapterId);
+  }
 
   @override
   Future<NoveliaContentResult<NoveliaCatalogSlice>> loadCatalog(
@@ -182,7 +204,10 @@ class LiveFirstNoveliaContentCoordinator implements NoveliaContentCoordinator {
     }
     try {
       final page = await gateway.listRankings(query);
-      final novels = _mapAndCacheOutlines(page.items);
+      final novels = _mapAndCacheOutlines(
+        page.items,
+        normalizeRankingCoverage: true,
+      );
       final declaredPage = int.tryParse(query.parameters['page'] ?? '1') ?? 1;
       return NoveliaContentResult.available(
         NoveliaCatalogSlice(
@@ -390,11 +415,15 @@ class LiveFirstNoveliaContentCoordinator implements NoveliaContentCoordinator {
   }
 
   List<CatalogNovel> _mapAndCacheOutlines(
-    Iterable<NoveliaNovelOutline> outlines,
-  ) {
+    Iterable<NoveliaNovelOutline> outlines, {
+    bool normalizeRankingCoverage = false,
+  }) {
     final novels = <CatalogNovel>[];
     final cachedById = _cachedOutlinesById();
-    for (final outline in outlines) {
+    for (final wireOutline in outlines) {
+      final outline = normalizeRankingCoverage
+          ? _normalizeRankingCoverage(wireOutline)
+          : wireOutline;
       final novelId = outline.key.stableId;
       if (domainAdapter.isRestrictedAttentions(outline.attentions)) {
         _revokeGeneralNovel(novelId);
@@ -413,6 +442,44 @@ class LiveFirstNoveliaContentCoordinator implements NoveliaContentCoordinator {
       _bestEffortCacheOutline(outline, previous: previous);
     }
     return List.unmodifiable(novels);
+  }
+
+  /// Ranking counters occasionally lead the endpoint's original-chapter total
+  /// by one while the novel is being synchronized. A translated chapter cannot
+  /// be readable beyond the reported original catalog, so cap only those
+  /// over-reported ranking counters. Negative values and ordinary catalog or
+  /// detail inconsistencies still fail closed through the domain adapter.
+  static NoveliaNovelOutline _normalizeRankingCoverage(
+    NoveliaNovelOutline outline,
+  ) {
+    final total = outline.totalChapters;
+    if (total < 0 ||
+        (outline.youdaoChapters >= 0 && outline.youdaoChapters <= total) &&
+            (outline.gptChapters >= 0 && outline.gptChapters <= total) &&
+            (outline.sakuraChapters >= 0 && outline.sakuraChapters <= total)) {
+      return outline;
+    }
+    if (outline.youdaoChapters < 0 ||
+        outline.gptChapters < 0 ||
+        outline.sakuraChapters < 0) {
+      return outline;
+    }
+    return NoveliaNovelOutline(
+      key: outline.key,
+      japaneseTitle: outline.japaneseTitle,
+      chineseTitle: outline.chineseTitle,
+      publicationType: outline.publicationType,
+      extra: outline.extra,
+      attentions: outline.attentions,
+      keywords: outline.keywords,
+      totalChapters: total,
+      originalChapters: outline.originalChapters,
+      baiduChapters: outline.baiduChapters,
+      youdaoChapters: outline.youdaoChapters.clamp(0, total),
+      gptChapters: outline.gptChapters.clamp(0, total),
+      sakuraChapters: outline.sakuraChapters.clamp(0, total),
+      updatedAt: outline.updatedAt,
+    );
   }
 
   NoveliaContentResult<NoveliaCatalogSlice> _catalogFailure(

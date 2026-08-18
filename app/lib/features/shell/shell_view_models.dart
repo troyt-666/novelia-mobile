@@ -26,6 +26,7 @@ class LibraryDownloadChapter {
     required this.byteCount,
     required this.translationAvailable,
     required this.taskState,
+    this.failure,
   }) {
     if (chapterId.isEmpty) throw ArgumentError.value(chapterId, 'chapterId');
     if (byteCount < 0) throw ArgumentError.value(byteCount, 'byteCount');
@@ -35,6 +36,7 @@ class LibraryDownloadChapter {
   final int byteCount;
   final bool translationAvailable;
   final DownloadTaskState taskState;
+  final DownloadFailure? failure;
 }
 
 class LibraryProtectedDownload {
@@ -42,18 +44,29 @@ class LibraryProtectedDownload {
     required this.novel,
     required this.translationSource,
     required List<LibraryDownloadChapter> chapters,
-  }) : chapters = List.unmodifiable(chapters) {
+    List<String> intentIds = const [],
+    this.enabled = true,
+  }) : chapters = List.unmodifiable(chapters),
+       intentIds = List.unmodifiable(intentIds) {
     final ids = <String>{};
     for (final chapter in chapters) {
       if (!ids.add(chapter.chapterId)) {
         throw ArgumentError('Download repeats chapter ${chapter.chapterId}.');
       }
     }
+    if (intentIds.any((id) => id.isEmpty) ||
+        intentIds.toSet().length != intentIds.length) {
+      throw ArgumentError('Download intent IDs must be non-empty and unique.');
+    }
   }
 
   final CatalogNovel novel;
   final TranslationSource translationSource;
   final List<LibraryDownloadChapter> chapters;
+  final List<String> intentIds;
+  final bool enabled;
+
+  String get groupKey => '${novel.id}::${translationSource.name}';
 
   int get totalBytes => chapters.fold(0, (sum, item) => sum + item.byteCount);
 
@@ -64,6 +77,22 @@ class LibraryProtectedDownload {
   int get translationPendingCount {
     return chapters.where((chapter) => !chapter.translationAvailable).length;
   }
+
+  int get retryableFailureCount => chapters
+      .where(
+        (chapter) =>
+            chapter.taskState == DownloadTaskState.failed &&
+            chapter.failure?.retryable == true,
+      )
+      .length;
+
+  int get permanentFailureCount => chapters
+      .where(
+        (chapter) =>
+            chapter.taskState == DownloadTaskState.failed &&
+            chapter.failure?.retryable != true,
+      )
+      .length;
 }
 
 class LibraryBookmarkItem {
@@ -84,12 +113,14 @@ class LibraryFavoriteFolder {
   const LibraryFavoriteFolder({
     required this.id,
     required this.title,
-    required this.novelCount,
+    this.novelCount,
   });
 
   final String id;
   final String title;
-  final int novelCount;
+
+  /// Null when the folder-list response does not provide a count.
+  final int? novelCount;
 }
 
 enum RemoteFavoritesStatus { unavailable, empty, available }
@@ -127,4 +158,28 @@ String formatStorageBytes(int bytes) {
   }
   final digits = value >= 100 ? 0 : (value >= 10 ? 1 : 2);
   return '${value.toStringAsFixed(digits)} ${units[unitIndex]}';
+}
+
+String libraryDownloadSummary(LibraryProtectedDownload download) {
+  final status = <String>[];
+  final failed = download.countWithState(DownloadTaskState.failed);
+  final paused = download.countWithState(DownloadTaskState.paused);
+  final active = download.chapters.where((chapter) {
+    return const {
+      DownloadTaskState.queued,
+      DownloadTaskState.fetching,
+      DownloadTaskState.validating,
+      DownloadTaskState.storing,
+    }.contains(chapter.taskState);
+  }).length;
+  if (failed > 0) status.add('$failed 章失败');
+  if (paused > 0 || !download.enabled) status.add('已暂停');
+  if (active > 0) status.add('$active 章下载中');
+  if (download.translationPendingCount > 0) {
+    status.add('${download.translationPendingCount} 章待翻译');
+  }
+  if (status.isEmpty) status.add('已存储');
+  return '${download.chapters.length} 章 · '
+      '${download.translationSource.label} · '
+      '${formatStorageBytes(download.totalBytes)} · ${status.join(' · ')}';
 }

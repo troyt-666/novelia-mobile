@@ -23,15 +23,20 @@ class RankingPageView {
     required this.pageNumber,
     required this.totalPages,
     required this.description,
-  });
+    this.firstRank = 1,
+  }) : assert(pageNumber > 0),
+       assert(totalPages >= 0),
+       assert(totalPages == 0 || pageNumber <= totalPages),
+       assert(firstRank > 0);
 
   final List<CatalogNovel> novels;
   final int pageNumber;
   final int totalPages;
   final String description;
+  final int firstRank;
 }
 
-typedef RankingsLoader = Future<RankingPageView> Function();
+typedef RankingsLoader = Future<RankingPageView> Function(int pageNumber);
 
 class RankingsScreen extends StatefulWidget {
   const RankingsScreen({
@@ -56,26 +61,35 @@ class _RankingsScreenState extends State<RankingsScreen> {
   RankingPeriod _period = RankingPeriod.overall;
   RankingPageView? _remotePage;
   Object? _remoteError;
+  var _requestedPage = 1;
+  var _requestGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    if (widget.loader != null) unawaited(_loadRemote());
+    if (widget.loader != null) unawaited(_loadRemote(1));
   }
 
-  Future<void> _loadRemote() async {
+  Future<void> _loadRemote([int? pageNumber]) async {
     final loader = widget.loader;
     if (loader == null) return;
+    final targetPage = pageNumber ?? _requestedPage;
+    if (targetPage < 1) return;
+    final generation = ++_requestGeneration;
+    _requestedPage = targetPage;
     setState(() {
       _remotePage = null;
       _remoteError = null;
     });
     try {
-      final page = await loader();
-      if (!mounted) return;
+      final page = await loader(targetPage);
+      if (!mounted || generation != _requestGeneration) return;
+      if (page.pageNumber != targetPage) {
+        throw StateError('Ranking loader returned a different page.');
+      }
       setState(() => _remotePage = page);
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() => _remoteError = error);
     }
   }
@@ -222,7 +236,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                         const SizedBox(height: 14),
                         FilledButton.icon(
                           key: const ValueKey('retry-rankings'),
-                          onPressed: _loadRemote,
+                          onPressed: () => _loadRemote(),
                           icon: const Icon(Icons.refresh),
                           label: const Text('重试'),
                         ),
@@ -247,7 +261,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                 else
                   for (var index = 0; index < page.novels.length; index++) ...[
                     _RankedNovelRow(
-                      rank: index + 1,
+                      rank: page.firstRank + index,
                       novel: page.novels[index],
                       onOpen: () => widget.onOpenNovel(page.novels[index]),
                     ),
@@ -256,9 +270,33 @@ class _RankingsScreenState extends State<RankingsScreen> {
                 if (page.totalPages > 1)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      '当前显示第 ${page.pageNumber} / ${page.totalPages} 页',
-                      textAlign: TextAlign.center,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton.outlined(
+                          key: const ValueKey('rankings-previous-page'),
+                          tooltip: '上一页',
+                          onPressed: page.pageNumber <= 1
+                              ? null
+                              : () => _loadRemote(page.pageNumber - 1),
+                          icon: const Icon(Icons.chevron_left),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Text(
+                            '第 ${page.pageNumber} / ${page.totalPages} 页',
+                            key: const ValueKey('rankings-page-indicator'),
+                          ),
+                        ),
+                        IconButton.outlined(
+                          key: const ValueKey('rankings-next-page'),
+                          tooltip: '下一页',
+                          onPressed: page.pageNumber >= page.totalPages
+                              ? null
+                              : () => _loadRemote(page.pageNumber + 1),
+                          icon: const Icon(Icons.chevron_right),
+                        ),
+                      ],
                     ),
                   ),
               ],

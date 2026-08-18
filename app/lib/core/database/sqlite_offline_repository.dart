@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:sqlite3/sqlite3.dart';
 
+import '../account/account_sync_models.dart';
+import '../account/remote_history_outbox_repository.dart';
 import '../model/reader_models.dart';
 import '../offline/content_models.dart';
 import '../offline/content_repository.dart';
@@ -12,7 +14,11 @@ import 'local_state_repository.dart';
 
 /// Durable SQLite implementation of the offline and local-state contracts.
 final class SqliteOfflineRepository
-    implements OfflineRepository, LocalStateRepository, ContentRepository {
+    implements
+        OfflineRepository,
+        LocalStateRepository,
+        ContentRepository,
+        RemoteHistoryOutboxRepository {
   SqliteOfflineRepository._(this._database, this._closeDatabase);
 
   static Future<SqliteOfflineRepository> openApplicationSupport({
@@ -924,6 +930,76 @@ final class SqliteOfflineRepository
         _timestamp(progress.updatedAt),
       ],
     );
+  }
+
+  @override
+  void queueRemoteHistory(RemoteHistoryOutboxEntry entry) {
+    _checkOpen();
+    _database.execute(
+      '''
+      INSERT INTO remote_history_outbox (
+        novel_id, provider_id, service_novel_id, chapter_id, occurred_at_us
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(novel_id) DO UPDATE SET
+        provider_id = excluded.provider_id,
+        service_novel_id = excluded.service_novel_id,
+        chapter_id = excluded.chapter_id,
+        occurred_at_us = excluded.occurred_at_us
+      WHERE excluded.occurred_at_us >= remote_history_outbox.occurred_at_us;
+      ''',
+      [
+        entry.novelId,
+        entry.providerId,
+        entry.serviceNovelId,
+        entry.chapterId,
+        _timestamp(entry.occurredAt),
+      ],
+    );
+  }
+
+  @override
+  List<RemoteHistoryOutboxEntry> listRemoteHistoryOutbox() {
+    _checkOpen();
+    return List.unmodifiable(
+      _database
+          .select(
+            'SELECT * FROM remote_history_outbox '
+            'ORDER BY occurred_at_us, novel_id;',
+          )
+          .map(
+            (row) => RemoteHistoryOutboxEntry(
+              novelId: _string(row['novel_id']),
+              providerId: _string(row['provider_id']),
+              serviceNovelId: _string(row['service_novel_id']),
+              chapterId: _string(row['chapter_id']),
+              occurredAt: _dateTime(row['occurred_at_us']),
+            ),
+          ),
+    );
+  }
+
+  @override
+  bool removeRemoteHistoryIfUnchanged(RemoteHistoryOutboxEntry entry) {
+    _checkOpen();
+    _database.execute(
+      'DELETE FROM remote_history_outbox '
+      'WHERE novel_id = ? AND provider_id = ? AND service_novel_id = ? '
+      'AND chapter_id = ? AND occurred_at_us = ?;',
+      [
+        entry.novelId,
+        entry.providerId,
+        entry.serviceNovelId,
+        entry.chapterId,
+        _timestamp(entry.occurredAt),
+      ],
+    );
+    return _database.updatedRows == 1;
+  }
+
+  @override
+  void clearRemoteHistoryOutbox() {
+    _checkOpen();
+    _database.execute('DELETE FROM remote_history_outbox;');
   }
 
   @override

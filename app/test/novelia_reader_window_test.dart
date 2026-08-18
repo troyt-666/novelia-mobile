@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:novelia_reader/core/model/reader_models.dart';
 import 'package:novelia_reader/features/discover/catalog_models.dart';
@@ -8,7 +10,7 @@ import 'package:novelia_reader/gateway/novelia/novelia_reader_window.dart';
 
 void main() {
   test(
-    'launches only requested target plus neighbors and preserves TOC order',
+    'loads the requested target first and defers uncached neighbors',
     () async {
       final chapters = [
         _metadata('c1', 1),
@@ -33,13 +35,9 @@ void main() {
         translationSource: TranslationSource.gpt,
       );
 
-      expect(coordinator.chapterCalls, ['c2', 'c3', 'c4']);
+      expect(coordinator.chapterCalls, ['c3']);
       expect(coordinator.sources, everyElement(TranslationSource.gpt));
-      expect(launch.novel.chapters.map((chapter) => chapter.id), [
-        'c2',
-        'c3',
-        'c4',
-      ]);
+      expect(launch.novel.chapters.map((chapter) => chapter.id), ['c3']);
       expect(launch.initialPosition, same(requested));
       expect(launch.dataSource!.catalog.map((chapter) => chapter.id), [
         'c1',
@@ -58,15 +56,58 @@ void main() {
       );
       expect(end.chapters, isEmpty);
       expect(end.after, ReaderBoundaryStatus.endOfCatalog);
-      expect(coordinator.chapterCalls, ['c2', 'c3', 'c4']);
+      expect(coordinator.chapterCalls, ['c3']);
 
       final catalogLoad = await launch.dataSource!.loadAround('c1');
-      expect(catalogLoad.chapters.map((chapter) => chapter.id), ['c1', 'c2']);
+      expect(catalogLoad.chapters.map((chapter) => chapter.id), ['c1']);
       expect(catalogLoad.before, ReaderBoundaryStatus.endOfCatalog);
       expect(catalogLoad.after, ReaderBoundaryStatus.loadable);
-      expect(coordinator.chapterCalls, ['c2', 'c3', 'c4', 'c1']);
+      expect(coordinator.chapterCalls, ['c3', 'c1']);
     },
   );
+
+  test('cached window does not wait for live revalidation', () async {
+    final chapters = [
+      _metadata('c1', 1),
+      _metadata('c2', 2),
+      _metadata('c3', 3),
+    ];
+    final pendingRefreshes = {
+      for (final chapter in chapters)
+        chapter.id: Completer<NoveliaContentResult<NovelChapter>>(),
+    };
+    final coordinator = _WindowCoordinator(
+      const {},
+      cachedResponses: {
+        for (final chapter in chapters) chapter.id: _loaded(chapter),
+      },
+      pendingResponses: pendingRefreshes,
+    );
+
+    final launch =
+        await NoveliaReaderWindowFactory(contentCoordinator: coordinator)
+            .create(
+              novel: _novel(chapters),
+              selectedChapter: chapters[1],
+              requestedPosition: null,
+              translationSource: TranslationSource.sakura,
+            )
+            .timeout(const Duration(seconds: 1));
+
+    expect(launch.novel.chapters.map((chapter) => chapter.id), [
+      'c1',
+      'c2',
+      'c3',
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    expect(coordinator.chapterCalls, unorderedEquals(['c1', 'c2', 'c3']));
+    for (final chapter in chapters) {
+      pendingRefreshes[chapter.id]!.complete(
+        NoveliaContentResult.available(_loaded(chapter)),
+      );
+    }
+    await Future<void>.delayed(Duration.zero);
+  });
 
   test(
     'uses cached chapters and marks an offline missing neighbor unavailable',
@@ -76,11 +117,17 @@ void main() {
         _metadata('c2', 2),
         _metadata('c3', 3),
       ];
-      final coordinator = _WindowCoordinator({
-        'c1': NoveliaContentResult.offline(cachedData: _loaded(chapters[0])),
-        'c2': NoveliaContentResult.available(_loaded(chapters[1])),
-        'c3': NoveliaContentResult.offline(failure: _networkFailure),
-      });
+      final coordinator = _WindowCoordinator(
+        {
+          'c1': NoveliaContentResult.offline(cachedData: _loaded(chapters[0])),
+          'c2': NoveliaContentResult.available(_loaded(chapters[1])),
+          'c3': NoveliaContentResult.offline(failure: _networkFailure),
+        },
+        cachedResponses: {
+          'c1': _loaded(chapters[0]),
+          'c2': _loaded(chapters[1]),
+        },
+      );
       final launch =
           await NoveliaReaderWindowFactory(
             contentCoordinator: coordinator,
@@ -95,7 +142,7 @@ void main() {
       final around = await launch.dataSource!.loadAround('c2');
       expect(around.chapters.map((chapter) => chapter.id), ['c1', 'c2']);
       expect(around.before, ReaderBoundaryStatus.endOfCatalog);
-      expect(around.after, ReaderBoundaryStatus.unavailable);
+      expect(around.after, ReaderBoundaryStatus.loadable);
 
       final unavailable = await launch.dataSource!.loadAdjacent(
         const ReaderAdjacentRequest(
@@ -105,6 +152,9 @@ void main() {
       );
       expect(unavailable.chapters, isEmpty);
       expect(unavailable.after, ReaderBoundaryStatus.unavailable);
+
+      final afterFailure = await launch.dataSource!.loadAround('c2');
+      expect(afterFailure.after, ReaderBoundaryStatus.unavailable);
 
       final noNeighbor = await launch.dataSource!.loadAdjacent(
         const ReaderAdjacentRequest(
@@ -176,12 +226,26 @@ NovelChapter _loaded(NovelChapter metadata) {
   );
 }
 
-class _WindowCoordinator implements NoveliaContentCoordinator {
-  _WindowCoordinator(this.responses);
+class _WindowCoordinator
+    implements NoveliaContentCoordinator, NoveliaChapterCacheReader {
+  _WindowCoordinator(
+    this.responses, {
+    this.cachedResponses = const {},
+    this.pendingResponses = const {},
+  });
 
   final Map<String, NoveliaContentResult<NovelChapter>> responses;
+  final Map<String, NovelChapter> cachedResponses;
+  final Map<String, Completer<NoveliaContentResult<NovelChapter>>>
+  pendingResponses;
   final List<String> chapterCalls = [];
   final List<TranslationSource> sources = [];
+
+  @override
+  NovelChapter? cachedChapter(
+    CatalogNovel novel, {
+    required String chapterId,
+  }) => cachedResponses[chapterId];
 
   @override
   Future<NoveliaContentResult<NovelChapter>> loadChapter(
@@ -191,6 +255,8 @@ class _WindowCoordinator implements NoveliaContentCoordinator {
   }) async {
     chapterCalls.add(chapterId);
     sources.add(cacheTranslationSource);
+    final pending = pendingResponses[chapterId];
+    if (pending != null) return pending.future;
     return responses[chapterId] ??
         NoveliaContentResult.offline(failure: _networkFailure);
   }

@@ -76,6 +76,43 @@ void main() {
         expect(copy.payloadId, isNotNull);
         expect(copy.translationSource, TranslationSource.youdao);
         expect(cachedChapters, ['${_key.stableId}::c1']);
+        expect(
+          coordinator.cachedChapter(detail.data!, chapterId: 'c1')?.id,
+          'c1',
+        );
+      },
+    );
+
+    test(
+      'caps an over-reported ranking counter at the original total',
+      () async {
+        final store = _MemoryStore();
+        final gateway = _FakeGateway(
+          catalogPage: NoveliaPage(
+            items: [_outline(totalChapters: 190, youdaoChapters: 191)],
+            pageCount: 2,
+          ),
+          details: _details(),
+        );
+        final coordinator = LiveFirstNoveliaContentCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+          clock: () => now,
+        );
+
+        final result = await coordinator.loadRankings(
+          NoveliaRankingQuery.syosetu(page: 1),
+        );
+
+        expect(result.availability, CatalogAvailability.available);
+        expect(result.data!.totalPages, 2);
+        final novel = result.data!.novels.single;
+        expect(novel.declaredChapterCount, 190);
+        expect(
+          novel.coverageFor(TranslationSource.youdao.label)!.translatedChapters,
+          190,
+        );
+        expect(store.listCachedNovels(), hasLength(1));
       },
     );
 
@@ -701,7 +738,11 @@ const _networkFailure = NoveliaGatewayException(
   'offline',
 );
 
-NoveliaNovelOutline _outline({List<String> attentions = const ['一般向']}) {
+NoveliaNovelOutline _outline({
+  List<String> attentions = const ['一般向'],
+  int totalChapters = 2,
+  int? youdaoChapters,
+}) {
   return NoveliaNovelOutline(
     key: _key,
     japaneseTitle: '夜の列車',
@@ -710,12 +751,12 @@ NoveliaNovelOutline _outline({List<String> attentions = const ['一般向']}) {
     extra: null,
     attentions: attentions,
     keywords: const ['幻想'],
-    totalChapters: 2,
-    originalChapters: 2,
+    totalChapters: totalChapters,
+    originalChapters: totalChapters,
     baiduChapters: 0,
-    youdaoChapters: 2,
-    gptChapters: 1,
-    sakuraChapters: 1,
+    youdaoChapters: youdaoChapters ?? totalChapters,
+    gptChapters: totalChapters == 0 ? 0 : 1,
+    sakuraChapters: totalChapters == 0 ? 0 : 1,
     updatedAt: DateTime.utc(2026, 8, 17),
   );
 }

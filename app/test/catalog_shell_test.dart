@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:novelia_reader/core/account/account_models.dart';
 import 'package:novelia_reader/core/model/reader_models.dart';
+import 'package:novelia_reader/features/account/remote_novel_list_screen.dart';
 import 'package:novelia_reader/features/discover/catalog_models.dart';
 import 'package:novelia_reader/features/discover/discover_screen.dart';
 import 'package:novelia_reader/features/novel_details/novel_details_screen.dart';
 import 'package:novelia_reader/features/shell/novelia_shell.dart';
+import 'package:novelia_reader/features/shell/shell_view_models.dart';
 import 'package:novelia_reader/fixtures/catalog_fixture.dart';
 
 void main() {
@@ -22,7 +25,15 @@ void main() {
     NovelDownloadRequested? onDownloadRequested,
     CatalogCriteriaRequested? onCatalogCriteriaRequested,
     ValueChanged<CatalogNovel>? onFavoriteRequested,
+    AccountSessionSnapshot accountSession =
+        const AccountSessionSnapshot.signedOut(),
+    RemoteFavoritesViewModel remoteFavorites =
+        const RemoteFavoritesViewModel.unavailable(),
+    FavoriteToFolderRequested? onFavoriteToFolderRequested,
+    FavoriteFolderPageLoader? favoriteFolderLoader,
+    RemoteNovelPageLoader? readingHistoryLoader,
     ValueChanged<CatalogNovel>? onOpenOriginalRequested,
+    List<LibraryContinuedRead> continuedReads = const [],
   }) async {
     tester.view.physicalSize = const Size(430, 932);
     tester.view.devicePixelRatio = 1;
@@ -40,7 +51,13 @@ void main() {
           onDownloadRequested: onDownloadRequested,
           onCatalogCriteriaRequested: onCatalogCriteriaRequested,
           onFavoriteRequested: onFavoriteRequested,
+          accountSession: accountSession,
+          remoteFavorites: remoteFavorites,
+          onFavoriteToFolderRequested: onFavoriteToFolderRequested,
+          favoriteFolderLoader: favoriteFolderLoader,
+          readingHistoryLoader: readingHistoryLoader,
           onOpenOriginalRequested: onOpenOriginalRequested,
+          continuedReads: continuedReads,
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           readerBuilder:
@@ -75,6 +92,145 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('nav-settings')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings-theme-mode')), findsOneWidget);
+  });
+
+  testWidgets('favorite folders and Reading History open remote pages', (
+    tester,
+  ) async {
+    final profile = ReaderAccountProfile(
+      username: 'reader',
+      role: 'member',
+      issuedAt: DateTime.utc(2026, 8, 18),
+      createdAt: DateTime.utc(2026, 1, 1),
+      expiresAt: DateTime.utc(2026, 8, 19),
+    );
+    final favoriteRequests = <(String, int)>[];
+    final historyRequests = <int>[];
+    await pumpShell(
+      tester,
+      accountSession: AccountSessionSnapshot.signedIn(profile),
+      remoteFavorites: RemoteFavoritesViewModel.available(const [
+        LibraryFavoriteFolder(id: 'default', title: '默认收藏夹'),
+      ]),
+      favoriteFolderLoader: (folderId, page) async {
+        favoriteRequests.add((folderId, page));
+        return RemoteNovelPageView(
+          novels: [fixtureCatalogNovels.first],
+          pageNumber: page,
+          totalPages: 1,
+        );
+      },
+      readingHistoryLoader: (page) async {
+        historyRequests.add(page);
+        return RemoteNovelPageView(
+          novels: [fixtureCatalogNovels[1]],
+          pageNumber: page,
+          totalPages: 1,
+        );
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('favorite-folder-default')));
+    await tester.pumpAndSettle();
+    expect(find.text(fixtureCatalogNovels.first.chineseTitle), findsOneWidget);
+    expect(favoriteRequests, [('default', 1)]);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('阅读历史'));
+    await tester.pumpAndSettle();
+    expect(find.text(fixtureCatalogNovels[1].chineseTitle), findsOneWidget);
+    expect(historyRequests, [1]);
+  });
+
+  testWidgets('Discover continued reading resumes and exposes novel details', (
+    tester,
+  ) async {
+    final novel = fixtureCatalogNovels.first;
+    final chapter = novel.readerNovel!.chapters.first;
+    final position = ReadingPosition(
+      chapterId: chapter.id,
+      blockId: chapter.blocks.first.id,
+    );
+    ReadingPosition? openedPosition;
+    await pumpShell(
+      tester,
+      continuedReads: [
+        LibraryContinuedRead(novel: novel, position: position, progress: 0.25),
+      ],
+      onReaderOpened: (_, data) => openedPosition = data.initialPosition,
+    );
+
+    final details = find.byKey(ValueKey('continued-details-${novel.id}'));
+    expect(details, findsOneWidget);
+    await tester.tap(details);
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('novel-details-${novel.id}')), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('continue-reading-${novel.id}')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fixture-reader-route')), findsOneWidget);
+    expect(openedPosition, position);
+  });
+
+  testWidgets('most-clicked cards fit long live metadata on Android widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final liveNovel = CatalogNovel(
+      id: 'hameln/live-overflow',
+      chineseTitle: '转生成为和风奇幻忧郁黄游的无名战斗员，周遭的女孩们',
+      japaneseTitle: '和風ファンタジーな鬱エロゲーの無名戦闘員',
+      source: 'Hameln',
+      publicationState: NovelPublicationState.ongoing,
+      declaredChapterCount: 260,
+      tags: const [],
+      translationCoverage: const [
+        TranslationCoverage(
+          source: '有道',
+          translatedChapters: 260,
+          totalChapters: 260,
+        ),
+        TranslationCoverage(
+          source: 'GPT',
+          translatedChapters: 255,
+          totalChapters: 260,
+        ),
+        TranslationCoverage(
+          source: 'Sakura',
+          translatedChapters: 258,
+          totalChapters: 260,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+            child: DiscoverScreen(
+              novels: [liveNovel],
+              mostClickedNovels: [liveNovel],
+              catalogAvailability: CatalogAvailability.available,
+              onOpenNovel: (_) {},
+              onOpenRankings: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('most-clicked-shelf')), findsOneWidget);
   });
 
   testWidgets('catalog search and filters narrow fixture results', (
@@ -227,6 +383,10 @@ void main() {
   testWidgets('known remote catalog total replaces loaded-page wording', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -327,6 +487,49 @@ void main() {
     expect(original, same(novel));
   });
 
+  testWidgets('multiple remote folders require explicit confirmation', (
+    tester,
+  ) async {
+    final profile = ReaderAccountProfile(
+      username: 'reader',
+      role: 'member',
+      issuedAt: DateTime.utc(2026, 8, 18),
+      createdAt: DateTime.utc(2026, 1, 1),
+      expiresAt: DateTime.utc(2026, 8, 19),
+    );
+    CatalogNovel? favorite;
+    String? folderId;
+    final novel = fixtureCatalogNovels.first;
+    await pumpShell(
+      tester,
+      accountSession: AccountSessionSnapshot.signedIn(profile),
+      remoteFavorites: RemoteFavoritesViewModel.available(const [
+        LibraryFavoriteFolder(id: 'default', title: '默认收藏夹'),
+        LibraryFavoriteFolder(id: 'later', title: '以后读'),
+      ]),
+      onFavoriteToFolderRequested: (value, selectedFolderId) {
+        favorite = value;
+        folderId = selectedFolderId;
+      },
+    );
+
+    await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('favorite-novel-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('收藏到…'), findsOneWidget);
+    expect(favorite, isNull);
+
+    await tester.tap(
+      find.byKey(const ValueKey('favorite-folder-choice-later')),
+    );
+    await tester.tap(find.byKey(const ValueKey('confirm-favorite-folder')));
+    await tester.pumpAndSettle();
+
+    expect(favorite, same(novel));
+    expect(folderId, 'later');
+  });
+
   testWidgets('opening a filtered result commits local search history', (
     tester,
   ) async {
@@ -387,7 +590,7 @@ void main() {
     );
   });
 
-  testWidgets('details place chapters before paginated comments with replies', (
+  testWidgets('chapter catalog starts folded and can expand and fold again', (
     tester,
   ) async {
     final novel = fixtureCatalogNovels.first;
@@ -402,11 +605,43 @@ void main() {
     );
 
     final firstChapter = find.byKey(const ValueKey('chapter-chapter-1'));
+    final toggle = find.byKey(const ValueKey('toggle-chapters-button'));
+    await tester.scrollUntilVisible(toggle, 500);
+    expect(firstChapter, findsNothing);
+    expect(find.text('展开目录'), findsOneWidget);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(firstChapter, 500);
     expect(firstChapter, findsOneWidget);
+    expect(find.text('收起目录'), findsOneWidget);
+
+    await tester.scrollUntilVisible(toggle, 500);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(firstChapter, findsNothing);
+    expect(find.text('展开目录'), findsOneWidget);
+  });
+
+  testWidgets('folded chapters keep paginated comments readily reachable', (
+    tester,
+  ) async {
+    final novel = fixtureCatalogNovels.first;
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NovelDetailsScreen(novel: novel, onOpenReader: (_) {}),
+      ),
+    );
 
     final comments = find.text('读者评论');
     await tester.scrollUntilVisible(comments, 500);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -240));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chapter-chapter-1')), findsNothing);
     expect(find.byKey(const ValueKey('comments-page-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('comment-reply-reply-1')), findsOneWidget);
 
@@ -514,6 +749,10 @@ void main() {
       findsOneWidget,
     );
 
+    final toggle = find.byKey(const ValueKey('toggle-chapters-button'));
+    await tester.scrollUntilVisible(toggle, 500);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
     final chapter = find.byKey(const ValueKey('chapter-chapter-2'));
     await tester.scrollUntilVisible(chapter, 500);
     await tester.tap(chapter);
@@ -613,6 +852,10 @@ void main() {
 
     await tester.tap(find.byKey(ValueKey('open-details-${hydrated.id}')).first);
     await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('toggle-chapters-button'));
+    await tester.scrollUntilVisible(toggle, 500);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
     final chapter = find.byKey(ValueKey('chapter-${selected.id}'));
     await tester.scrollUntilVisible(chapter, 500);
     await tester.tap(chapter);
@@ -669,6 +912,8 @@ void main() {
     );
 
     await tester.scrollUntilVisible(find.text('读者评论'), 500);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -180));
+    await tester.pump();
     expect(find.byKey(const ValueKey('comments-page-loading')), findsOneWidget);
     firstPage.complete(
       NovelCommentPage(
