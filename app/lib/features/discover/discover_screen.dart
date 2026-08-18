@@ -27,6 +27,7 @@ class DiscoverScreen extends StatefulWidget {
     this.mostClickedNovels = const [],
     this.recentSearches = const [],
     this.onSearchCommitted,
+    this.onTagSelected,
     this.mode = DiscoverScreenMode.combined,
     super.key,
   });
@@ -52,6 +53,9 @@ class DiscoverScreen extends StatefulWidget {
   final List<CatalogNovel> mostClickedNovels;
   final List<String> recentSearches;
   final ValueChanged<String>? onSearchCommitted;
+
+  /// Handles a tag selected from a discovery card.
+  final ValueChanged<String>? onTagSelected;
   final DiscoverScreenMode mode;
 
   @override
@@ -412,6 +416,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   onOpenDetails: widget.onContinueReading == null
                       ? null
                       : () => widget.onOpenNovel(continued),
+                  onTagSelected: widget.onTagSelected,
                 ),
               ),
             ),
@@ -504,6 +509,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                     return CatalogNovelCard(
                       novel: novel,
                       onOpen: () => widget.onOpenNovel(novel),
+                      onTagSelected: widget.onTagSelected,
                     );
                   },
                 ),

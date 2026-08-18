@@ -744,6 +744,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
         mostClickedNovels: widget.mostClickedNovels,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
+        onTagSelected: (tag) =>
+            _openRemoteCatalogCriteria(CatalogCriteria(exactTag: tag)),
       ),
       DiscoverScreen(
         mode: DiscoverScreenMode.search,

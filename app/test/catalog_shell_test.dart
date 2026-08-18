@@ -100,6 +100,45 @@ void main() {
     expect(find.byKey(const ValueKey('settings-theme-mode')), findsOneWidget);
   });
 
+  testWidgets('discovery exposes every tag and opens its catalog results', (
+    tester,
+  ) async {
+    const tags = ['R15', '残酷描写', 'ブルーアーカイブ', 'アンチ・ヘイト', '転生', '学園'];
+    final novel = CatalogNovel(
+      id: 'six-tag-novel',
+      chineseTitle: '显示全部标签的小说',
+      japaneseTitle: 'すべてのタグを表示する小説',
+      source: 'Hameln',
+      publicationState: NovelPublicationState.ongoing,
+      updatedAt: DateTime.utc(2026, 8, 18),
+      tags: tags,
+      translationCoverage: const [],
+      declaredChapterCount: 1,
+    );
+    await pumpShell(tester, novels: [novel]);
+
+    for (final tag in tags) {
+      expect(
+        find.byKey(ValueKey('catalog-tag-${novel.id}-$tag')),
+        findsOneWidget,
+      );
+    }
+
+    final tag = tags.last;
+    final tagFinder = find.byKey(ValueKey('catalog-tag-${novel.id}-$tag'));
+    expect(tester.widget<ActionChip>(tagFinder).onPressed, isNotNull);
+    await tester.scrollUntilVisible(
+      tagFinder,
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(tagFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('discover-search-field')), findsOneWidget);
+    expect(find.text('标签“$tag” · 1 部'), findsOneWidget);
+  });
+
   testWidgets('favorite folders and Reading History open remote pages', (
     tester,
   ) async {

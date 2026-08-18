@@ -106,13 +106,17 @@ class CatalogNovelCard extends StatelessWidget {
                     if (!compact) ...[
                       const SizedBox(height: 10),
                       Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
+                        spacing: 4,
+                        runSpacing: 2,
                         children: [
-                          for (final tag in novel.tags.take(4))
+                          for (final tag in novel.tags)
                             ActionChip(
                               key: ValueKey('catalog-tag-${novel.id}-$tag'),
                               visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              labelPadding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
                               label: Text(tag),
                               onPressed: onTagSelected == null
                                   ? null
