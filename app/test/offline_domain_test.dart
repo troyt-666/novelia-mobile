@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/core/offline/offline_models.dart';
-import 'package:novelia_reader/core/offline/offline_repository.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/offline/offline_repository.dart';
 
 void main() {
   final t0 = DateTime.utc(2026, 8, 17, 1);

@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/features/discover/catalog_models.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_content_cache_adapter.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_domain_adapter.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_gateway.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
+import 'package:jfzreader/gateway/novelia/novelia_domain_adapter.dart';
+import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 
 void main() {
   const adapter = NoveliaDomainAdapter();

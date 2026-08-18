@@ -1,14 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/core/offline/content_models.dart';
-import 'package:novelia_reader/core/offline/offline_models.dart';
-import 'package:novelia_reader/core/offline/offline_repository.dart';
-import 'package:novelia_reader/features/discover/catalog_models.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_content_cache_adapter.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_content_coordinator.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_download_coordinator.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_domain_adapter.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_gateway.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/content_models.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/offline/offline_repository.dart';
+import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
+import 'package:jfzreader/gateway/novelia/novelia_download_coordinator.dart';
+import 'package:jfzreader/gateway/novelia/novelia_domain_adapter.dart';
+import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 17, 12);

@@ -1,4 +1,4 @@
-name: novelia_reader
+name: jfzreader
 description: "Chinese-first bilingual offline reader for Novelia-compatible Web Novels."
 publish_to: 'none'
 version: 1.0.0+1

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/core/offline/offline_models.dart';
-import 'package:novelia_reader/features/shell/library_screen.dart';
-import 'package:novelia_reader/features/shell/settings_screen.dart';
-import 'package:novelia_reader/features/shell/shell_view_models.dart';
-import 'package:novelia_reader/fixtures/catalog_fixture.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/features/shell/library_screen.dart';
+import 'package:jfzreader/features/shell/settings_screen.dart';
+import 'package:jfzreader/features/shell/shell_view_models.dart';
+import 'package:jfzreader/fixtures/catalog_fixture.dart';
 
 void main() {
   Future<void> pumpScreen(WidgetTester tester, Widget screen) async {

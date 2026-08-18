@@ -11,7 +11,9 @@ abstract interface class ExternalLinkLauncher {
 class MethodChannelExternalLinkLauncher implements ExternalLinkLauncher {
   const MethodChannelExternalLinkLauncher();
 
-  static const _channel = MethodChannel('dev.novelia/external_links');
+  static const _channel = MethodChannel(
+    'io.github.troyt666.jfzreader/external_links',
+  );
 
   @override
   Future<void> open(Uri uri) async {

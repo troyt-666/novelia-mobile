@@ -1,10 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/gateway/novelia/http_novelia_gateway.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_gateway.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_reader_adapter.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
+import 'package:jfzreader/gateway/novelia/http_novelia_gateway.dart';
+import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
+import 'package:jfzreader/gateway/novelia/novelia_reader_adapter.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
 
 void main() {
   const codec = NoveliaJsonCodec();

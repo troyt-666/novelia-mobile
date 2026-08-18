@@ -1,12 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/database/sqlite_offline_repository.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/core/offline/content_models.dart';
-import 'package:novelia_reader/core/offline/content_repository.dart';
-import 'package:novelia_reader/core/offline/offline_models.dart';
-import 'package:novelia_reader/core/offline/offline_repository.dart';
+import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/content_models.dart';
+import 'package:jfzreader/core/offline/content_repository.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/offline/offline_repository.dart';
 
 void main() {
   final factories = <({String name, _Harness Function() create})>[

@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/account/account_models.dart';
-import 'package:novelia_reader/gateway/novelia/http_novelia_auth_gateway.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_auth_gateway.dart';
+import 'package:jfzreader/core/account/account_models.dart';
+import 'package:jfzreader/gateway/novelia/http_novelia_auth_gateway.dart';
+import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
 
 void main() {
   test('HTTP auth gateway carries and rotates only response cookies', () async {

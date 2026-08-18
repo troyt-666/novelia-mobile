@@ -3,11 +3,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/account/account_models.dart';
-import 'package:novelia_reader/core/account/account_session_controller.dart';
-import 'package:novelia_reader/core/account/secure_session_store.dart';
-import 'package:novelia_reader/features/account/account_screen.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_auth_gateway.dart';
+import 'package:jfzreader/core/account/account_models.dart';
+import 'package:jfzreader/core/account/account_session_controller.dart';
+import 'package:jfzreader/core/account/secure_session_store.dart';
+import 'package:jfzreader/features/account/account_screen.dart';
+import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
 
 void main() {
   group('account session controller', () {

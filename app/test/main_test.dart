@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/features/reader/reader_screen.dart';
-import 'package:novelia_reader/fixtures/reader_fixture.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/features/reader/reader_screen.dart';
+import 'package:jfzreader/fixtures/reader_fixture.dart';
 
 NovelChapter _windowChapter(int number, {int blockCount = 6}) {
   return NovelChapter(

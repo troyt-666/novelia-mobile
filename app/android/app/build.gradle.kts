@@ -17,12 +17,12 @@ fun releaseSigningValue(property: String, environment: String): String? =
         ?.trim()
         ?.takeIf(String::isNotEmpty)
 
-val releaseStoreFile = releaseSigningValue("storeFile", "NOVELIA_ANDROID_STORE_FILE")
+val releaseStoreFile = releaseSigningValue("storeFile", "JFZREADER_ANDROID_STORE_FILE")
 val releaseStorePassword =
-    releaseSigningValue("storePassword", "NOVELIA_ANDROID_STORE_PASSWORD")
-val releaseKeyAlias = releaseSigningValue("keyAlias", "NOVELIA_ANDROID_KEY_ALIAS")
+    releaseSigningValue("storePassword", "JFZREADER_ANDROID_STORE_PASSWORD")
+val releaseKeyAlias = releaseSigningValue("keyAlias", "JFZREADER_ANDROID_KEY_ALIAS")
 val releaseKeyPassword =
-    releaseSigningValue("keyPassword", "NOVELIA_ANDROID_KEY_PASSWORD")
+    releaseSigningValue("keyPassword", "JFZREADER_ANDROID_KEY_PASSWORD")
 val releaseSigningValues = listOf(
     releaseStoreFile,
     releaseStorePassword,
@@ -38,7 +38,7 @@ if (!hasReleaseSigning && releaseSigningValues.any { it != null }) {
 }
 
 android {
-    namespace = "dev.novelia.novelia_reader"
+    namespace = "io.github.troyt666.jfzreader"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -48,7 +48,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.novelia.novelia_reader"
+        applicationId = "io.github.troyt666.jfzreader"
         // Account sessions use an AES-GCM key held by Android Keystore.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion

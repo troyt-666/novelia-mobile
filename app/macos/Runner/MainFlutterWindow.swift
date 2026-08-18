@@ -15,7 +15,7 @@ class MainFlutterWindow: NSWindow {
 
     let registrar = flutterViewController.registrar(forPlugin: "ExternalLinkLauncher")
     let channel = FlutterMethodChannel(
-      name: "dev.novelia/external_links",
+      name: "io.github.troyt666.jfzreader/external_links",
       binaryMessenger: registrar.messenger)
     channel.setMethodCallHandler { call, result in
       guard call.method == "open" else {
@@ -41,7 +41,7 @@ class MainFlutterWindow: NSWindow {
     externalLinksChannel = channel
 
     let accountChannel = FlutterMethodChannel(
-      name: "dev.novelia/account_session",
+      name: "io.github.troyt666.jfzreader/account_session",
       binaryMessenger: registrar.messenger)
     accountChannel.setMethodCallHandler { call, result in
       switch call.method {
@@ -70,7 +70,7 @@ class MainFlutterWindow: NSWindow {
   }
 
   private static let accountSessionKey =
-    "dev.novelia.novelia_reader.account.session-v1"
+    "io.github.troyt666.jfzreader.account.session-v1"
 
   private static func readAccountSession() -> String? {
     return UserDefaults.standard.string(forKey: accountSessionKey)

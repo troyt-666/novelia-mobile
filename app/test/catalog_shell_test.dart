@@ -2,15 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/account/account_models.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/features/account/remote_novel_list_screen.dart';
-import 'package:novelia_reader/features/discover/catalog_models.dart';
-import 'package:novelia_reader/features/discover/discover_screen.dart';
-import 'package:novelia_reader/features/novel_details/novel_details_screen.dart';
-import 'package:novelia_reader/features/shell/novelia_shell.dart';
-import 'package:novelia_reader/features/shell/shell_view_models.dart';
-import 'package:novelia_reader/fixtures/catalog_fixture.dart';
+import 'package:jfzreader/core/account/account_models.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/features/account/remote_novel_list_screen.dart';
+import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/features/discover/discover_screen.dart';
+import 'package:jfzreader/features/novel_details/novel_details_screen.dart';
+import 'package:jfzreader/features/shell/novelia_shell.dart';
+import 'package:jfzreader/features/shell/shell_view_models.dart';
+import 'package:jfzreader/fixtures/catalog_fixture.dart';
 
 void main() {
   Future<void> pumpShell(

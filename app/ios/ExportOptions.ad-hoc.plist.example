@@ -10,7 +10,7 @@
 	<string>REPLACE_WITH_TEAM_ID</string>
 	<key>provisioningProfiles</key>
 	<dict>
-		<key>dev.novelia.noveliaReader</key>
+		<key>io.github.troyt666.jfzreader</key>
 		<string>REPLACE_WITH_AD_HOC_PROFILE_NAME</string>
 	</dict>
 	<key>stripSwiftSymbols</key>

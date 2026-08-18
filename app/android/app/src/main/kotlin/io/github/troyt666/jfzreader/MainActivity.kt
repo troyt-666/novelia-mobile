@@ -1,4 +1,4 @@
-package dev.novelia.novelia_reader
+package io.github.troyt666.jfzreader
 
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -18,14 +18,14 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : FlutterActivity() {
-    private val accountKeyAlias = "dev.novelia.reader.account.v1"
-    private val accountPreferences = "novelia_encrypted_account"
+    private val accountKeyAlias = "io.github.troyt666.jfzreader.account.v1"
+    private val accountPreferences = "jfzreader_encrypted_account"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "dev.novelia/external_links",
+            "io.github.troyt666.jfzreader/external_links",
         ).setMethodCallHandler { call, result ->
             if (call.method != "open") {
                 result.notImplemented()
@@ -47,7 +47,7 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "dev.novelia/account_session",
+            "io.github.troyt666.jfzreader/account_session",
         ).setMethodCallHandler { call, result ->
             try {
                 when (call.method) {

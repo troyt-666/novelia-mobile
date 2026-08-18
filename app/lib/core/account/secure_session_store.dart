@@ -20,7 +20,9 @@ abstract interface class AccountSessionStore {
 class MethodChannelAccountSessionStore implements AccountSessionStore {
   const MethodChannelAccountSessionStore();
 
-  static const _channel = MethodChannel('dev.novelia/account_session');
+  static const _channel = MethodChannel(
+    'io.github.troyt666.jfzreader/account_session',
+  );
 
   @override
   Future<StoredAccountSession?> read() async {

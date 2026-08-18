@@ -9,7 +9,7 @@ final class NoveliaDatabase {
   NoveliaDatabase._();
 
   static const int currentSchemaVersion = 5;
-  static const String defaultFileName = 'novelia-reader.sqlite3';
+  static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
     String fileName = defaultFileName,

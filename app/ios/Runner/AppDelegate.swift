@@ -22,7 +22,7 @@ import UIKit
       return
     }
     let channel = FlutterMethodChannel(
-      name: "dev.novelia/external_links",
+      name: "io.github.troyt666.jfzreader/external_links",
       binaryMessenger: registrar.messenger()
     )
     channel.setMethodCallHandler { call, result in
@@ -51,7 +51,7 @@ import UIKit
     externalLinksChannel = channel
 
     let accountChannel = FlutterMethodChannel(
-      name: "dev.novelia/account_session",
+      name: "io.github.troyt666.jfzreader/account_session",
       binaryMessenger: registrar.messenger()
     )
     accountChannel.setMethodCallHandler { call, result in
@@ -93,7 +93,7 @@ import UIKit
     accountSessionChannel = accountChannel
   }
 
-  private static let accountService = "dev.novelia.novelia_reader.account"
+  private static let accountService = "io.github.troyt666.jfzreader.account"
   private static let accountName = "session-v1"
 
   private static func accountQuery() -> [String: Any] {

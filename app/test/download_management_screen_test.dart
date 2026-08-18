@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/core/offline/offline_models.dart';
-import 'package:novelia_reader/features/shell/download_management_screen.dart';
-import 'package:novelia_reader/features/shell/shell_view_models.dart';
-import 'package:novelia_reader/fixtures/catalog_fixture.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/features/shell/download_management_screen.dart';
+import 'package:jfzreader/features/shell/shell_view_models.dart';
+import 'package:jfzreader/fixtures/catalog_fixture.dart';
 
 void main() {
   LibraryProtectedDownload download({required bool enabled}) {

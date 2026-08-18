@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/account/account_sync_models.dart';
-import 'package:novelia_reader/core/database/sqlite_offline_repository.dart';
-import 'package:novelia_reader/gateway/novelia/http_novelia_account_gateway.dart';
+import 'package:jfzreader/core/account/account_sync_models.dart';
+import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
+import 'package:jfzreader/gateway/novelia/http_novelia_account_gateway.dart';
 
 void main() {
   test('history outbox keeps newest activity and compare-deletes', () {

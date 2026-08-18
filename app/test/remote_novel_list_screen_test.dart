@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/features/account/remote_novel_list_screen.dart';
-import 'package:novelia_reader/features/discover/catalog_models.dart';
-import 'package:novelia_reader/fixtures/catalog_fixture.dart';
+import 'package:jfzreader/features/account/remote_novel_list_screen.dart';
+import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/fixtures/catalog_fixture.dart';
 
 void main() {
   testWidgets('loads authoritative pages and opens a selected novel', (

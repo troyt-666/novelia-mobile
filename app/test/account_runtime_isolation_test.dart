@@ -1,11 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/account/account_models.dart';
-import 'package:novelia_reader/core/account/account_session_controller.dart';
-import 'package:novelia_reader/core/account/account_sync_models.dart';
-import 'package:novelia_reader/core/account/secure_session_store.dart';
-import 'package:novelia_reader/core/database/sqlite_offline_repository.dart';
-import 'package:novelia_reader/gateway/novelia/novelia_auth_gateway.dart';
-import 'package:novelia_reader/main.dart';
+import 'package:jfzreader/core/account/account_models.dart';
+import 'package:jfzreader/core/account/account_session_controller.dart';
+import 'package:jfzreader/core/account/account_sync_models.dart';
+import 'package:jfzreader/core/account/secure_session_store.dart';
+import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
+import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
+import 'package:jfzreader/main.dart';
 
 void main() {
   testWidgets('signed-out restoration clears only account history outbox', (

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/fixtures/reader_fixture.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/fixtures/reader_fixture.dart';
 
 void main() {
   group('reader domain', () {

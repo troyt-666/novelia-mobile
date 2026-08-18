@@ -1,11 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:novelia_reader/core/database/app_database.dart';
-import 'package:novelia_reader/core/database/local_state_repository.dart';
-import 'package:novelia_reader/core/database/sqlite_offline_repository.dart';
-import 'package:novelia_reader/core/model/reader_models.dart';
-import 'package:novelia_reader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/database/app_database.dart';
+import 'package:jfzreader/core/database/local_state_repository.dart';
+import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
+import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
