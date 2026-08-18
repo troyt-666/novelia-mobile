@@ -154,7 +154,9 @@ void main() {
     expect(chineseTop, lessThan(japaneseTop));
   });
 
-  testWidgets('only a center tap toggles reader chrome', (tester) async {
+  testWidgets('reading taps dismiss chrome and center taps reveal it', (
+    tester,
+  ) async {
     await pumpReader(tester);
 
     AnimatedOpacity chrome() => tester.widget<AnimatedOpacity>(
@@ -162,7 +164,7 @@ void main() {
     );
 
     expect(chrome().opacity, 1);
-    await tester.tapAt(const Offset(215, 466));
+    await tester.tapAt(const Offset(20, 466));
     await tester.pump(const Duration(milliseconds: 220));
     expect(chrome().opacity, 0);
 
@@ -173,6 +175,30 @@ void main() {
     await tester.tapAt(const Offset(215, 466));
     await tester.pump(const Duration(milliseconds: 220));
     expect(chrome().opacity, 1);
+  });
+
+  testWidgets('scrolling and inactivity dismiss reader chrome', (tester) async {
+    await pumpReader(tester);
+
+    AnimatedOpacity chrome() => tester.widget<AnimatedOpacity>(
+      find.byKey(const ValueKey('reader-bottom-chrome')),
+    );
+
+    expect(chrome().opacity, 1);
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(0, -160),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(chrome().opacity, 0);
+
+    await tester.tapAt(const Offset(215, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(chrome().opacity, 1);
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(chrome().opacity, 0);
   });
 
   testWidgets('mode control hides Japanese without moving Chinese', (

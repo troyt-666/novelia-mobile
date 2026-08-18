@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/rendering.dart' show ScrollCacheExtent, ScrollDirection;
 
 import '../../core/model/reader_models.dart';
 
@@ -48,6 +48,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   static const _windowExpansionItems = 96;
   static const _jumpLeadInItems = 2;
   static const _windowLeadInItems = 24;
+  static const _chromeAutoHideDelay = Duration(seconds: 4);
 
   late List<NovelChapter> _loadedChapters;
   late List<ReaderStreamItem> _items;
@@ -91,6 +92,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   int? _tapPointer;
   Offset? _tapOrigin;
   DateTime? _tapStartedAt;
+  Timer? _chromeDismissTimer;
 
   @override
   String? get restorationId => 'reader:${widget.novel.id}';
@@ -245,10 +247,15 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleChromeDismiss();
+      return;
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _chromeDismissTimer?.cancel();
       if (!_restoring) _captureAnchor(updateUi: false);
     }
   }
@@ -256,6 +263,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   void dispose() {
     _windowGeneration += 1;
+    _chromeDismissTimer?.cancel();
     if (!_restoring) {
       final position = _lastPosition;
       if (position != null) {
@@ -336,6 +344,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
       if (mounted) {
         setState(() => _restoring = false);
+        _scheduleChromeDismiss();
       }
     });
   }
@@ -348,10 +357,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     var targetContext = _mountedContextFor(stableId);
     if (targetContext == null) {
       setState(() {
-        _windowStart = (targetIndex - _jumpLeadInItems).clamp(
-          0,
-          _items.length,
-        );
+        _windowStart = (targetIndex - _jumpLeadInItems).clamp(0, _items.length);
         _windowEnd = (targetIndex + _initialWindowItems).clamp(
           _windowStart,
           _items.length,
@@ -853,14 +859,52 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handleReadingTap(Offset point) {
+    if (_chromeVisible) {
+      _hideChrome();
+      return;
+    }
     final size = MediaQuery.sizeOf(context);
     final inHorizontalCenter =
         point.dx >= size.width * 0.25 && point.dx <= size.width * 0.75;
     final inVerticalCenter =
         point.dy >= size.height * 0.30 && point.dy <= size.height * 0.70;
     if (inHorizontalCenter && inVerticalCenter) {
-      setState(() => _chromeVisible = !_chromeVisible);
+      _showChrome();
     }
+  }
+
+  void _showChrome() {
+    if (!_chromeVisible) {
+      setState(() => _chromeVisible = true);
+    }
+    _scheduleChromeDismiss();
+  }
+
+  void _hideChrome() {
+    _chromeDismissTimer?.cancel();
+    if (_chromeVisible && mounted) {
+      setState(() => _chromeVisible = false);
+    }
+  }
+
+  void _scheduleChromeDismiss() {
+    _chromeDismissTimer?.cancel();
+    if (!mounted || !_chromeVisible || _restoring) return;
+    _chromeDismissTimer = Timer(_chromeAutoHideDelay, _hideChrome);
+  }
+
+  void _handleReaderScroll(ScrollNotification notification) {
+    final userScrollStarted =
+        notification is ScrollStartNotification &&
+            notification.dragDetails != null ||
+        notification is UserScrollNotification &&
+            notification.direction != ScrollDirection.idle;
+    if (userScrollStarted) _hideChrome();
+  }
+
+  void _runChromeAction(VoidCallback action) {
+    _scheduleChromeDismiss();
+    action();
   }
 
   Future<void> _showCatalog() async {
@@ -921,10 +965,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         _loadedChapters = chapters;
         _rebuildStream();
         final targetIndex = _itemIndices['chapter:${entry.id}'] ?? 0;
-        _windowStart = (targetIndex - _jumpLeadInItems).clamp(
-          0,
-          _items.length,
-        );
+        _windowStart = (targetIndex - _jumpLeadInItems).clamp(0, _items.length);
         _windowEnd = (targetIndex + _initialWindowItems).clamp(
           _windowStart,
           _items.length,
@@ -1078,6 +1119,7 @@ class _ReaderScreenState extends State<ReaderScreen>
               child: NotificationListener<ScrollNotification>(
                 onNotification: (notification) {
                   _handleScrollMetrics(notification.metrics);
+                  _handleReaderScroll(notification);
                   if (!_restoring &&
                       !_preservingDynamicAnchor &&
                       notification is ScrollEndNotification) {
@@ -1180,11 +1222,11 @@ class _ReaderScreenState extends State<ReaderScreen>
             mode: _settings.readingMode,
             source: _settings.translationSource,
             bookmarked: currentBookmark,
-            onCatalog: _showCatalog,
-            onMode: _toggleMode,
-            onSource: _showTranslationSources,
-            onSettings: _showSettings,
-            onBookmark: _toggleBookmark,
+            onCatalog: () => _runChromeAction(_showCatalog),
+            onMode: () => _runChromeAction(_toggleMode),
+            onSource: () => _runChromeAction(_showTranslationSources),
+            onSettings: () => _runChromeAction(_showSettings),
+            onBookmark: () => _runChromeAction(_toggleBookmark),
           ),
           if (_catalogLoading || _catalogLoadError != null)
             _ReaderCatalogLoadOverlay(
