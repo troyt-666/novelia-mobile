@@ -10,7 +10,7 @@ import 'package:novelia_reader/gateway/novelia/novelia_reader_window.dart';
 
 void main() {
   test(
-    'loads the requested target first and defers uncached neighbors',
+    'loads the requested target first and prefetches forward in background',
     () async {
       final chapters = [
         _metadata('c1', 1),
@@ -35,7 +35,7 @@ void main() {
         translationSource: TranslationSource.gpt,
       );
 
-      expect(coordinator.chapterCalls, ['c3']);
+      expect(coordinator.chapterCalls.first, 'c3');
       expect(coordinator.sources, everyElement(TranslationSource.gpt));
       expect(launch.novel.chapters.map((chapter) => chapter.id), ['c3']);
       expect(launch.initialPosition, same(requested));
@@ -48,6 +48,9 @@ void main() {
       expect(launch.dataSource!.catalog.first.sectionTitle, '上卷');
       expect(launch.dataSource!.catalog.last.sectionTitle, '下卷');
 
+      await _waitUntil(() => coordinator.chapterCalls.contains('c4'));
+      expect(coordinator.chapterCalls, ['c3', 'c4']);
+
       final end = await launch.dataSource!.loadAdjacent(
         const ReaderAdjacentRequest(
           anchorChapterId: 'c4',
@@ -56,13 +59,53 @@ void main() {
       );
       expect(end.chapters, isEmpty);
       expect(end.after, ReaderBoundaryStatus.endOfCatalog);
-      expect(coordinator.chapterCalls, ['c3']);
+      expect(coordinator.chapterCalls, ['c3', 'c4']);
 
       final catalogLoad = await launch.dataSource!.loadAround('c1');
       expect(catalogLoad.chapters.map((chapter) => chapter.id), ['c1']);
       expect(catalogLoad.before, ReaderBoundaryStatus.endOfCatalog);
       expect(catalogLoad.after, ReaderBoundaryStatus.loadable);
-      expect(coordinator.chapterCalls, ['c3', 'c1']);
+      await _waitUntil(() => coordinator.chapterCalls.contains('c2'));
+      expect(coordinator.chapterCalls, ['c3', 'c4', 'c1', 'c2']);
+    },
+  );
+
+  test(
+    'keeps three future chapters warm and shares adjacent requests',
+    () async {
+      final chapters = [
+        for (var number = 1; number <= 7; number++)
+          _metadata('c$number', number),
+      ];
+      final coordinator = _WindowCoordinator({
+        for (final chapter in chapters)
+          chapter.id: NoveliaContentResult.available(_loaded(chapter)),
+      });
+      final launch =
+          await NoveliaReaderWindowFactory(
+            contentCoordinator: coordinator,
+          ).create(
+            novel: _novel(chapters),
+            selectedChapter: chapters[1],
+            requestedPosition: null,
+            translationSource: TranslationSource.sakura,
+          );
+
+      await _waitUntil(() => coordinator.chapterCalls.contains('c5'));
+      expect(coordinator.chapterCalls, ['c2', 'c3', 'c4', 'c5']);
+      expect(coordinator.chapterCalls, isNot(contains('c6')));
+
+      final adjacent = await launch.dataSource!.loadAdjacent(
+        const ReaderAdjacentRequest(
+          anchorChapterId: 'c2',
+          direction: ReaderLoadDirection.after,
+        ),
+      );
+      expect(adjacent.chapters.map((chapter) => chapter.id), ['c3']);
+      expect(coordinator.chapterCalls.where((id) => id == 'c3'), hasLength(1));
+
+      await _waitUntil(() => coordinator.chapterCalls.contains('c6'));
+      expect(coordinator.chapterCalls.where((id) => id == 'c6'), hasLength(1));
     },
   );
 
@@ -171,6 +214,13 @@ const _networkFailure = NoveliaGatewayException(
   NoveliaGatewayFailureKind.network,
   'offline',
 );
+
+Future<void> _waitUntil(bool Function() condition) async {
+  for (var attempt = 0; attempt < 20 && !condition(); attempt++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+  expect(condition(), isTrue);
+}
 
 CatalogNovel _novel(List<NovelChapter> chapters) {
   return CatalogNovel(

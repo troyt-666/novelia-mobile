@@ -110,6 +110,8 @@ class NoveliaReaderWindowFactory {
 }
 
 class _NoveliaReaderWindowSession {
+  static const _forwardPrefetchChapterCount = 3;
+
   _NoveliaReaderWindowSession({
     required this.contentCoordinator,
     required this.novel,
@@ -128,6 +130,8 @@ class _NoveliaReaderWindowSession {
   final List<ReaderChapterCatalogEntry> _catalog;
   final Map<String, int> _indexById;
   final Map<String, NovelChapter> _loaded = <String, NovelChapter>{};
+  final Map<String, Future<NovelChapter?>> _loading =
+      <String, Future<NovelChapter?>>{};
   final Set<String> _refreshing = <String>{};
   final Set<String> _unavailable = <String>{};
 
@@ -167,6 +171,7 @@ class _NoveliaReaderWindowSession {
       final after = _loadCachedOptional(afterIndex);
       if (after != null) loadedByIndex[afterIndex] = after;
     }
+    _scheduleForwardPrefetch(targetIndex);
     final indices = <int>[
       if (beforeIndex >= 0) beforeIndex,
       targetIndex,
@@ -232,6 +237,7 @@ class _NoveliaReaderWindowSession {
             : _oppositeBoundary(anchorIndex, ReaderLoadDirection.after),
       );
     }
+    _scheduleForwardPrefetch(neighborIndex);
     return ReaderChapterWindow(
       chapters: [chapter],
       before: neighborIndex == 0
@@ -247,6 +253,22 @@ class _NoveliaReaderWindowSession {
     final metadata = chapters[index];
     final memory = _loaded[metadata.id];
     if (memory != null) return memory;
+
+    final existing = _loading[metadata.id];
+    if (existing != null) return existing;
+
+    late final Future<NovelChapter?> loading;
+    loading = _loadRequiredOnce(index).whenComplete(() {
+      if (identical(_loading[metadata.id], loading)) {
+        _loading.remove(metadata.id);
+      }
+    });
+    _loading[metadata.id] = loading;
+    return loading;
+  }
+
+  Future<NovelChapter?> _loadRequiredOnce(int index) async {
+    final metadata = chapters[index];
 
     final cached = _readCached(metadata);
     if (cached != null) {
@@ -269,6 +291,31 @@ class _NoveliaReaderWindowSession {
     }
     _unavailable.add(metadata.id);
     return null;
+  }
+
+  void _scheduleForwardPrefetch(int anchorIndex) {
+    final endExclusive = (anchorIndex + 1 + _forwardPrefetchChapterCount).clamp(
+      0,
+      chapters.length,
+    );
+    if (anchorIndex + 1 >= endExclusive) return;
+
+    unawaited(
+      Future<void>(() async {
+        for (var index = anchorIndex + 1; index < endExclusive; index++) {
+          try {
+            // Fetch sequentially so ordinary reading gets a useful horizon
+            // without producing a burst of chapter requests. An adjacent
+            // reader request shares the same in-flight Future.
+            if (await _loadRequired(index) == null) return;
+          } on Object {
+            // Prefetch is speculative. The boundary request remains the
+            // visible retry/error path if this early request fails.
+            return;
+          }
+        }
+      }),
+    );
   }
 
   NovelChapter? _loadCachedOptional(int index) {
