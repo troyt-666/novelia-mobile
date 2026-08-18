@@ -29,3 +29,6 @@
 
 # Private local release outputs
 release-artifacts/
+
+# External reference binaries
+Novelia_v0.7.7.apk
