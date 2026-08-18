@@ -1,7 +1,40 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val releaseSigningProperties = Properties()
+val releaseSigningPropertiesFile = rootProject.file("key.properties")
+if (releaseSigningPropertiesFile.isFile) {
+    releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
+}
+
+fun releaseSigningValue(property: String, environment: String): String? =
+    (releaseSigningProperties.getProperty(property) ?: System.getenv(environment))
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+
+val releaseStoreFile = releaseSigningValue("storeFile", "NOVELIA_ANDROID_STORE_FILE")
+val releaseStorePassword =
+    releaseSigningValue("storePassword", "NOVELIA_ANDROID_STORE_PASSWORD")
+val releaseKeyAlias = releaseSigningValue("keyAlias", "NOVELIA_ANDROID_KEY_ALIAS")
+val releaseKeyPassword =
+    releaseSigningValue("keyPassword", "NOVELIA_ANDROID_KEY_PASSWORD")
+val releaseSigningValues = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+)
+val hasReleaseSigning = releaseSigningValues.all { it != null }
+if (!hasReleaseSigning && releaseSigningValues.any { it != null }) {
+    throw GradleException(
+        "Android release signing is only partially configured. " +
+            "Provide storeFile, storePassword, keyAlias, and keyPassword.",
+    )
 }
 
 android {
@@ -15,21 +48,35 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "dev.novelia.novelia_reader"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        // Account sessions use an AES-GCM key held by Android Keystore.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Never create a distributable build with Flutter's shared debug
+            // certificate. Without private signing inputs Gradle emits an
+            // unsigned release artifact suitable only for compilation checks.
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
     }
 }

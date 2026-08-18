@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties, which is ignored by Git.
+# Prefer the NOVELIA_ANDROID_* environment variables in automation.
+storeFile=/absolute/private/path/novelia-reader-release.jks
+storePassword=replace-interactively
+keyAlias=novelia-reader
+keyPassword=replace-interactively
