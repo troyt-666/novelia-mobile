@@ -20,4 +20,13 @@ void main() {
     expect(verifier, contains('Android Debug'));
     expect(verifier, contains('apksigner verify'));
   });
+
+  test('macOS account storage does not trigger Keychain authorization', () {
+    final runner = File(
+      'macos/Runner/MainFlutterWindow.swift',
+    ).readAsStringSync();
+    expect(runner, contains('UserDefaults.standard'));
+    expect(runner, isNot(contains('SecItemCopyMatching')));
+    expect(runner, isNot(contains('kSecClassGenericPassword')));
+  });
 }

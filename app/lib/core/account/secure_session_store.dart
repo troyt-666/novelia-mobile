@@ -10,11 +10,13 @@ abstract interface class AccountSessionStore {
   Future<void> clear();
 }
 
-/// Stores the complete account session as one encrypted platform value.
+/// Stores the complete account session as one platform-owned value.
 ///
 /// Keeping one value avoids exposing a partially updated access-token/cookie
-/// pair after a refresh. The native channel is intentionally account-specific
-/// rather than a general arbitrary-key storage API.
+/// pair after a refresh. Android and iOS use their protected credential stores.
+/// macOS intentionally uses app-local preferences so ad-hoc debug/release
+/// rebuilds do not repeatedly request the login Keychain password. The native
+/// channel is account-specific rather than a general arbitrary-key storage API.
 class MethodChannelAccountSessionStore implements AccountSessionStore {
   const MethodChannelAccountSessionStore();
 

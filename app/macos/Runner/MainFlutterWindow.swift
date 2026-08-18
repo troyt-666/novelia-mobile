@@ -1,6 +1,5 @@
 import Cocoa
 import FlutterMacOS
-import Security
 
 class MainFlutterWindow: NSWindow {
   private var externalLinksChannel: FlutterMethodChannel?
@@ -47,11 +46,7 @@ class MainFlutterWindow: NSWindow {
     accountChannel.setMethodCallHandler { call, result in
       switch call.method {
       case "read":
-        do {
-          result(try Self.readAccountSession())
-        } catch {
-          result(Self.accountStorageError())
-        }
+        result(Self.readAccountSession())
       case "write":
         guard let value = call.arguments as? String else {
           result(FlutterError(
@@ -60,19 +55,11 @@ class MainFlutterWindow: NSWindow {
             details: nil))
           return
         }
-        do {
-          try Self.writeAccountSession(value)
-          result(nil)
-        } catch {
-          result(Self.accountStorageError())
-        }
+        Self.writeAccountSession(value)
+        result(nil)
       case "clear":
-        do {
-          try Self.clearAccountSession()
-          result(nil)
-        } catch {
-          result(Self.accountStorageError())
-        }
+        Self.clearAccountSession()
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -82,68 +69,18 @@ class MainFlutterWindow: NSWindow {
     super.awakeFromNib()
   }
 
-  private static let accountService = "dev.novelia.novelia_reader.account"
-  private static let accountName = "session-v1"
+  private static let accountSessionKey =
+    "dev.novelia.novelia_reader.account.session-v1"
 
-  private static func accountQuery() -> [String: Any] {
-    return [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: accountService,
-      kSecAttrAccount as String: accountName,
-    ]
+  private static func readAccountSession() -> String? {
+    return UserDefaults.standard.string(forKey: accountSessionKey)
   }
 
-  private static func readAccountSession() throws -> String? {
-    var query = accountQuery()
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    var item: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &item)
-    if status == errSecItemNotFound { return nil }
-    guard status == errSecSuccess,
-      let data = item as? Data,
-      let value = String(data: data, encoding: .utf8)
-    else {
-      throw AccountStorageFailure.failed
-    }
-    return value
+  private static func writeAccountSession(_ value: String) {
+    UserDefaults.standard.set(value, forKey: accountSessionKey)
   }
 
-  private static func writeAccountSession(_ value: String) throws {
-    guard let data = value.data(using: .utf8) else {
-      throw AccountStorageFailure.failed
-    }
-    let query = accountQuery()
-    let updateStatus = SecItemUpdate(
-      query as CFDictionary,
-      [kSecValueData as String: data] as CFDictionary)
-    if updateStatus == errSecSuccess { return }
-    guard updateStatus == errSecItemNotFound else {
-      throw AccountStorageFailure.failed
-    }
-    var item = query
-    item[kSecValueData as String] = data
-    item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else {
-      throw AccountStorageFailure.failed
-    }
-  }
-
-  private static func clearAccountSession() throws {
-    let status = SecItemDelete(accountQuery() as CFDictionary)
-    guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw AccountStorageFailure.failed
-    }
-  }
-
-  private static func accountStorageError() -> FlutterError {
-    return FlutterError(
-      code: "SECURE_STORAGE",
-      message: "The Keychain account session could not be accessed.",
-      details: nil)
-  }
-
-  private enum AccountStorageFailure: Error {
-    case failed
+  private static func clearAccountSession() {
+    UserDefaults.standard.removeObject(forKey: accountSessionKey)
   }
 }
