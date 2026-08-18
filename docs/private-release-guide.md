@@ -19,8 +19,8 @@ interactively so passwords never appear in shell history:
 
 ```sh
 keytool -genkeypair -v \
-  -keystore /absolute/private/path/novelia-reader-release.jks \
-  -alias novelia-reader -keyalg RSA -keysize 4096 -validity 10000
+  -keystore /absolute/private/path/jfzreader-release.jks \
+  -alias jfzreader -keyalg RSA -keysize 4096 -validity 10000
 ```
 
 For a local build, copy `app/android/key.properties.example` to
@@ -28,10 +28,10 @@ For a local build, copy `app/android/key.properties.example` to
 ignored by Git. Automation should provide these protected environment secrets
 instead:
 
-- `NOVELIA_ANDROID_STORE_FILE`
-- `NOVELIA_ANDROID_STORE_PASSWORD`
-- `NOVELIA_ANDROID_KEY_ALIAS`
-- `NOVELIA_ANDROID_KEY_PASSWORD`
+- `JFZREADER_ANDROID_STORE_FILE`
+- `JFZREADER_ANDROID_STORE_PASSWORD`
+- `JFZREADER_ANDROID_KEY_ALIAS`
+- `JFZREADER_ANDROID_KEY_PASSWORD`
 
 Build and verify:
 
@@ -51,7 +51,7 @@ private credential store. Losing the key prevents compatible in-place updates.
 
 ## iOS ad hoc IPA
 
-The bundle identifier is `dev.novelia.noveliaReader`. Create an explicit App ID,
+The bundle identifier is `io.github.troyt666.jfzreader`. Create an explicit App ID,
 register the intended devices, and create an Ad Hoc provisioning profile in the
 Apple Developer account. Signing certificates and profiles stay outside Git.
 

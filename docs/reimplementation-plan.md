@@ -1,4 +1,4 @@
-# Novelia Mobile reimplementation plan
+# JFZ Reader reimplementation plan
 
 Date: 2026-08-10  
 Last reconciled: 2026-08-18
@@ -26,9 +26,11 @@ history write, and fails an unequal translation array as a complete invalid
 Translation Revision.
 
 Production composition now starts from cached outlines explicitly marked
-offline until a live-origin response refreshes the verified anonymous,
-general-rated Novelia catalog. It supports remote search plus source,
-publication-state, translation, exact-tag, and sort criteria; continuous page
+offline until a live-origin response refreshes the verified catalog. It
+supports a separate Search tab with remote query plus the official source,
+publication-state, content-level, translation, exact-tag, and sort criteria;
+signed-out All is safely constrained to general content while a valid account
+session admits the service's All and R18 levels; continuous page
 append with footer retry; a service-ordered default Syosetu ranking; on-demand
 details; sectioned chapters; paginated read-only comments; live/cache reader
 windows; ongoing whole-novel downloads; and truthful local Library/Settings
@@ -84,14 +86,14 @@ reported original total; ranking results now cap only such positive
 over-reports, while negative counts and ordinary catalog/detail inconsistencies
 continue to fail closed.
 
-Static analysis is clean and 175 automated tests pass. Release macOS and iOS
+Static analysis is clean and 177 automated tests pass. Release macOS and iOS
 Simulator builds pass, and the Android release compiles to a 60.2 MB unsigned
 artifact when private signing inputs are absent. The repository verifier rejects
 that artifact and the debug-signed APK; release configuration no longer falls
 back to Flutter's shared debug certificate. Sanitized account response-shape
 diagnostics are debug-only and are absent from the rebuilt 51.1 MB macOS
 release. Android, iOS, and macOS generated metadata now agrees on v1 version
-`1.0.0 (1)` and the display name `Novelia Reader`. The debug app also installs
+`1.0.0 (1)` and the display name `JFZ Reader`. The debug app also installs
 and
 launches to a resumed MainActivity on the configured API 36 emulator without a
 launch crash. The prior JNI/Android build issue is resolved. A profile APK also
@@ -122,19 +124,19 @@ than being treated as passed by implication.
 - Authentication, remote favorites and their required folders, and remote
   reading history through the service flow independently verified from the
   reference behavior.
-- Discover, Library, and Settings as the only top-level destinations; novel
+- Discover, Search, Library, and Settings as the top-level destinations; novel
   details and the reader are entered from them rather than becoming tabs.
-- Discover presents Continue Reading, Most Clicked, and Recently Updated before
-  search and the full catalog. The catalog supports source, publication-state,
-  translation-availability, sort, and exact-tag filters. Rankings is a
-  secondary destination inside Discover rather than a top-level tab.
+- Discover presents Continue Reading and an interchangeable Most Clicked /
+  Recently Updated feed. Search owns the full catalog and its six-source,
+  publication-state, content-level, translation-availability, sort, and
+  exact-tag filters. Rankings is a secondary destination inside Discover.
 - Catalogs and Rankings use continuous loading with a footer retry and restore
   their filters and list position after navigation. Comment Pages remain
   explicitly paginated.
 - Library groups Continue Reading, Favorite Folders, Offline Downloads, and
   Bookmarks, with Reading History as a secondary full view.
-- Anonymous browsing and reading, with login requested only when Favorites or
-  remote Reading History are used or explicitly from Settings.
+- Anonymous general-content browsing and reading, with login requested for
+  Favorites, remote Reading History, and the official All/R18 catalog levels.
 - Offline launch into the normal navigation, surfacing Continue Reading and
   Offline Downloads while marking network-backed Discover sections unavailable.
 - Simplified Chinese is the only MVP interface locale. Content retains accurate
@@ -175,7 +177,7 @@ than being treated as passed by implication.
 - Provide the original-site link and tappable author and tag searches. Do not
   expose Web Novel EPUB downloads or translation-workspace actions.
 - Rankings reuse service-provided source, period, genre, and publication-state
-  information behind a secondary Discover route; they do not become a fourth
+  information behind a secondary Discover route; they do not become a
   top-level destination.
 - Preserve service-provided chapter sections and bilingual chapter titles.
   Catalogs default to oldest-first and offer a device-remembered reverse-order

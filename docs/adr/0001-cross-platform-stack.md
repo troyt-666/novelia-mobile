@@ -6,7 +6,7 @@ Date: 2026-08-10
 ## Decision update — 2026-08-18
 
 Continue in Flutter. Automated reader, restoration, live/cache gateway,
-download, migration, account, and offline-relaunch tests are green (175 tests),
+download, migration, account, and offline-relaunch tests are green (177 tests),
 and the bounded anonymous live pass remains green. The prior JNI/Android build
 issue is resolved. A profile APK installs directly on the Android 16 arm64
 phone, restores the real reader, and remains near the 90 Hz display cadence

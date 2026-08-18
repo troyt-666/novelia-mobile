@@ -1,4 +1,4 @@
-# Novelia Mobile
+# JFZ Reader
 
 Independent Flutter implementation of a Chinese-first, bilingual Web Novel
 reader for Novelia-compatible content.
@@ -15,9 +15,9 @@ has been recovered or copied.
 - Phase 1 paired-reader spike: implemented and physically profiled on Android,
   iPhone, and macOS. Install/launch and reader performance pass; the broader
   VoiceOver/TalkBack, large-font, and typography matrix remains unclaimed.
-- Phase 2 vertical slice: the production app is wired to the anonymous,
-  general-rated Novelia gateway with truthfully offline cached startup, live
-  search/source/state/translation/tag/sort criteria, continuous catalog paging,
+- Phase 2 vertical slice: the production app is wired to the Novelia gateway
+  with truthfully offline cached startup, a separate Search tab with the six
+  official sources plus type/rating/translation/sort criteria, continuous catalog paging,
   a paginated service-ordered Syosetu ranking, on-demand details, paginated
   read-only comments, native external-browser handoff to the original work,
   bounded dynamic reader windows, and explicit whole-novel downloads.
@@ -39,7 +39,8 @@ has been recovered or copied.
   atomically upgraded when the selected Chinese translation appears, without
   leaving the already-stored task or copy in an inconsistent state.
 - Interrupted tasks restart atomically, bounded refresh work rotates fairly,
-  R18 reclassification revokes stale anonymous access, and every successful
+  R18 stays unavailable anonymously but the official All/R18 catalog levels
+  are admitted while a valid account session is active, and every successful
   chapter cache write reapplies the configured LRU budget without touching
   protected downloads.
 - Reader launch is cache-first: a cached target and cached neighbors paint
@@ -49,7 +50,7 @@ has been recovered or copied.
 - The Library exposes truthful download failure details plus pause, resume,
   retry, and confirmed removal controls. Removing an Offline Download preserves
   local reading progress and bookmarks.
-- Current automated checkpoint: static analysis is clean and 175 tests pass,
+- Current automated checkpoint: static analysis is clean and 177 tests pass,
   including a file-backed online-download, close/reopen, network-failure,
   offline-resume, and pending-translation-refresh contract. Release macOS and
   Android compilation and the iOS Simulator build pass. Android releases no
@@ -57,8 +58,13 @@ has been recovered or copied.
   inputs the 60.2 MB compilation artifact is unsigned and rejected by the
   repository verifier. The debug APK also installs and reaches a resumed
   MainActivity on the `novelia_api36` emulator without a launch crash.
+- Manual Offline Download creation now returns as soon as its protected intent
+  is registered; chapter transfer and retry state continue in Download
+  Management. A credential-free live probe downloaded and atomically stored a
+  Sakura-translated Pixiv short story with zero failed chapters.
 - v1 product metadata is frozen at `1.0.0 (1)` with the user-facing name
-  `Novelia Reader` across Android, iOS, and macOS.
+  `JFZ Reader` and release identifier `io.github.troyt666.jfzreader` across
+  Android, iOS, and macOS.
 - A bounded anonymous live-network smoke pass covers catalog paging with retry,
   both default ranking pages, detail and comments, adjacent/latest reader
   boundaries, a complete seven-chapter Sakura download, actual SQLite

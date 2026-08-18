@@ -1,4 +1,4 @@
-# Novelia Reader v1 release candidate
+# JFZ Reader v1 release candidate
 
 - Date: 2026-08-18
 - Version: `1.0.0 (1)`
@@ -7,7 +7,7 @@ distribution signing inputs pending
 
 ## Verified
 
-- `flutter analyze` passes and all 175 tests pass.
+- `flutter analyze` passes and all 177 tests pass.
 - Android release compilation succeeds at 60.2 MB. With no private keystore,
   the artifact is unsigned and the repository signature gate rejects it.
 - macOS release compilation succeeds at 51.1 MB with no debug auth/account
@@ -17,7 +17,7 @@ distribution signing inputs pending
   signs, installs, and launches on the connected iPhone; distributing an IPA
   still requires the appropriate private signing/export inputs.
 - Generated Android, iOS, and macOS metadata agrees on version `1.0.0 (1)` and
-  the display name `Novelia Reader`.
+  the display name `JFZ Reader`.
 - The Android API 36 emulator upgraded in place from `0.1.0` to `1.0.0`, cold
   launched `MainActivity`, retained the existing SQLite database, and produced
   no launch or SQLite crash.
@@ -40,6 +40,12 @@ distribution signing inputs pending
 - The reader keeps three future chapters warm with sequential speculative
   requests, deduplicates an overlapping boundary load, and stops prefetching
   after the first failure.
+- Search is a separate fourth destination and exposes the official six-source,
+  type, rating, GPT/Sakura, and update/click/relevance controls. Discover keeps
+  a switchable Recently Updated / Most Clicked feed.
+- Manual Offline Download creation is non-blocking after the protected intent
+  is saved. A credential-free live short-story probe completed catalog, TOC,
+  chapter fetch, and protected-copy commit with zero failures.
 
 ## Required before distribution
 

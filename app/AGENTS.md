@@ -1,11 +1,11 @@
-# Novelia Reader agent guide
+# JFZ Reader agent guide
 
 ## Scope and safety
 
 - This is an independent Flutter implementation. Do not copy code, assets,
   wording, credentials, or identifiers from the reference APK.
-- `dev.novelia.novelia_reader` is a development-only identifier. Replace it
-  before creating a signed or published build.
+- `io.github.troyt666.jfzreader` is the permanent release identifier. Do not
+  change it after distributing a signed build.
 - Keep secrets out of the repository and use fixture data for agent-driven UI
   work.
 

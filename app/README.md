@@ -1,4 +1,4 @@
-# Novelia Reader
+# JFZ Reader
 
 Independent Flutter reader for macOS, Android, and iOS.
 
