@@ -109,6 +109,8 @@ typedef NoveliaClock = DateTime Function();
 typedef NoveliaChapterCachedCallback =
     void Function({required String novelId, required String chapterId});
 
+typedef NoveliaRestrictedContentAccess = bool Function();
+
 /// Live-first orchestration with a normalized local-content fallback.
 ///
 /// Catalog and detail operations never fetch chapter bodies. A chapter body is
@@ -123,6 +125,7 @@ class LiveFirstNoveliaContentCoordinator
     NoveliaContentCacheAdapter? cacheAdapter,
     NoveliaClock? clock,
     this.onChapterCached,
+    this.canAccessRestrictedContent,
   }) : cacheAdapter =
            cacheAdapter ??
            NoveliaContentCacheAdapter(domainAdapter: domainAdapter),
@@ -134,14 +137,19 @@ class LiveFirstNoveliaContentCoordinator
   final NoveliaContentCacheAdapter cacheAdapter;
   final NoveliaClock clock;
   final NoveliaChapterCachedCallback? onChapterCached;
+  final NoveliaRestrictedContentAccess? canAccessRestrictedContent;
 
   final Set<String> _verifiedGeneralNovelIds = <String>{};
   final Set<String> _revokedRestrictedNovelIds = <String>{};
 
+  bool get _allowsRestrictedContent =>
+      canAccessRestrictedContent?.call() == true;
+
   @override
   NovelChapter? cachedChapter(CatalogNovel novel, {required String chapterId}) {
-    if (_revokedRestrictedNovelIds.contains(novel.id) ||
-        domainAdapter.isRestrictedCatalogNovel(novel)) {
+    if (!_allowsRestrictedContent &&
+        (_revokedRestrictedNovelIds.contains(novel.id) ||
+            domainAdapter.isRestrictedCatalogNovel(novel))) {
       return null;
     }
     final key = domainAdapter.keyFromStableId(novel.id);
@@ -235,7 +243,8 @@ class LiveFirstNoveliaContentCoordinator
   Future<NoveliaContentResult<CatalogNovel>> loadDetails(
     CatalogNovel outline,
   ) async {
-    if (_revokedRestrictedNovelIds.contains(outline.id)) {
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(outline.id)) {
       return NoveliaContentResult.authenticationRequired(
         failure: const NoveliaGatewayException(
           NoveliaGatewayFailureKind.forbidden,
@@ -244,7 +253,8 @@ class LiveFirstNoveliaContentCoordinator
       );
     }
     final key = domainAdapter.keyFromStableId(outline.id);
-    if (domainAdapter.isRestrictedCatalogNovel(outline)) {
+    if (!_allowsRestrictedContent &&
+        domainAdapter.isRestrictedCatalogNovel(outline)) {
       _revokeGeneralNovel(outline.id);
       return NoveliaContentResult.authenticationRequired(
         failure: const NoveliaGatewayException(
@@ -270,7 +280,13 @@ class LiveFirstNoveliaContentCoordinator
           'The detail response belongs to a different novel.',
         );
       }
-      final novel = domainAdapter.mapDetails(details);
+      final novel = domainAdapter.mapDetails(
+        details,
+        allowRestricted: _allowsRestrictedContent,
+      );
+      if (_allowsRestrictedContent) {
+        _revokedRestrictedNovelIds.remove(novel.id);
+      }
       _verifiedGeneralNovelIds.add(novel.id);
       _bestEffortCacheDetails(details);
       return NoveliaContentResult.available(novel);
@@ -295,7 +311,8 @@ class LiveFirstNoveliaContentCoordinator
     required String chapterId,
     TranslationSource cacheTranslationSource = TranslationSource.sakura,
   }) async {
-    if (_revokedRestrictedNovelIds.contains(novel.id)) {
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(novel.id)) {
       return NoveliaContentResult.authenticationRequired(
         failure: const NoveliaGatewayException(
           NoveliaGatewayFailureKind.forbidden,
@@ -305,7 +322,8 @@ class LiveFirstNoveliaContentCoordinator
     }
     final key = domainAdapter.keyFromStableId(novel.id);
     final metadata = _chapterMetadata(novel, chapterId);
-    if (domainAdapter.isRestrictedCatalogNovel(novel)) {
+    if (!_allowsRestrictedContent &&
+        domainAdapter.isRestrictedCatalogNovel(novel)) {
       _revokeGeneralNovel(novel.id);
       return NoveliaContentResult.authenticationRequired(
         failure: const NoveliaGatewayException(
@@ -369,7 +387,8 @@ class LiveFirstNoveliaContentCoordinator
     if (pageSize <= 0) {
       throw ArgumentError.value(pageSize, 'pageSize', 'Must be positive.');
     }
-    if (_revokedRestrictedNovelIds.contains(novel.id)) {
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(novel.id)) {
       return NoveliaContentResult.authenticationRequired(
         failure: const NoveliaGatewayException(
           NoveliaGatewayFailureKind.forbidden,
@@ -378,7 +397,8 @@ class LiveFirstNoveliaContentCoordinator
       );
     }
     final key = domainAdapter.keyFromStableId(novel.id);
-    if (domainAdapter.isRestrictedCatalogNovel(novel)) {
+    if (!_allowsRestrictedContent &&
+        domainAdapter.isRestrictedCatalogNovel(novel)) {
       _revokeGeneralNovel(novel.id);
       return NoveliaContentResult.authenticationRequired(
         failure: const NoveliaGatewayException(
@@ -426,17 +446,29 @@ class LiveFirstNoveliaContentCoordinator
           : wireOutline;
       final novelId = outline.key.stableId;
       if (domainAdapter.isRestrictedAttentions(outline.attentions)) {
-        _revokeGeneralNovel(novelId);
-        continue;
+        if (!_allowsRestrictedContent) {
+          _revokeGeneralNovel(novelId);
+          continue;
+        }
+        _revokedRestrictedNovelIds.remove(novelId);
       }
       final previous = cachedById[novelId];
       if (previous != null &&
           domainAdapter.isRestrictedAttentions(previous.tags)) {
-        _revokeGeneralNovel(novelId);
+        if (!_allowsRestrictedContent) {
+          _revokeGeneralNovel(novelId);
+          continue;
+        }
+        _revokedRestrictedNovelIds.remove(novelId);
+      }
+      if (!_allowsRestrictedContent &&
+          _revokedRestrictedNovelIds.contains(novelId)) {
         continue;
       }
-      if (_revokedRestrictedNovelIds.contains(novelId)) continue;
-      final novel = domainAdapter.mapOutline(outline);
+      final novel = domainAdapter.mapOutline(
+        outline,
+        allowRestricted: _allowsRestrictedContent,
+      );
       novels.add(novel);
       _verifiedGeneralNovelIds.add(novel.id);
       _bestEffortCacheOutline(outline, previous: previous);
@@ -519,8 +551,12 @@ class LiveFirstNoveliaContentCoordinator
   }
 
   bool _authorizeOutline(CatalogNovel outline) {
-    if (_revokedRestrictedNovelIds.contains(outline.id)) return false;
-    if (domainAdapter.isRestrictedCatalogNovel(outline)) {
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(outline.id)) {
+      return false;
+    }
+    if (!_allowsRestrictedContent &&
+        domainAdapter.isRestrictedCatalogNovel(outline)) {
       _revokeGeneralNovel(outline.id);
       return false;
     }
@@ -533,7 +569,10 @@ class LiveFirstNoveliaContentCoordinator
       );
       if (cached.isEmpty) return false;
       try {
-        cacheAdapter.restoreOutline(cached.first);
+        cacheAdapter.restoreOutline(
+          cached.first,
+          allowRestricted: _allowsRestrictedContent,
+        );
       } on NoveliaRestrictedContentException {
         _revokeGeneralNovel(outline.id);
         return false;
@@ -546,11 +585,15 @@ class LiveFirstNoveliaContentCoordinator
   }
 
   bool _authorizeHydratedNovel(CatalogNovel novel) {
-    if (_revokedRestrictedNovelIds.contains(novel.id)) return false;
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(novel.id)) {
+      return false;
+    }
     if (!novel.hasChapterCatalog) {
       return false;
     }
-    if (domainAdapter.isRestrictedCatalogNovel(novel)) {
+    if (!_allowsRestrictedContent &&
+        domainAdapter.isRestrictedCatalogNovel(novel)) {
       _revokeGeneralNovel(novel.id);
       return false;
     }
@@ -569,12 +612,21 @@ class LiveFirstNoveliaContentCoordinator
       final novels = <CatalogNovel>[];
       for (final cached in repository.listCachedNovels()) {
         try {
-          if (_revokedRestrictedNovelIds.contains(cached.id)) continue;
+          if (!_allowsRestrictedContent &&
+              _revokedRestrictedNovelIds.contains(cached.id)) {
+            continue;
+          }
           final key = domainAdapter.keyFromStableId(cached.id);
           if (key == null || !query.providers.contains(key.providerId)) {
             continue;
           }
-          final novel = cacheAdapter.restoreOutline(cached);
+          final novel = cacheAdapter.restoreOutline(
+            cached,
+            allowRestricted: _allowsRestrictedContent,
+          );
+          final restricted = domainAdapter.isRestrictedCatalogNovel(novel);
+          if (query.contentLevel == 1 && restricted) continue;
+          if (query.contentLevel == 2 && !restricted) continue;
           if (!_matchesPublicationFilter(novel, query.publicationType) ||
               !_matchesTranslationFilter(novel, query.translationFilter)) {
             continue;
@@ -648,7 +700,10 @@ class LiveFirstNoveliaContentCoordinator
   }
 
   CatalogNovel? _cachedDetails(String novelId) {
-    if (_revokedRestrictedNovelIds.contains(novelId)) return null;
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(novelId)) {
+      return null;
+    }
     final repository = contentRepository;
     if (repository == null) return null;
     try {
@@ -656,7 +711,10 @@ class LiveFirstNoveliaContentCoordinator
       if (detail == null) return null;
       late final CatalogNovel novel;
       try {
-        novel = cacheAdapter.restoreDetails(detail);
+        novel = cacheAdapter.restoreDetails(
+          detail,
+          allowRestricted: _allowsRestrictedContent,
+        );
       } on NoveliaRestrictedContentException {
         _revokeGeneralNovel(novelId);
         return null;
@@ -669,7 +727,10 @@ class LiveFirstNoveliaContentCoordinator
   }
 
   NovelChapter? _cachedChapter(String novelId, String chapterId) {
-    if (_revokedRestrictedNovelIds.contains(novelId)) return null;
+    if (!_allowsRestrictedContent &&
+        _revokedRestrictedNovelIds.contains(novelId)) {
+      return null;
+    }
     final repository = contentRepository;
     if (repository == null) return null;
     try {
@@ -702,11 +763,16 @@ class LiveFirstNoveliaContentCoordinator
   }) {
     final repository = contentRepository;
     if (repository == null ||
-        _revokedRestrictedNovelIds.contains(outline.key.stableId)) {
+        (!_allowsRestrictedContent &&
+            _revokedRestrictedNovelIds.contains(outline.key.stableId))) {
       return;
     }
     try {
-      var cached = cacheAdapter.cacheOutline(outline, fetchedAt: clock());
+      var cached = cacheAdapter.cacheOutline(
+        outline,
+        fetchedAt: clock(),
+        allowRestricted: _allowsRestrictedContent,
+      );
       if (previous != null) {
         cached = cacheAdapter.preserveDetailOnlyOutlineFields(
           cached,
@@ -722,12 +788,17 @@ class LiveFirstNoveliaContentCoordinator
   void _bestEffortCacheDetails(NoveliaNovelDetails details) {
     final repository = contentRepository;
     if (repository == null ||
-        _revokedRestrictedNovelIds.contains(details.key.stableId)) {
+        (!_allowsRestrictedContent &&
+            _revokedRestrictedNovelIds.contains(details.key.stableId))) {
       return;
     }
     try {
       repository.upsertNovelDetail(
-        cacheAdapter.cacheDetails(details, fetchedAt: clock()),
+        cacheAdapter.cacheDetails(
+          details,
+          fetchedAt: clock(),
+          allowRestricted: _allowsRestrictedContent,
+        ),
       );
     } on Object {
       // A local cache failure does not invalidate an otherwise valid live read.
@@ -812,8 +883,12 @@ class LiveFirstNoveliaContentCoordinator
     }
   }
 
-  static bool _isSafeCatalogQuery(NoveliaCatalogQuery query) {
-    return query.contentLevel == 1 &&
+  bool _isSafeCatalogQuery(NoveliaCatalogQuery query) {
+    final allowedLevel =
+        query.contentLevel == 1 ||
+        (_allowsRestrictedContent &&
+            (query.contentLevel == 0 || query.contentLevel == 2));
+    return allowedLevel &&
         query.providers.every(defaultGeneralCatalogProviders.contains);
   }
 
@@ -826,6 +901,9 @@ class LiveFirstNoveliaContentCoordinator
     }
     if (query.publicationType < 0 || query.publicationType > 3) {
       throw ArgumentError.value(query.publicationType, 'query.publicationType');
+    }
+    if (query.contentLevel < 0 || query.contentLevel > 2) {
+      throw ArgumentError.value(query.contentLevel, 'query.contentLevel');
     }
     if (query.translationFilter < 0 || query.translationFilter > 2) {
       throw ArgumentError.value(

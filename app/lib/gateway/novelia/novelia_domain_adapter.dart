@@ -53,8 +53,15 @@ class NoveliaDomainAdapter {
     ];
   }
 
-  CatalogNovel mapOutline(NoveliaNovelOutline outline) {
-    _requireGeneral(outline.attentions, outline.key);
+  CatalogNovel mapOutline(
+    NoveliaNovelOutline outline, {
+    bool allowRestricted = false,
+  }) {
+    _requireAllowed(
+      outline.attentions,
+      outline.key,
+      allowRestricted: allowRestricted,
+    );
     _validateCoverage(
       totalChapters: outline.totalChapters,
       youdaoChapters: outline.youdaoChapters,
@@ -85,8 +92,13 @@ class NoveliaDomainAdapter {
     NoveliaNovelDetails details, {
     Iterable<NoveliaChapterPayload> chapterPayloads = const [],
     List<NovelComment> comments = const [],
+    bool allowRestricted = false,
   }) {
-    _requireGeneral(details.attentions, details.key);
+    _requireAllowed(
+      details.attentions,
+      details.key,
+      allowRestricted: allowRestricted,
+    );
     _validateNonnegative('points', details.points);
     _validateNonnegative('totalCharacters', details.totalCharacters);
     _validateNonnegative('visited', details.visited);
@@ -402,8 +414,12 @@ class NoveliaDomainAdapter {
     }
   }
 
-  void _requireGeneral(Iterable<String> attentions, NoveliaNovelKey key) {
-    if (isRestrictedAttentions(attentions)) {
+  void _requireAllowed(
+    Iterable<String> attentions,
+    NoveliaNovelKey key, {
+    required bool allowRestricted,
+  }) {
+    if (!allowRestricted && isRestrictedAttentions(attentions)) {
       throw NoveliaRestrictedContentException(
         'Restricted novel ${key.stableId} was rejected.',
       );

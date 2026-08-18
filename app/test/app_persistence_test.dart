@@ -125,6 +125,8 @@ void main() {
     final repository = SqliteOfflineRepository.openInMemory();
     repository.saveRecentSearches(['齿轮图书馆', '雪春']);
     await pumpApp(tester, repository);
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
 
     final search = find.byKey(const ValueKey('discover-search-field'));
     await tester.scrollUntilVisible(

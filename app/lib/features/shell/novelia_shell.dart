@@ -87,6 +87,7 @@ class NoveliaShell extends StatefulWidget {
     this.catalogLoadMoreFailed = false,
     this.rankingsLoader,
     this.mostClickedNovels = const [],
+    this.recentlyUpdatedNovels = const [],
     this.initialDestination = 0,
     this.initialRecentSearches = const [],
     this.onDestinationChanged,
@@ -140,6 +141,7 @@ class NoveliaShell extends StatefulWidget {
   final bool catalogLoadMoreFailed;
   final RankingsLoader? rankingsLoader;
   final List<CatalogNovel> mostClickedNovels;
+  final List<CatalogNovel> recentlyUpdatedNovels;
   final int initialDestination;
   final List<String> initialRecentSearches;
   final ValueChanged<int>? onDestinationChanged;
@@ -154,7 +156,7 @@ class NoveliaShell extends StatefulWidget {
 }
 
 class _NoveliaShellState extends State<NoveliaShell> {
-  late int _destination = widget.initialDestination.clamp(0, 2);
+  late int _destination = widget.initialDestination.clamp(0, 3);
   late final List<String> _recentSearches = List.of(
     widget.initialRecentSearches.take(8),
   );
@@ -215,12 +217,12 @@ class _NoveliaShellState extends State<NoveliaShell> {
   }
 
   void _openRemoteCatalogCriteria(CatalogCriteria criteria) {
-    if (_destination != 0 || _catalogCriteria != criteria) {
+    if (_destination != 1 || _catalogCriteria != criteria) {
       setState(() {
-        _destination = 0;
+        _destination = 1;
         _catalogCriteria = criteria;
       });
-      widget.onDestinationChanged?.call(0);
+      widget.onDestinationChanged?.call(1);
     }
     Navigator.of(context).popUntil((route) => route.isFirst);
     unawaited(_requestCatalogCriteria(criteria).catchError((_) {}));
@@ -725,7 +727,10 @@ class _NoveliaShellState extends State<NoveliaShell> {
     final continuedRead = widget.continuedReads.firstOrNull;
     final pages = [
       DiscoverScreen(
-        novels: widget.novels,
+        mode: DiscoverScreenMode.discovery,
+        novels: widget.recentlyUpdatedNovels.isEmpty
+            ? widget.novels
+            : widget.recentlyUpdatedNovels,
         catalogAvailability: widget.catalogAvailability,
         continuedNovel: continuedRead?.novel,
         continuedProgress: continuedRead?.progress,
@@ -736,6 +741,14 @@ class _NoveliaShellState extends State<NoveliaShell> {
                 null,
                 requestedPosition: continuedRead.position,
               ),
+        mostClickedNovels: widget.mostClickedNovels,
+        onOpenNovel: _openNovel,
+        onOpenRankings: _openRankings,
+      ),
+      DiscoverScreen(
+        mode: DiscoverScreenMode.search,
+        novels: widget.novels,
+        catalogAvailability: widget.catalogAvailability,
         initialCriteria: _catalogCriteria,
         onCriteriaRequested: widget.onCatalogCriteriaRequested == null
             ? null
@@ -746,7 +759,6 @@ class _NoveliaShellState extends State<NoveliaShell> {
         catalogHasMore: widget.catalogHasMore,
         catalogLoadingMore: widget.catalogLoadingMore,
         catalogLoadMoreFailed: widget.catalogLoadMoreFailed,
-        mostClickedNovels: widget.mostClickedNovels,
         recentSearches: _recentSearches,
         onSearchCommitted: _rememberSearch,
         onOpenNovel: _openNovel,
@@ -816,6 +828,11 @@ class _NoveliaShellState extends State<NoveliaShell> {
                         label: Text('发现'),
                       ),
                       NavigationRailDestination(
+                        icon: Icon(Icons.search),
+                        selectedIcon: Icon(Icons.manage_search),
+                        label: Text('搜索'),
+                      ),
+                      NavigationRailDestination(
                         icon: Icon(Icons.library_books_outlined),
                         selectedIcon: Icon(Icons.library_books),
                         label: Text('书架'),
@@ -845,6 +862,12 @@ class _NoveliaShellState extends State<NoveliaShell> {
                   icon: Icon(Icons.explore_outlined),
                   selectedIcon: Icon(Icons.explore),
                   label: '发现',
+                ),
+                NavigationDestination(
+                  key: ValueKey('nav-search'),
+                  icon: Icon(Icons.search),
+                  selectedIcon: Icon(Icons.manage_search),
+                  label: '搜索',
                 ),
                 NavigationDestination(
                   key: ValueKey('nav-library'),

@@ -19,16 +19,24 @@ class NoveliaContentCacheAdapter {
   CachedNovelOutline cacheOutline(
     NoveliaNovelOutline outline, {
     required DateTime fetchedAt,
+    bool allowRestricted = false,
   }) {
-    final mapped = domainAdapter.mapOutline(outline);
+    final mapped = domainAdapter.mapOutline(
+      outline,
+      allowRestricted: allowRestricted,
+    );
     return _cacheOutlineFromDomain(mapped, fetchedAt: fetchedAt);
   }
 
   CachedNovelDetail cacheDetails(
     NoveliaNovelDetails details, {
     required DateTime fetchedAt,
+    bool allowRestricted = false,
   }) {
-    final mapped = domainAdapter.mapDetails(details);
+    final mapped = domainAdapter.mapDetails(
+      details,
+      allowRestricted: allowRestricted,
+    );
     final readerNovel = mapped.readerNovel!;
     final chapterById = {
       for (final chapter in readerNovel.chapters) chapter.id: chapter,
@@ -209,8 +217,11 @@ class NoveliaContentCacheAdapter {
     );
   }
 
-  CatalogNovel restoreOutline(CachedNovelOutline outline) {
-    _requireGeneralCache(outline);
+  CatalogNovel restoreOutline(
+    CachedNovelOutline outline, {
+    bool allowRestricted = false,
+  }) {
+    _requireAllowedCache(outline, allowRestricted: allowRestricted);
     final key = _keyFor(outline.id);
     return CatalogNovel(
       id: outline.id,
@@ -265,8 +276,12 @@ class NoveliaContentCacheAdapter {
   CatalogNovel restoreDetails(
     CachedNovelDetail detail, {
     List<NovelComment> comments = const [],
+    bool allowRestricted = false,
   }) {
-    final outline = restoreOutline(detail.outline);
+    final outline = restoreOutline(
+      detail.outline,
+      allowRestricted: allowRestricted,
+    );
     final chapters = <NovelChapter>[];
     final sections = <CatalogChapterSection>[];
     for (final section in detail.sections) {
@@ -451,8 +466,12 @@ class NoveliaContentCacheAdapter {
         ));
   }
 
-  void _requireGeneralCache(CachedNovelOutline outline) {
-    if (domainAdapter.isRestrictedAttentions(outline.tags)) {
+  void _requireAllowedCache(
+    CachedNovelOutline outline, {
+    required bool allowRestricted,
+  }) {
+    if (!allowRestricted &&
+        domainAdapter.isRestrictedAttentions(outline.tags)) {
       throw NoveliaRestrictedContentException(
         'Restricted cached novel ${outline.id} was rejected.',
       );

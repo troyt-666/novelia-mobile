@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'catalog_card.dart';
 import 'catalog_models.dart';
 
+enum DiscoverScreenMode { combined, discovery, search }
+
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({
     required this.novels,
@@ -25,6 +27,7 @@ class DiscoverScreen extends StatefulWidget {
     this.mostClickedNovels = const [],
     this.recentSearches = const [],
     this.onSearchCommitted,
+    this.mode = DiscoverScreenMode.combined,
     super.key,
   });
 
@@ -49,6 +52,7 @@ class DiscoverScreen extends StatefulWidget {
   final List<CatalogNovel> mostClickedNovels;
   final List<String> recentSearches;
   final ValueChanged<String>? onSearchCommitted;
+  final DiscoverScreenMode mode;
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -63,10 +67,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   CatalogCriteria? _authoritativeRemoteCriteria;
   late String? _source;
   late NovelPublicationState? _publicationState;
+  late CatalogContentLevel _contentLevel;
   late String? _translationSource;
   late String? _exactTag;
   late CatalogSort _sort;
   bool _showFilters = false;
+  CatalogSort _discoverySort = CatalogSort.recentlyUpdated;
 
   @override
   bool get wantKeepAlive => true;
@@ -104,6 +110,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     search: _query.trim(),
     source: _source,
     publicationState: _publicationState,
+    contentLevel: _contentLevel,
     translationSource: _translationSource,
     exactTag: _exactTag,
     sort: _sort,
@@ -114,6 +121,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     _searchController.text = criteria.search;
     _source = criteria.source;
     _publicationState = criteria.publicationState;
+    _contentLevel = criteria.contentLevel;
     _translationSource = criteria.translationSource;
     _exactTag = criteria.exactTag;
     _sort = criteria.sort;
@@ -164,6 +172,14 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final matchesState =
           _publicationState == null ||
           novel.publicationState == _publicationState;
+      final isRestricted = novel.tags.any(
+        (tag) => tag.trim().toUpperCase() == 'R18',
+      );
+      final matchesLevel = switch (_contentLevel) {
+        CatalogContentLevel.all => true,
+        CatalogContentLevel.general => !isRestricted,
+        CatalogContentLevel.r18 => isRestricted,
+      };
       final matchesTranslation =
           _translationSource == null ||
           (novel.coverageFor(_translationSource!)?.hasTranslation ?? false);
@@ -171,6 +187,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       return matchesQuery &&
           matchesSource &&
           matchesState &&
+          matchesLevel &&
           matchesTranslation &&
           matchesTag;
     }).toList();
@@ -240,6 +257,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     _changeCriteria(() {
       _source = null;
       _publicationState = null;
+      _contentLevel = CatalogContentLevel.all;
       _translationSource = null;
       _exactTag = null;
       _sort = CatalogSort.recentlyUpdated;
@@ -252,6 +270,10 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   void _selectPublicationState(NovelPublicationState? value) {
     _changeCriteria(() => _publicationState = value);
+  }
+
+  void _selectContentLevel(CatalogContentLevel value) {
+    _changeCriteria(() => _contentLevel = value);
   }
 
   void _selectTranslationSource(String? value) {
@@ -302,13 +324,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final novels = _filteredNovels;
-    final sources = widget.novels.map((novel) => novel.source).toSet().toList()
-      ..sort();
-    final translationSources = widget.novels
-        .expand((novel) => novel.translationCoverage)
-        .map((coverage) => coverage.source)
-        .toSet()
-        .toList();
     final mostClicked = widget.mostClickedNovels.isNotEmpty
         ? List<CatalogNovel>.of(widget.mostClickedNovels)
         : (widget.novels.where((novel) => novel.views != null).toList()
@@ -317,10 +332,14 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     final mostClickedShelfHeight = (194 + (compactTextScale - 1) * 220)
         .clamp(194, 420)
         .toDouble();
-    final recentlyUpdated =
-        widget.novels.where((novel) => novel.updatedAt != null).toList()..sort(
-          (a, b) => _compareNullableDescending(a.updatedAt, b.updatedAt),
-        );
+    final recentlyUpdated = List<CatalogNovel>.of(widget.novels)
+      ..sort((a, b) => _compareNullableDescending(a.updatedAt, b.updatedAt));
+    final discoveryNovels = _discoverySort == CatalogSort.mostClicked
+        ? mostClicked
+        : recentlyUpdated;
+    final showDiscovery = widget.mode != DiscoverScreenMode.search;
+    final showSearch = widget.mode != DiscoverScreenMode.discovery;
+    final continuedNovel = showDiscovery ? widget.continuedNovel : null;
 
     return SafeArea(
       bottom: false,
@@ -338,13 +357,15 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '发现',
+                          showSearch && !showDiscovery ? '搜索' : '发现',
                           style: Theme.of(context).textTheme.headlineMedium
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          '找到下一个想读的故事',
+                          showSearch && !showDiscovery
+                              ? '按官方目录条件查找网络小说'
+                              : '找到下一个想读的故事',
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(
                                 color: Theme.of(
@@ -355,12 +376,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       ],
                     ),
                   ),
-                  FilledButton.tonalIcon(
-                    key: const ValueKey('open-rankings-button'),
-                    onPressed: widget.onOpenRankings,
-                    icon: const Icon(Icons.leaderboard_outlined),
-                    label: const Text('排行'),
-                  ),
+                  if (showDiscovery)
+                    FilledButton.tonalIcon(
+                      key: const ValueKey('open-rankings-button'),
+                      onPressed: widget.onOpenRankings,
+                      icon: const Icon(Icons.leaderboard_outlined),
+                      label: const Text('排行'),
+                    ),
                 ],
               ),
             ),
@@ -374,7 +396,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 ),
               ),
             ),
-          if (widget.continuedNovel case final continued?) ...[
+          if (continuedNovel case final continued?) ...[
             _SectionHeader(title: '继续阅读'),
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -394,7 +416,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ),
             ),
           ],
-          if (mostClicked.isNotEmpty) ...[
+          if (widget.mode == DiscoverScreenMode.combined &&
+              mostClicked.isNotEmpty) ...[
             _SectionHeader(title: '最多点击'),
             SliverToBoxAdapter(
               child: SizedBox(
@@ -420,7 +443,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ),
             ),
           ],
-          if (recentlyUpdated.isNotEmpty) ...[
+          if (widget.mode == DiscoverScreenMode.combined &&
+              recentlyUpdated.isNotEmpty) ...[
             _SectionHeader(title: '最近更新'),
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -438,123 +462,175 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ),
             ),
           ],
-          _SectionHeader(title: '全部小说', topPadding: 30),
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            sliver: SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SearchBar(
-                    key: const ValueKey('discover-search-field'),
-                    controller: _searchController,
-                    hintText: '搜索中日文书名或作者',
-                    leading: const Icon(Icons.search),
-                    trailing: [
-                      if (_query.isNotEmpty)
-                        IconButton(
-                          key: const ValueKey('clear-discover-search'),
-                          tooltip: '清除搜索',
-                          onPressed: () {
-                            _searchController.clear();
-                            _setQuery('', commit: true);
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                    ],
-                    onChanged: _setQuery,
-                    onSubmitted: (value) => _setQuery(value, commit: true),
-                  ),
-                  if (widget.recentSearches.isNotEmpty && _query.isEmpty) ...[
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: [
-                        for (final query in widget.recentSearches.take(4))
-                          InputChip(
-                            key: ValueKey('recent-search-$query'),
-                            avatar: const Icon(Icons.history, size: 16),
-                            label: Text(query),
-                            onPressed: () {
-                              _searchController.text = query;
-                              _setQuery(query, commit: true);
-                            },
-                          ),
-                      ],
+          if (widget.mode == DiscoverScreenMode.discovery) ...[
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 26, 20, 12),
+              sliver: SliverToBoxAdapter(
+                child: SegmentedButton<CatalogSort>(
+                  key: const ValueKey('discover-feed-selector'),
+                  segments: const [
+                    ButtonSegment(
+                      value: CatalogSort.recentlyUpdated,
+                      icon: Icon(Icons.update),
+                      label: Text('最近更新'),
+                    ),
+                    ButtonSegment(
+                      value: CatalogSort.mostClicked,
+                      icon: Icon(Icons.local_fire_department_outlined),
+                      label: Text('最多点击'),
                     ),
                   ],
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      OutlinedButton.icon(
-                        key: const ValueKey('discover-filters-button'),
-                        onPressed: () =>
-                            setState(() => _showFilters = !_showFilters),
-                        icon: const Icon(Icons.tune),
-                        label: Text(_showFilters ? '收起筛选' : '筛选'),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: DropdownButtonFormField<CatalogSort>(
-                          key: const ValueKey('catalog-sort-dropdown'),
-                          initialValue: _sort,
-                          decoration: const InputDecoration(
-                            labelText: '排序',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: [
-                            for (final sort in CatalogSort.values)
-                              DropdownMenuItem(
-                                value: sort,
-                                child: Text(sort.label),
-                              ),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) _selectSort(value);
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 180),
-                    alignment: Alignment.topCenter,
-                    child: _showFilters
-                        ? Padding(
-                            padding: const EdgeInsets.only(top: 14),
-                            child: _CatalogFilters(
-                              sources: sources,
-                              translationSources: translationSources,
-                              selectedSource: _source,
-                              selectedState: _publicationState,
-                              selectedTranslationSource: _translationSource,
-                              exactTag: _exactTag,
-                              onSourceSelected: _selectSource,
-                              onStateSelected: _selectPublicationState,
-                              onTranslationSelected: _selectTranslationSource,
-                              onClear: _clearFilters,
-                            ),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _resultCountLabel(novels.length),
-                    key: const ValueKey('catalog-result-count'),
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                ],
+                  selected: {_discoverySort},
+                  onSelectionChanged: (selection) {
+                    setState(() => _discoverySort = selection.single);
+                  },
+                ),
               ),
             ),
-          ),
-          if (novels.isEmpty)
+            if (discoveryNovels.isEmpty)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: _EmptyDiscovery(),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+                sliver: SliverList.separated(
+                  key: const ValueKey('discover-feed-results'),
+                  itemCount: discoveryNovels.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final novel = discoveryNovels[index];
+                    return CatalogNovelCard(
+                      novel: novel,
+                      onOpen: () => widget.onOpenNovel(novel),
+                    );
+                  },
+                ),
+              ),
+          ],
+          if (showSearch)
+            _SectionHeader(
+              title: widget.mode == DiscoverScreenMode.search ? '搜索条件' : '全部小说',
+              topPadding: widget.mode == DiscoverScreenMode.search ? 18 : 30,
+            ),
+          if (showSearch)
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              sliver: SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SearchBar(
+                      key: const ValueKey('discover-search-field'),
+                      controller: _searchController,
+                      hintText: '搜索中日文书名或作者',
+                      leading: const Icon(Icons.search),
+                      trailing: [
+                        if (_query.isNotEmpty)
+                          IconButton(
+                            key: const ValueKey('clear-discover-search'),
+                            tooltip: '清除搜索',
+                            onPressed: () {
+                              _searchController.clear();
+                              _setQuery('', commit: true);
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                      ],
+                      onChanged: _setQuery,
+                      onSubmitted: (value) => _setQuery(value, commit: true),
+                    ),
+                    if (widget.recentSearches.isNotEmpty && _query.isEmpty) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          for (final query in widget.recentSearches.take(4))
+                            InputChip(
+                              key: ValueKey('recent-search-$query'),
+                              avatar: const Icon(Icons.history, size: 16),
+                              label: Text(query),
+                              onPressed: () {
+                                _searchController.text = query;
+                                _setQuery(query, commit: true);
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          key: const ValueKey('discover-filters-button'),
+                          onPressed: () =>
+                              setState(() => _showFilters = !_showFilters),
+                          icon: const Icon(Icons.tune),
+                          label: Text(_showFilters ? '收起筛选' : '筛选'),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: DropdownButtonFormField<CatalogSort>(
+                            key: const ValueKey('catalog-sort-dropdown'),
+                            initialValue: _sort,
+                            decoration: const InputDecoration(
+                              labelText: '排序',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: [
+                              for (final sort in CatalogSort.values)
+                                DropdownMenuItem(
+                                  value: sort,
+                                  child: Text(sort.label),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) _selectSort(value);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 180),
+                      alignment: Alignment.topCenter,
+                      child: _showFilters
+                          ? Padding(
+                              padding: const EdgeInsets.only(top: 14),
+                              child: _CatalogFilters(
+                                selectedSource: _source,
+                                selectedState: _publicationState,
+                                selectedContentLevel: _contentLevel,
+                                selectedTranslationSource: _translationSource,
+                                exactTag: _exactTag,
+                                onSourceSelected: _selectSource,
+                                onStateSelected: _selectPublicationState,
+                                onContentLevelSelected: _selectContentLevel,
+                                onTranslationSelected: _selectTranslationSource,
+                                onClear: _clearFilters,
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _resultCountLabel(novels.length),
+                      key: const ValueKey('catalog-result-count'),
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (showSearch && novels.isEmpty)
             const SliverFillRemaining(
               hasScrollBody: false,
               child: _EmptyCatalog(),
             )
-          else
+          else if (showSearch)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
               sliver: SliverList.separated(
@@ -577,7 +653,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 },
               ),
             ),
-          if (widget.onLoadMoreRequested != null &&
+          if (showSearch &&
+              widget.onLoadMoreRequested != null &&
               (widget.catalogHasMore ||
                   widget.catalogLoadingMore ||
                   widget.catalogLoadMoreFailed))
@@ -653,28 +730,44 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+class _CatalogFilterOption {
+  const _CatalogFilterOption(this.value, this.label);
+
+  final String value;
+  final String label;
+}
+
+const _officialSourceOptions = <_CatalogFilterOption>[
+  _CatalogFilterOption('Kakuyomu', 'Kakuyomu'),
+  _CatalogFilterOption('Syosetu', '成为小说家吧'),
+  _CatalogFilterOption('Novelup', 'Novelup'),
+  _CatalogFilterOption('Hameln', 'Hameln'),
+  _CatalogFilterOption('Pixiv', 'Pixiv'),
+  _CatalogFilterOption('Alphapolis', 'Alphapolis'),
+];
+
 class _CatalogFilters extends StatelessWidget {
   const _CatalogFilters({
-    required this.sources,
-    required this.translationSources,
     required this.selectedSource,
     required this.selectedState,
+    required this.selectedContentLevel,
     required this.selectedTranslationSource,
     required this.onSourceSelected,
     required this.onStateSelected,
+    required this.onContentLevelSelected,
     required this.onTranslationSelected,
     required this.onClear,
     this.exactTag,
   });
 
-  final List<String> sources;
-  final List<String> translationSources;
   final String? selectedSource;
   final NovelPublicationState? selectedState;
+  final CatalogContentLevel selectedContentLevel;
   final String? selectedTranslationSource;
   final String? exactTag;
   final ValueChanged<String?> onSourceSelected;
   final ValueChanged<NovelPublicationState?> onStateSelected;
+  final ValueChanged<CatalogContentLevel> onContentLevelSelected;
   final ValueChanged<String?> onTranslationSelected;
   final VoidCallback onClear;
 
@@ -699,18 +792,18 @@ class _CatalogFilters extends StatelessWidget {
                   selected: selectedSource == null,
                   onSelected: (_) => onSourceSelected(null),
                 ),
-                for (final source in sources)
+                for (final source in _officialSourceOptions)
                   ChoiceChip(
-                    key: ValueKey('filter-source-$source'),
-                    label: Text(source),
-                    selected: selectedSource == source,
+                    key: ValueKey('filter-source-${source.value}'),
+                    label: Text(source.label),
+                    selected: selectedSource == source.value,
                     onSelected: (selected) =>
-                        onSourceSelected(selected ? source : null),
+                        onSourceSelected(selected ? source.value : null),
                   ),
               ],
             ),
             const SizedBox(height: 10),
-            _FilterLabel(label: '状态'),
+            _FilterLabel(label: '类型'),
             Wrap(
               spacing: 7,
               children: [
@@ -719,7 +812,11 @@ class _CatalogFilters extends StatelessWidget {
                   selected: selectedState == null,
                   onSelected: (_) => onStateSelected(null),
                 ),
-                for (final state in NovelPublicationState.values)
+                for (final state in const [
+                  NovelPublicationState.ongoing,
+                  NovelPublicationState.completed,
+                  NovelPublicationState.shortStory,
+                ])
                   ChoiceChip(
                     key: ValueKey('filter-state-${state.name}'),
                     label: Text(state.label),
@@ -730,7 +827,21 @@ class _CatalogFilters extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            _FilterLabel(label: '翻译来源（至少一章）'),
+            _FilterLabel(label: '分级'),
+            Wrap(
+              spacing: 7,
+              children: [
+                for (final level in CatalogContentLevel.values)
+                  ChoiceChip(
+                    key: ValueKey('filter-level-${level.name}'),
+                    label: Text(level.label),
+                    selected: selectedContentLevel == level,
+                    onSelected: (_) => onContentLevelSelected(level),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _FilterLabel(label: '翻译'),
             Wrap(
               spacing: 7,
               children: [
@@ -739,7 +850,7 @@ class _CatalogFilters extends StatelessWidget {
                   selected: selectedTranslationSource == null,
                   onSelected: (_) => onTranslationSelected(null),
                 ),
-                for (final source in translationSources)
+                for (final source in const ['GPT', 'Sakura'])
                   ChoiceChip(
                     key: ValueKey('filter-translation-$source'),
                     label: Text(source),
@@ -804,6 +915,31 @@ class _EmptyCatalog extends StatelessWidget {
             Text('没有匹配的小说', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 6),
             const Text('请尝试其他关键词或减少筛选条件。'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyDiscovery extends StatelessWidget {
+  const _EmptyDiscovery();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.menu_book_outlined,
+              size: 48,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+            const SizedBox(height: 12),
+            Text('暂无可展示的小说', style: Theme.of(context).textTheme.titleMedium),
           ],
         ),
       ),

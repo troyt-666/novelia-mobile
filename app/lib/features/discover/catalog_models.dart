@@ -16,11 +16,21 @@ enum NovelPublicationState {
 }
 
 enum CatalogSort {
-  recentlyUpdated('最近更新'),
-  mostClicked('最多点击'),
-  relevance('相关程度');
+  recentlyUpdated('更新'),
+  mostClicked('点击'),
+  relevance('相关');
 
   const CatalogSort(this.label);
+
+  final String label;
+}
+
+enum CatalogContentLevel {
+  all('全部'),
+  general('一般向'),
+  r18('R18');
+
+  const CatalogContentLevel(this.label);
 
   final String label;
 }
@@ -37,6 +47,7 @@ class CatalogCriteria {
     this.search = '',
     this.source,
     this.publicationState,
+    this.contentLevel = CatalogContentLevel.all,
     this.translationSource,
     this.exactTag,
     this.sort = CatalogSort.recentlyUpdated,
@@ -45,6 +56,7 @@ class CatalogCriteria {
   final String search;
   final String? source;
   final NovelPublicationState? publicationState;
+  final CatalogContentLevel contentLevel;
   final String? translationSource;
   final String? exactTag;
   final CatalogSort sort;
@@ -55,6 +67,7 @@ class CatalogCriteria {
       other.search == search &&
       other.source == source &&
       other.publicationState == publicationState &&
+      other.contentLevel == contentLevel &&
       other.translationSource == translationSource &&
       other.exactTag == exactTag &&
       other.sort == sort;
@@ -64,6 +77,7 @@ class CatalogCriteria {
     search,
     source,
     publicationState,
+    contentLevel,
     translationSource,
     exactTag,
     sort,

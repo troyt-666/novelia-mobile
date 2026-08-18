@@ -56,6 +56,7 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     NoveliaContentCacheAdapter? cacheAdapter,
     NoveliaClock? clock,
     this.maximumStoredRefreshesPerRun = 20,
+    this.canAccessRestrictedContent,
   }) : cacheAdapter =
            cacheAdapter ??
            NoveliaContentCacheAdapter(domainAdapter: domainAdapter),
@@ -72,7 +73,11 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
   final NoveliaContentCacheAdapter cacheAdapter;
   final NoveliaClock clock;
   final int maximumStoredRefreshesPerRun;
+  final NoveliaRestrictedContentAccess? canAccessRestrictedContent;
   final Map<String, String> _storedRefreshCursorByIntent = <String, String>{};
+
+  bool get _allowsRestrictedContent =>
+      canAccessRestrictedContent?.call() == true;
 
   @override
   Future<NoveliaDownloadRun> synchronizeIntent(String intentId) async {
@@ -80,7 +85,7 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     if (intent == null) {
       throw StateError('Unknown Novelia download intent $intentId.');
     }
-    if (_hasRestrictedMarker(intent.novelId)) {
+    if (!_allowsRestrictedContent && _hasRestrictedMarker(intent.novelId)) {
       return _runResult(
         intentId: intentId,
         availability: CatalogAvailability.authenticationRequired,
@@ -282,10 +287,17 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
           'The detail response belongs to a different novel.',
         );
       }
-      final novel = domainAdapter.mapDetails(details);
+      final novel = domainAdapter.mapDetails(
+        details,
+        allowRestricted: _allowsRestrictedContent,
+      );
       try {
         contentRepository.upsertNovelDetail(
-          cacheAdapter.cacheDetails(details, fetchedAt: clock()),
+          cacheAdapter.cacheDetails(
+            details,
+            fetchedAt: clock(),
+            allowRestricted: _allowsRestrictedContent,
+          ),
         );
       } on Object {
         // Downloading may continue with verified live metadata. The final
@@ -470,7 +482,12 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
   CatalogNovel? _cachedDetails(String novelId) {
     try {
       final detail = contentRepository.novelDetail(novelId);
-      return detail == null ? null : cacheAdapter.restoreDetails(detail);
+      return detail == null
+          ? null
+          : cacheAdapter.restoreDetails(
+              detail,
+              allowRestricted: _allowsRestrictedContent,
+            );
     } on Object {
       return null;
     }

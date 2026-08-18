@@ -74,7 +74,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('exposes Discover, Library, and Settings destinations', (
+  testWidgets('exposes separate Discover, Search, Library, and Settings tabs', (
     tester,
   ) async {
     await pumpShell(tester);
@@ -83,6 +83,12 @@ void main() {
     expect(find.text('继续阅读'), findsNothing);
     expect(find.text('最多点击'), findsOneWidget);
     expect(find.text('最近更新'), findsOneWidget);
+    expect(find.byKey(const ValueKey('discover-search-field')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('discover-search-field')), findsOneWidget);
+    expect(find.text('搜索条件'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
@@ -237,6 +243,8 @@ void main() {
     tester,
   ) async {
     await pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
 
     final search = find.byKey(const ValueKey('discover-search-field'));
     await tester.scrollUntilVisible(
@@ -252,6 +260,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('filter-translation-Sakura')),
+      findsOneWidget,
+    );
+    expect(find.text('成为小说家吧'), findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-state-ongoing')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('filter-state-completed')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('filter-state-shortStory')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('filter-level-general')), findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-level-r18')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('filter-translation-GPT')),
       findsOneWidget,
     );
   });
@@ -280,6 +304,7 @@ void main() {
         home: StatefulBuilder(
           builder: (context, setState) => Scaffold(
             body: DiscoverScreen(
+              mode: DiscoverScreenMode.search,
               novels: novels,
               catalogAvailability: CatalogAvailability.available,
               onOpenNovel: (_) {},
@@ -325,6 +350,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: DiscoverScreen(
+            mode: DiscoverScreenMode.search,
             novels: fixtureCatalogNovels,
             catalogAvailability: CatalogAvailability.available,
             onOpenNovel: (_) {},
@@ -353,13 +379,20 @@ void main() {
     await tester.pump();
     expect(requests.last.publicationState, NovelPublicationState.completed);
 
+    await tester.tap(find.byKey(const ValueKey('filter-level-r18')));
+    await tester.pump();
+    expect(requests.last.contentLevel, CatalogContentLevel.r18);
+    await tester.tap(find.byKey(const ValueKey('filter-level-all')));
+    await tester.pump();
+    expect(requests.last.contentLevel, CatalogContentLevel.all);
+
     await tester.tap(find.byKey(const ValueKey('filter-translation-Sakura')));
     await tester.pump();
     expect(requests.last.translationSource, 'Sakura');
 
     await tester.tap(find.byKey(const ValueKey('catalog-sort-dropdown')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('最多点击').last);
+    await tester.tap(find.text('点击').last);
     await tester.pumpAndSettle();
     expect(requests.last.sort, CatalogSort.mostClicked);
 
@@ -376,6 +409,7 @@ void main() {
     expect(requests.last.exactTag, '幻想');
     expect(requests.last.source, 'Kakuyomu');
     expect(requests.last.publicationState, NovelPublicationState.completed);
+    expect(requests.last.contentLevel, CatalogContentLevel.all);
     expect(requests.last.translationSource, 'Sakura');
     expect(requests.last.sort, CatalogSort.mostClicked);
   });
@@ -391,6 +425,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: DiscoverScreen(
+            mode: DiscoverScreenMode.search,
             novels: fixtureCatalogNovels.take(1).toList(),
             catalogAvailability: CatalogAvailability.available,
             catalogTotalCount: 37,
@@ -550,6 +585,8 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
     await tester.pumpAndSettle();
 
     final search = find.byKey(const ValueKey('discover-search-field'));

@@ -102,6 +102,8 @@ void main() {
       ).pop();
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('nav-search')));
+      await tester.pumpAndSettle();
       final footer = find.byKey(const ValueKey('load-next-catalog-page'));
       await tester.scrollUntilVisible(
         footer,
@@ -190,6 +192,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
     final filters = find.byKey(const ValueKey('discover-filters-button'));
     await tester.scrollUntilVisible(
       filters,
@@ -207,13 +211,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(coordinator.queries.last.publicationType, 1);
 
+    await tester.tap(find.byKey(const ValueKey('filter-level-general')));
+    await tester.pumpAndSettle();
+    expect(coordinator.queries.last.contentLevel, 1);
+
     await tester.tap(find.byKey(const ValueKey('filter-translation-Sakura')));
     await tester.pumpAndSettle();
     expect(coordinator.queries.last.translationFilter, 2);
 
     await tester.tap(find.byKey(const ValueKey('catalog-sort-dropdown')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('最多点击').last);
+    await tester.tap(find.text('点击').last);
     await tester.pumpAndSettle();
     expect(coordinator.queries.last.sort, 1);
   });
@@ -249,7 +257,7 @@ void main() {
       ValueKey('open-details-${coordinator.outline.id}'),
     );
     expect(detailCards, findsWidgets);
-    tester.widget<InkWell>(detailCards.at(1)).onTap!();
+    tester.widget<InkWell>(detailCards.first).onTap!();
     await tester.pumpAndSettle();
 
     final chapterToggle = find.byKey(const ValueKey('toggle-chapters-button'));
@@ -352,6 +360,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(downloads.statesAtSynchronization, [DownloadTaskState.queued]);
+  });
+
+  testWidgets('manual offline download is created before chapters finish', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = SqliteOfflineRepository.openInMemory();
+    addTearDown(repository.close);
+    final content = _RuntimeCoordinator();
+    final downloads = _BlockingDownloadCoordinator(repository);
+
+    await tester.pumpWidget(
+      NoveliaReaderApp(
+        repository: repository,
+        contentCoordinator: content,
+        downloadCoordinator: downloads,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(ValueKey('open-details-${content.outline.id}')).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('download-novel-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(repository.listIntents(), hasLength(1));
+    expect(downloads.calls, 1);
+    expect(find.text('已加入离线下载'), findsOneWidget);
+    expect(find.byKey(const ValueKey('download-novel-loading')), findsNothing);
+
+    downloads.complete();
+    await tester.pumpAndSettle();
   });
 }
 
@@ -652,6 +697,36 @@ class _RecordingDownloadCoordinator implements NoveliaDownloadCoordinator {
       refreshedCopyCount: 0,
       refreshFailureCount: 0,
       tasks: tasks,
+    );
+  }
+}
+
+class _BlockingDownloadCoordinator implements NoveliaDownloadCoordinator {
+  _BlockingDownloadCoordinator(this.repository);
+
+  final SqliteOfflineRepository repository;
+  final _completion = Completer<NoveliaDownloadRun>();
+  var calls = 0;
+
+  @override
+  Future<NoveliaDownloadRun> synchronizeIntent(String intentId) {
+    calls += 1;
+    return _completion.future;
+  }
+
+  void complete() {
+    final intent = repository.listIntents().single;
+    _completion.complete(
+      NoveliaDownloadRun(
+        intentId: intent.id,
+        availability: CatalogAvailability.available,
+        usedCachedToc: false,
+        knownChapterCount: 0,
+        createdTaskCount: 0,
+        refreshedCopyCount: 0,
+        refreshFailureCount: 0,
+        tasks: const [],
+      ),
     );
   }
 }

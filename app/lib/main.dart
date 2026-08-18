@@ -52,6 +52,8 @@ Future<void> main() async {
     final contentCoordinator = LiveFirstNoveliaContentCoordinator(
       gateway: gateway,
       contentRepository: repository,
+      canAccessRestrictedContent: () =>
+          accountSessionController.snapshot.isSignedIn,
       onChapterCached: ({required novelId, required chapterId}) {
         final cacheLimit =
             repository.appSettings()?.cacheLimitBytes ??
@@ -68,6 +70,8 @@ Future<void> main() async {
       gateway: gateway,
       contentRepository: repository,
       offlineRepository: repository,
+      canAccessRestrictedContent: () =>
+          accountSessionController.snapshot.isSignedIn,
     );
     runApp(
       NoveliaReaderApp(
@@ -129,6 +133,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   late String? _initialReaderNovelId;
   late ReadingPosition? _initialReaderPosition;
   late List<CatalogNovel> _catalogNovels;
+  late List<CatalogNovel> _recentlyUpdatedNovels;
   late CatalogAvailability _catalogAvailability;
   final Set<String> _activeDownloadSyncs = <String>{};
   var _catalogLoadGeneration = 0;
@@ -139,6 +144,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _catalogLoadMoreFailed = false;
   var _mostClickedNovels = const <CatalogNovel>[];
   var _mostClickedGeneration = 0;
+  var _recentlyUpdatedGeneration = 0;
   var _defaultRankingPageSize = 0;
   var _currentDestination = 0;
   var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
@@ -174,10 +180,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
 
     if (widget.contentCoordinator == null) {
       _catalogNovels = fixtureCatalogNovels;
+      _recentlyUpdatedNovels = fixtureCatalogNovels;
       _catalogAvailability = CatalogAvailability.available;
     } else {
       _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
       _catalogNovels = _restoreCachedCatalog();
+      _recentlyUpdatedNovels = _catalogNovels;
       // Restored rows are useful immediately, but they are not evidence that
       // the service is currently reachable. A live-origin refresh promotes the
       // state to available once it actually succeeds.
@@ -194,6 +202,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     widget.accountSessionController?.removeListener(_accountSessionChanged);
     _catalogLoadGeneration += 1;
     _mostClickedGeneration += 1;
+    _recentlyUpdatedGeneration += 1;
     widget.onRuntimeDispose?.call();
     if (widget.closeRepositoryOnDispose) _repository.close();
     super.dispose();
@@ -204,6 +213,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     if (state != AppLifecycleState.resumed) return;
     if (widget.contentCoordinator != null) {
       unawaited(_refreshCatalog());
+      unawaited(_refreshRecentlyUpdated());
       unawaited(_refreshMostClicked());
     }
     if (widget.downloadCoordinator != null) {
@@ -231,6 +241,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         _repository.clearRemoteHistoryOutbox();
         _lastHistoryChapterByNovel.clear();
       }
+    }
+    if (widget.contentCoordinator != null &&
+        _catalogCriteria.contentLevel != CatalogContentLevel.general) {
+      unawaited(_refreshCatalog(criteria: _catalogCriteria));
     }
     setState(() {});
   }
@@ -322,14 +336,23 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     const domainAdapter = NoveliaDomainAdapter();
     const cacheAdapter = NoveliaContentCacheAdapter();
     final fetchedAt = DateTime.now().toUtc();
+    final allowRestricted =
+        widget.accountSessionController?.snapshot.isSignedIn == true;
     final novels = <CatalogNovel>[];
     for (final outline in page.items) {
       try {
-        final novel = domainAdapter.mapOutline(outline);
+        final novel = domainAdapter.mapOutline(
+          outline,
+          allowRestricted: allowRestricted,
+        );
         novels.add(novel);
         try {
           _repository.upsertNovelOutline(
-            cacheAdapter.cacheOutline(outline, fetchedAt: fetchedAt),
+            cacheAdapter.cacheOutline(
+              outline,
+              fetchedAt: fetchedAt,
+              allowRestricted: allowRestricted,
+            ),
           );
         } on Object {
           // A cache failure must not hide an otherwise valid account row.
@@ -486,7 +509,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         requestedCriteria.publicationState,
         fallback: base.publicationType,
       ),
-      contentLevel: base.contentLevel,
+      contentLevel: _contentLevelFor(requestedCriteria.contentLevel),
       translationFilter: _translationFilterFor(
         requestedCriteria.translationSource,
         fallback: base.translationFilter,
@@ -521,6 +544,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
             ]);
           } else {
             _catalogNovels = List.unmodifiable(incoming);
+            if (_isPlainRecentlyUpdated(requestedCriteria)) {
+              _recentlyUpdatedNovels = _catalogNovels;
+            }
           }
           _catalogPageIndex = slice.pageIndex;
           _catalogTotalPages = slice.totalPages;
@@ -549,12 +575,21 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   static String? _providerIdForSource(String? source) {
     return switch (source?.trim().toLowerCase()) {
       'kakuyomu' => 'kakuyomu',
-      'syosetu' => 'syosetu',
+      'syosetu' || '成为小说家吧' => 'syosetu',
       'novelup' => 'novelup',
       'hameln' => 'hameln',
       'pixiv' => 'pixiv',
       'alphapolis' => 'alphapolis',
       _ => null,
+    };
+  }
+
+  int _contentLevelFor(CatalogContentLevel level) {
+    return switch (level) {
+      CatalogContentLevel.all =>
+        widget.accountSessionController?.snapshot.isSignedIn == true ? 0 : 1,
+      CatalogContentLevel.general => 1,
+      CatalogContentLevel.r18 => 2,
     };
   }
 
@@ -597,7 +632,20 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     CatalogCriteria criteria,
   ) {
     final selectedSource = criteria.source;
-    if (selectedSource != null && novel.source != selectedSource) return false;
+    if (selectedSource != null &&
+        _providerIdForSource(novel.source) !=
+            _providerIdForSource(selectedSource)) {
+      return false;
+    }
+    final isRestricted = novel.tags.any(
+      (tag) => tag.trim().toUpperCase() == 'R18',
+    );
+    if (criteria.contentLevel == CatalogContentLevel.general && isRestricted) {
+      return false;
+    }
+    if (criteria.contentLevel == CatalogContentLevel.r18 && !isRestricted) {
+      return false;
+    }
     final selectedState = criteria.publicationState;
     if (selectedState != null && novel.publicationState != selectedState) {
       return false;
@@ -634,6 +682,40 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     } on Object {
       // Popularity order cannot be reconstructed truthfully from cached rows.
     }
+  }
+
+  Future<void> _refreshRecentlyUpdated() async {
+    final coordinator = widget.contentCoordinator;
+    if (coordinator == null) return;
+    final generation = ++_recentlyUpdatedGeneration;
+    final base = widget.catalogQuery;
+    try {
+      final result = await coordinator.loadCatalog(
+        NoveliaCatalogQuery(
+          pageSize: base.pageSize,
+          providers: base.providers,
+          contentLevel: base.contentLevel,
+          sort: 0,
+        ),
+      );
+      if (!mounted || generation != _recentlyUpdatedGeneration) return;
+      final data = result.data;
+      if (data != null) {
+        setState(() => _recentlyUpdatedNovels = List.unmodifiable(data.novels));
+      }
+    } on Object {
+      // Keep the last verified/cache-restored discovery feed.
+    }
+  }
+
+  static bool _isPlainRecentlyUpdated(CatalogCriteria criteria) {
+    return criteria.search.trim().isEmpty &&
+        criteria.source == null &&
+        criteria.publicationState == null &&
+        criteria.contentLevel == CatalogContentLevel.all &&
+        criteria.translationSource == null &&
+        criteria.exactTag == null &&
+        criteria.sort == CatalogSort.recentlyUpdated;
   }
 
   Future<RankingPageView> _loadDefaultRankings(int pageNumber) async {
@@ -926,19 +1008,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       _repository.resumeIntent(intent.id, now);
       intent = intent.withEnabled(true);
     }
-    final run = await _synchronizeIntent(intent.id, retryFailures: true);
-    if (run == null) {
-      throw StateError('The download is already running or unavailable.');
-    }
-    if (run.availability != CatalogAvailability.available) {
-      throw run.failure ?? StateError('The download source is unavailable.');
-    }
-    final failed = run.tasks.where(
-      (task) => task.state == DownloadTaskState.failed,
-    );
-    if (failed.isNotEmpty) {
-      throw StateError('${failed.length} chapters failed to download.');
-    }
+    // Registering a protected download is the user action. Hydrating the TOC
+    // and fetching every chapter can take minutes, so chapter-level failures
+    // belong in Download Management instead of turning a valid creation into
+    // a misleading "creation failed" toast.
+    unawaited(_synchronizeIntent(intent.id, retryFailures: true));
+    if (mounted) setState(() {});
   }
 
   Future<LibraryProtectedDownload?> _manageDownload(
@@ -1087,12 +1162,22 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
 
   Map<String, CatalogNovel> _localNovelsById() {
     const adapter = NoveliaContentCacheAdapter();
+    final allowRestricted =
+        widget.accountSessionController?.snapshot.isSignedIn == true;
     final result = <String, CatalogNovel>{};
     for (final cached in _repository.listCachedNovels()) {
       try {
-        result[cached.id] = adapter.restoreOutline(cached);
+        result[cached.id] = adapter.restoreOutline(
+          cached,
+          allowRestricted: allowRestricted,
+        );
         final detail = _repository.novelDetail(cached.id);
-        if (detail != null) result[cached.id] = adapter.restoreDetails(detail);
+        if (detail != null) {
+          result[cached.id] = adapter.restoreDetails(
+            detail,
+            allowRestricted: allowRestricted,
+          );
+        }
       } on Object {
         // Omit a malformed local title without hiding unrelated local state.
       }
@@ -1285,9 +1370,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   Widget build(BuildContext context) {
     final localNovelsById = _localNovelsById();
     return MaterialApp(
-      title: 'Novelia 阅读器',
+      title: 'JFZ Reader',
       debugShowCheckedModeBanner: false,
-      restorationScopeId: 'novelia-reader-app',
+      restorationScopeId: 'jfzreader-app',
       locale: const Locale('zh', 'CN'),
       supportedLocales: const [Locale('zh', 'CN')],
       localizationsDelegates: const [
@@ -1352,6 +1437,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         catalogLoadingMore: _catalogLoadingMore,
         catalogLoadMoreFailed: _catalogLoadMoreFailed,
         mostClickedNovels: _mostClickedNovels,
+        recentlyUpdatedNovels: _recentlyUpdatedNovels,
         rankingsLoader: widget.contentCoordinator == null
             ? null
             : _loadDefaultRankings,
@@ -1450,14 +1536,16 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   static int _destinationForRoute(String? routeName) => switch (routeName) {
-    '/library' => 1,
-    '/settings' => 2,
+    '/search' => 1,
+    '/library' => 2,
+    '/settings' => 3,
     _ => 0,
   };
 
   static String _routeForDestination(int destination) => switch (destination) {
-    1 => '/library',
-    2 => '/settings',
+    1 => '/search',
+    2 => '/library',
+    3 => '/settings',
     _ => '/discover',
   };
 

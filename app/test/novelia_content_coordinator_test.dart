@@ -206,6 +206,48 @@ void main() {
     );
 
     test(
+      'authenticated access admits official all and R18 catalog levels',
+      () async {
+        var signedIn = true;
+        final gateway = _FakeGateway(
+          catalogPage: NoveliaPage(
+            items: [
+              _outline(attentions: const ['R18']),
+            ],
+            pageCount: 1,
+          ),
+          details: _details(attentions: const ['R18']),
+        );
+        final coordinator = LiveFirstNoveliaContentCoordinator(
+          gateway: gateway,
+          canAccessRestrictedContent: () => signedIn,
+        );
+
+        final catalog = await coordinator.loadCatalog(
+          const NoveliaCatalogQuery(contentLevel: 2),
+        );
+        expect(catalog.availability, CatalogAvailability.available);
+        expect(catalog.data!.novels.single.tags, contains('R18'));
+        final detail = await coordinator.loadDetails(
+          catalog.data!.novels.single,
+        );
+        expect(detail.availability, CatalogAvailability.available);
+
+        signedIn = false;
+        final denied = await coordinator.loadDetails(
+          catalog.data!.novels.single,
+        );
+        expect(denied.availability, CatalogAvailability.authenticationRequired);
+
+        signedIn = true;
+        final all = await coordinator.loadCatalog(
+          const NoveliaCatalogQuery(contentLevel: 0),
+        );
+        expect(all.availability, CatalogAvailability.available);
+      },
+    );
+
+    test(
       'revokes a previously general novel after a restricted detail',
       () async {
         final store = _MemoryStore();
