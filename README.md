@@ -1,106 +1,46 @@
 # JFZ Reader
 
-Independent Flutter implementation of a Chinese-first, bilingual Web Novel
-reader for Novelia-compatible content.
+JFZ Reader is a Chinese-first bilingual reader for Novelia-compatible web
+novels. Read Chinese translations alongside Japanese originals, keep your
+place, and continue reading when you are offline.
 
-The only imported artifact is `Novelia_v0.7.7.apk`. It is a behavioral and
-interoperability reference, not a source-code dependency. No application source
-has been recovered or copied.
+## Features
 
-## Current status
+- Browse discovery feeds and search a catalog by source, type, rating,
+  translation provider, and sort order.
+- Read in Chinese-only or Chinese–Japanese mode with chapter navigation and
+  adjustable reading appearance.
+- Resume from saved reading progress and use bookmarks and recent searches.
+- Download whole novels for offline reading with pause, resume, retry, and
+  removal controls.
+- Sign in when needed for account features such as Favorites and Reading
+  History; general browsing and reading can remain anonymous.
+- Open the original work in the system browser.
+- Use light, dark, or system theme settings.
 
-- Static APK audit: complete.
-- Signed-out live-site feature audit: complete.
-- Product and domain grilling baseline: complete.
-- Phase 1 paired-reader spike: implemented and physically profiled on Android,
-  iPhone, and macOS. Install/launch and reader performance pass; the broader
-  VoiceOver/TalkBack, large-font, and typography matrix remains unclaimed.
-- Phase 2 vertical slice: the production app is wired to the Novelia gateway
-  with truthfully offline cached startup, a separate Search tab with the six
-  official sources plus type/rating/translation/sort criteria, continuous catalog paging,
-  a paginated service-ordered Syosetu ranking, on-demand details, paginated
-  read-only comments, native external-browser handoff to the original work,
-  bounded dynamic reader windows, and explicit whole-novel downloads.
-- Phase 3 account slice: the hosted username/password exchange is wired with
-  password-in-memory-only handling, protected Android/iOS session storage,
-  prompt-free macOS app-local session persistence, refresh/logout, truthful
-  paginated remote Favorite Folders and
-  Reading History, the one-folder/multi-folder favorite flow, confirmed
-  Favorite removal with authoritative page reload, and a durable
-  latest-chapter-wins Reading History outbox. Login, refresh, macOS
-  restoration, folder metadata, Favorite add/remove, populated Reading
-  History loading, and logout-with-local-retention have passed an owned-account
-  smoke.
-- SQLite schema v5 persists catalog/detail/TOC records, exact Japanese and
-  Chinese chapter payloads, reader position, bookmarks, settings, recent
-  searches, last route, download intents/tasks, and Cache Copy versus protected
-  Offline Download retention.
-- Translation Pending downloads are rechecked on later reconciliation and are
-  atomically upgraded when the selected Chinese translation appears, without
-  leaving the already-stored task or copy in an inconsistent state.
-- Interrupted tasks restart atomically, bounded refresh work rotates fairly,
-  R18 stays unavailable anonymously but the official All/R18 catalog levels
-  are admitted while a valid account session is active, and every successful
-  chapter cache write reapplies the configured LRU budget without touching
-  protected downloads.
-- Reader launch is cache-first: a cached target and cached neighbors paint
-  immediately, live revalidation runs without blocking the reader, and three
-  upcoming chapters are fetched sequentially in the background so crossing a
-  chapter boundary normally does not wait on the network.
-- The Library exposes truthful download failure details plus pause, resume,
-  retry, and confirmed removal controls. Removing an Offline Download preserves
-  local reading progress and bookmarks.
-- Current automated checkpoint: static analysis is clean and 177 tests pass,
-  including a file-backed online-download, close/reopen, network-failure,
-  offline-resume, and pending-translation-refresh contract. Release macOS and
-  Android compilation and the iOS Simulator build pass. Android releases no
-  longer fall back to the debug certificate: without external private signing
-  inputs the 60.2 MB compilation artifact is unsigned and rejected by the
-  repository verifier. The debug APK also installs and reaches a resumed
-  MainActivity on the `novelia_api36` emulator without a launch crash.
-- Manual Offline Download creation now returns as soon as its protected intent
-  is registered; chapter transfer and retry state continue in Download
-  Management. A credential-free live probe downloaded and atomically stored a
-  Sakura-translated Pixiv short story with zero failed chapters.
-- v1 product metadata is frozen at `1.0.0 (1)` with the user-facing name
-  `JFZ Reader` and release identifier `io.github.troyt666.jfzreader` across
-  Android, iOS, and macOS.
-- A bounded anonymous live-network smoke pass covers catalog paging with retry,
-  both default ranking pages, detail and comments, adjacent/latest reader
-  boundaries, a complete seven-chapter Sakura download, actual SQLite
-  close/reopen, and offline reader restoration. No account credentials were
-  required. A live ranking synchronization race discovered during the pass is
-  covered by a permanent regression test.
-- The JNI/Android build issue is resolved. A profile APK now installs directly
-  on the Android 16 arm64 phone and survives repeated fast scrolling near its
-  90 Hz cadence. A Personal Team iPhone profile build signs, installs, launches,
-  and completes a steady-scroll native hitch trace. The optimized macOS reader
-  also passes a synchronized rapid-scroll stress trace and manual trackpad
-  review. Formal assistive-technology and large-font device QA remains open.
+## Supported platforms
 
-## Documents
+- Android
+- iOS
+- macOS
 
-- [APK audit](docs/apk-audit-v0.7.7.md)
-- [Live-site feature audit](docs/site-feature-audit-2026-08-16.md)
-- [Domain language](CONTEXT.md)
-- [Reimplementation plan](docs/reimplementation-plan.md)
-- [Anonymous gateway contract](docs/anonymous-gateway-contract-2026-08-17.md)
-- [Accepted cross-platform stack](docs/adr/0001-cross-platform-stack.md)
-- [Continuous cross-chapter reading](docs/adr/0002-continuous-cross-chapter-reading.md)
-- [Ongoing whole-novel downloads](docs/adr/0003-whole-novel-downloads-track-future-chapters.md)
-- [SQLite local persistence](docs/adr/0004-sqlite-local-persistence.md)
-- [Private APK/IPA release guide](docs/private-release-guide.md)
-- [v1 release-candidate status](docs/v1-release-candidate.md)
+The v1 release is version `1.0.0` (build `1`). When platform builds are
+published, they are available from the [Releases](https://github.com/troyt-666/novelia-mobile/releases)
+page.
 
-## Reference artifact
+## Offline reading
 
-| Property | Value |
-| --- | --- |
-| File | `Novelia_v0.7.7.apk` |
-| Size | 10,566,833 bytes |
-| SHA-256 | `5910672894d61de5fe0ccb2bd9d60aa3d90bd8c839eb939bfd52d54721dd1b11` |
-| Package | `com.example.novelia` |
-| Version | `0.7.7` (`versionCode` 4) |
+JFZ Reader restores cached content and reading position locally, so a novel
+that has already been opened can remain available when the network is
+unreliable. Whole-novel downloads are kept separately from the cache and can
+be managed from the Library.
 
-Before implementation, preserve the APK unchanged and verify its hash whenever
-it is used as a reference.
+## About the project
+
+JFZ Reader is an independent application and is not affiliated with Novelia,
+its operators, or the owners of third-party content. Content availability,
+translations, and account-only catalog levels depend on the connected
+service.
+
+For development setup, architecture notes, and test commands, see
+[`app/README.md`](app/README.md) and [`CONTEXT.md`](CONTEXT.md).
