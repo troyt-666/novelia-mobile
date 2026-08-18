@@ -64,6 +64,15 @@ void main() {
             request.uri.path.endsWith('/user/favored-web/default')) {
           expect(request.uri.queryParameters['page'], '0');
           expect(request.uri.queryParameters['pageSize'], '30');
+          expect(request.uri.queryParameters['query'], '');
+          expect(
+            request.uri.queryParameters['provider'],
+            'kakuyomu,syosetu,novelup,hameln,pixiv,alphapolis',
+          );
+          expect(request.uri.queryParameters['type'], '0');
+          expect(request.uri.queryParameters['level'], '1');
+          expect(request.uri.queryParameters['translate'], '0');
+          expect(request.uri.queryParameters['sort'], 'update');
           request.response.headers.contentType = ContentType.json;
           request.response.write(jsonEncode(_novelPage('favorite-novel')));
         } else if (request.method == 'GET' &&

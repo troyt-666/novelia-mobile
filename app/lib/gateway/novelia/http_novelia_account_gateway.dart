@@ -80,7 +80,14 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
     final response = await _request(
       'GET',
       'user/favored-web/${_segment(folderId)}',
-      query: {'page': '$page', 'pageSize': '$pageSize'},
+      // The Favorite endpoint reuses the ordinary catalog query contract.
+      // Omitting its filter fields currently produces HTTP 404 even though
+      // the folder exists. Keep account rows inside the same general-rated
+      // boundary as anonymous discovery.
+      query: NoveliaCatalogQuery(
+        page: page,
+        pageSize: pageSize,
+      ).toQueryParameters()..['sort'] = 'update',
     );
     return codec.decodeNovelPage(_decodeJson(response.body, 'Favorites page'));
   }
