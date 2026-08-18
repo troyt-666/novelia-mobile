@@ -178,6 +178,13 @@ returned one item with `pageNumber: 1`.
 the anonymous samples. `extra` appeared on ranking items but not normal catalog
 items. The gateway decoder must tolerate all nullable fields being absent.
 
+An opt-in live ranking smoke on 2026-08-18 observed a transient synchronization
+race in which a positive Translation count exceeded `total` by one. For ranking
+rows only, the client may cap a positive over-report to `total`, because no
+readable translated chapter can exist beyond the reported original catalog.
+Negative counts, and the same inconsistency in ordinary Catalog or Novel Detail
+responses, remain invalid and must fail closed.
+
 ## Novel Details and Chapter List
 
 ### Request
@@ -467,7 +474,9 @@ optional and strict where the domain cannot be constructed safely.
 - Treat missing required identifiers, original paragraph arrays, or page
   envelopes as a parse failure.
 - Validate values before domain conversion: page counts and translation counts
-  must be non-negative; arrays must contain strings; IDs must be non-empty.
+  must be non-negative; arrays must contain strings; IDs must be non-empty. The
+  ranking-only positive-counter normalization above is the sole documented
+  exception to the usual `translation <= total` invariant.
 - Do not treat a missing translated title or Translation array as a whole-page
   failure.
 - Do not silently substitute a different Translation Source.

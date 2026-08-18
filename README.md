@@ -18,9 +18,17 @@ has been recovered or copied.
 - Phase 2 vertical slice: the production app is wired to the anonymous,
   general-rated Novelia gateway with truthfully offline cached startup, live
   search/source/state/translation/tag/sort criteria, continuous catalog paging,
-  a service-ordered Syosetu ranking, on-demand details, paginated read-only
-  comments, bounded dynamic reader windows, and explicit whole-novel downloads.
-- SQLite schema v4 persists catalog/detail/TOC records, exact Japanese and
+  a paginated service-ordered Syosetu ranking, on-demand details, paginated
+  read-only comments, native external-browser handoff to the original work,
+  bounded dynamic reader windows, and explicit whole-novel downloads.
+- Phase 3 account slice: the hosted username/password exchange is wired with
+  password-in-memory-only handling, platform Keychain/Keystore session
+  storage, refresh/logout, truthful paginated remote Favorite Folders and
+  Reading History, the one-folder/multi-folder favorite flow, confirmed
+  Favorite removal with authoritative page reload, and a durable
+  latest-chapter-wins Reading History outbox. Login, refresh, secure macOS
+  restoration, and folder metadata have passed an owned-account smoke.
+- SQLite schema v5 persists catalog/detail/TOC records, exact Japanese and
   Chinese chapter payloads, reader position, bookmarks, settings, recent
   searches, last route, download intents/tasks, and Cache Copy versus protected
   Offline Download retention.
@@ -31,15 +39,29 @@ has been recovered or copied.
   R18 reclassification revokes stale anonymous access, and every successful
   chapter cache write reapplies the configured LRU budget without touching
   protected downloads.
-- Current automated checkpoint: static analysis is clean and 144 tests pass,
+- Reader launch is cache-first: a cached target and cached neighbors paint
+  immediately, live revalidation runs without blocking the reader, and an
+  uncached neighbor is deferred until the reader approaches that boundary.
+- The Library exposes truthful download failure details plus pause, resume,
+  retry, and confirmed removal controls. Removing an Offline Download preserves
+  local reading progress and bookmarks.
+- Current automated checkpoint: static analysis is clean and 172 tests pass,
   including a file-backed online-download, close/reopen, network-failure,
   offline-resume, and pending-translation-refresh contract. Release macOS and
-  iOS Simulator builds pass.
-- The Android rebuild remains environment-blocked because the current JNI
-  dependency requests Android platform API 35 and this machine only has API 36
-  and 37 installed; the supported SDK installer could not reach Google's
-  repository during this checkpoint. Physical Android/iOS profiling remains
-  explicitly deferred by the user and is not treated as a passed release gate.
+  Android compilation and the iOS Simulator build pass. Android releases no
+  longer fall back to the debug certificate: without external private signing
+  inputs the 60.2 MB compilation artifact is unsigned and rejected by the
+  repository verifier. The debug APK also installs and reaches a resumed
+  MainActivity on the `novelia_api36` emulator without a launch crash.
+- A bounded anonymous live-network smoke pass covers catalog paging with retry,
+  both default ranking pages, detail and comments, adjacent/latest reader
+  boundaries, a complete seven-chapter Sakura download, actual SQLite
+  close/reopen, and offline reader restoration. No account credentials were
+  required. A live ranking synchronization race discovered during the pass is
+  covered by a permanent regression test.
+- The JNI/Android build issue is resolved. Physical Android/iOS typography,
+  accessibility, and performance profiling remains explicitly deferred by the
+  user and is not treated as a passed release gate.
 
 ## Documents
 
@@ -52,6 +74,7 @@ has been recovered or copied.
 - [Continuous cross-chapter reading](docs/adr/0002-continuous-cross-chapter-reading.md)
 - [Ongoing whole-novel downloads](docs/adr/0003-whole-novel-downloads-track-future-chapters.md)
 - [SQLite local persistence](docs/adr/0004-sqlite-local-persistence.md)
+- [Private APK/IPA release guide](docs/private-release-guide.md)
 
 ## Reference artifact
 

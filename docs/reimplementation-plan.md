@@ -1,7 +1,7 @@
 # Novelia Mobile reimplementation plan
 
 Date: 2026-08-10  
-Last reconciled: 2026-08-17  
+Last reconciled: 2026-08-18
 Planning status: accepted product baseline; Flutter continuation accepted with
 the ADR 0001 physical-device gate explicitly deferred
 
@@ -16,7 +16,7 @@ render aligned bilingual blocks, restore progress, and download content for
 offline reading. It should not reproduce every APK feature before the core
 reader is proven.
 
-## Implementation checkpoint — 2026-08-17
+## Implementation checkpoint — 2026-08-18
 
 Phase 1's semantic reader and the Phase 2 offline vertical slice now exist in
 `app/`. The reader renders Chinese first with switchable Japanese underneath,
@@ -32,11 +32,21 @@ publication-state, translation, exact-tag, and sort criteria; continuous page
 append with footer retry; a service-ordered default Syosetu ranking; on-demand
 details; sectioned chapters; paginated read-only comments; live/cache reader
 windows; ongoing whole-novel downloads; and truthful local Library/Settings
-projections. Remote favorites remain explicitly unavailable until Phase 3
-supplies a sanctioned account flow; the UI does not invent folder counts or
-synced history.
+projections. The Syosetu ranking now pages through authoritative service pages,
+the original-work action opens through thin native Android/iOS/macOS browser
+channels, and Offline Downloads expose pause, resume, retry, full-disk failure,
+and confirmed removal UI. Phase 3 now has a direct hosted credential exchange,
+platform Keychain/Keystore session storage, truthful remote folder metadata,
+paginated favorite-folder contents, a paginated remote Reading History view,
+confirmed Favorite removal with authoritative page reload, and a durable
+latest-activity-wins Reading History outbox. Owned-account login, refresh,
+secure macOS restoration, and folder-list DTOs are verified; the UI does not
+invent folder counts or expose account rows outside the established
+general-content boundary. Favorite mutations fail immediately instead of being
+queued. Signed-out transition clears only queued remote history so it cannot
+leak into a later account.
 
-SQLite schema v4 stores local reader/application state, device-only search
+SQLite schema v5 stores local reader/application state, device-only search
 history, cached outlines/details/ordered TOCs, exact Japanese and Chinese
 chapter payloads, download desired state/task progress, and distinct evictable
 Cache Copy versus protected Offline Download records. A file-backed integration
@@ -46,17 +56,40 @@ and pending-to-complete translation refresh without replacing the stored
 task/copy identity. Additional contracts cover atomic interrupted-task restart,
 fair bounded translation refresh, stable cache-copy replacement, protected
 manifest retention, cache-budget enforcement after dynamic adjacent loads, and
-general-to-R18 authorization revocation.
+general-to-R18 authorization revocation. Version 5 adds only a credential-free
+remote Reading History outbox; tokens and cookies remain outside SQLite.
 
-Static analysis is clean and 144 automated tests pass. Release macOS and iOS
-Simulator builds pass. The Android rebuild is environment-blocked until Android
-API 35 can be installed for the current JNI dependency; only API 36 and 37 are
-present on this machine, and the supported SDK installer could not reach
-Google's package repository during this checkpoint. The user explicitly chose
-to proceed while deferring physical Android and iOS profiling. Therefore the
-Phase 2 software path is implemented and automated, but the Android/iOS device
-portion of its exit gate and ADR 0001's physical-reader gate are not claimed as
-passed or release-ready.
+Reader launch now uses stale-while-revalidate semantics. A cached target is
+restored synchronously with any cached immediate neighbors, then revalidated in
+the background without changing the visible session. If the target is absent,
+only that target blocks launch; uncached neighbors are fetched lazily when the
+reader approaches their boundary. This prevents three sequential live timeout
+paths from delaying an already-cached Reading Position.
+
+An opt-in anonymous live-network pass has now exercised catalog paging and its
+retry path, both pages of the default ranking, hydrated detail and comments,
+adjacent and end-of-catalog reader boundaries, a complete seven-chapter Sakura
+download, actual SQLite close/reopen, network-failure fallback, and offline
+semantic-position restoration. It required no account credentials and did not
+check production content into the repository. The pass exposed a service
+synchronization race where a ranking translation counter briefly exceeded the
+reported original total; ranking results now cap only such positive
+over-reports, while negative counts and ordinary catalog/detail inconsistencies
+continue to fail closed.
+
+Static analysis is clean and 172 automated tests pass. Release macOS and iOS
+Simulator builds pass, and the Android release compiles to a 60.2 MB unsigned
+artifact when private signing inputs are absent. The repository verifier rejects
+that artifact and the debug-signed APK; release configuration no longer falls
+back to Flutter's shared debug certificate. Sanitized account response-shape
+diagnostics are debug-only and are absent from the rebuilt 51.1 MB macOS
+release. The debug app also installs and
+launches to a resumed MainActivity on the configured API 36 emulator without a
+launch crash. The prior JNI/Android build issue is resolved. The user explicitly
+chose to proceed while deferring physical Android and iOS profiling. Therefore
+the Phase 2 software path is implemented and automated, but the Android/iOS
+physical-device portion of its exit gate and ADR 0001's physical-reader gate
+are not claimed as passed or release-ready.
 
 ## Scope
 
@@ -534,23 +567,21 @@ and iOS system fonts and rasterizers differ.
 
 ## Immediate next actions
 
-1. Install Android API 35, repeat the Android build/emulator smoke test, and
-   retain physical Android/iOS typography, selection, accessibility, and
-   profile checks as a deferred pre-release gate.
-2. Perform a manual live-network smoke pass over catalog paging, one ranking,
-   comments, reader boundaries, a complete download, and an airplane-mode
-   relaunch without using production content as a checked-in fixture.
-3. Add provider-specific ranking pagination and wire the real platform
-   original-site launcher; the current production UI intentionally hides
-   unavailable placeholder actions.
-4. Add user-facing pause/retry/remove controls for ongoing downloads and a
-   storage-pressure/full-disk failure presentation; the state machine and
-   persistence contracts already exist.
-5. Optionally persist only the last viewed Comment Page as an expendable dated
+1. Provide the external private Android keystore and Apple Team/profile inputs,
+   then build and verify distributable APK/IPA artifacts. The repository now
+   contains only secret-free configuration and rejects unsigned/debug-signed
+   Android artifacts; no in-app updater or public-store workflow is planned.
+2. Expand ranking selection beyond the current paginated default Syosetu query
+   only if the additional provider-specific combinations materially help novel
+   discovery.
+3. Optionally persist only the last viewed Comment Page as an expendable dated
    Cache Copy; current comments intentionally have no offline fallback.
-6. Begin Phase 3 only after a supported authentication flow is independently
-   verified; do not infer it from anonymous read access or extract browser
-   cookies.
+4. Complete the remaining Phase 3 credentialed mutation smoke through the
+   running app: a reversible favorite add/remove, a Reading History write, and
+   explicit logout invalidation. Do not place credentials in source, shell
+   arguments, logs, screenshots, or chat; do not extract browser cookies.
+5. Repeat the bounded live/offline smoke pass before cutting a private release
+   candidate; keep it opt-in, low-volume, and outside routine CI.
 
 ## Primary references
 

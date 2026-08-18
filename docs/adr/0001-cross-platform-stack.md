@@ -8,11 +8,13 @@ Date: 2026-08-10
 Continue Phase 2 implementation in Flutter. The user manually inspected the
 reader on macOS and explicitly chose to defer physical Android/iOS profiling.
 Automated reader, restoration, live/cache gateway, download, migration, and
-offline-relaunch tests are green (144 tests), and the current app builds for
-macOS and the iOS Simulator. The Android build remains environment-blocked
-because the current JNI dependency requires platform API 35 while this machine
-currently has API 36 and 37. A supported-command-line installer attempt could
-not reach Google's SDK repository during this checkpoint.
+offline-relaunch tests are green (153 tests). A bounded anonymous live pass also
+verifies catalog/ranking/detail/comment reads, a complete download, actual
+database close/reopen, and offline restoration. The current app builds as a
+release macOS application, an iOS Simulator application, and Android debug and
+release APKs. The prior JNI/Android build issue is resolved; the current Android
+release APK is 59.3 MB, and the debug app completes an API 36 emulator
+install/launch smoke check.
 
 This update does not claim that the reader-spike exit gate below passed. Real
 Android and iOS typography, selection, accessibility, and profile performance

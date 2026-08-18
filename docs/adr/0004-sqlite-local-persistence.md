@@ -11,13 +11,15 @@ reader/application settings.
 Keep repository interfaces independent of SQLite so deterministic in-memory
 implementations remain available to UI fixtures and tests.
 
-The current integrated database is schema version 4: version 1 contains
+The current integrated database is schema version 5: version 1 contains
 download state, version 2 adds local reader/application state, version 3 adds
 bounded recent-search history, and version 4 adds normalized cached novel
 outlines, details, ordered section/chapter catalogs, exact chapter payloads,
-and payload references from offline copies. Migration tests start from earlier
-schemas and prove that existing download, local-state, and search records
-survive the complete forward migration.
+and payload references from offline copies. Version 5 adds a credential-free,
+latest-activity-wins remote Reading History outbox; account tokens and cookies
+remain outside SQLite. Migration tests start from earlier schemas and prove
+that existing download, local-state, and search records survive the complete
+forward migration.
 
 The database has an explicit monotonically increasing schema version and
 forward-only, transactional migrations. Opening an older supported database
