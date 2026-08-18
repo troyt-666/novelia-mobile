@@ -28,7 +28,9 @@ has been recovered or copied.
   Reading History, the one-folder/multi-folder favorite flow, confirmed
   Favorite removal with authoritative page reload, and a durable
   latest-chapter-wins Reading History outbox. Login, refresh, macOS
-  restoration, and folder metadata have passed an owned-account smoke.
+  restoration, folder metadata, Favorite add/remove, populated Reading
+  History loading, and logout-with-local-retention have passed an owned-account
+  smoke.
 - SQLite schema v5 persists catalog/detail/TOC records, exact Japanese and
   Chinese chapter payloads, reader position, bookmarks, settings, recent
   searches, last route, download intents/tasks, and Cache Copy versus protected
@@ -41,12 +43,13 @@ has been recovered or copied.
   chapter cache write reapplies the configured LRU budget without touching
   protected downloads.
 - Reader launch is cache-first: a cached target and cached neighbors paint
-  immediately, live revalidation runs without blocking the reader, and an
-  uncached neighbor is deferred until the reader approaches that boundary.
+  immediately, live revalidation runs without blocking the reader, and three
+  upcoming chapters are fetched sequentially in the background so crossing a
+  chapter boundary normally does not wait on the network.
 - The Library exposes truthful download failure details plus pause, resume,
   retry, and confirmed removal controls. Removing an Offline Download preserves
   local reading progress and bookmarks.
-- Current automated checkpoint: static analysis is clean and 173 tests pass,
+- Current automated checkpoint: static analysis is clean and 175 tests pass,
   including a file-backed online-download, close/reopen, network-failure,
   offline-resume, and pending-translation-refresh contract. Release macOS and
   Android compilation and the iOS Simulator build pass. Android releases no
@@ -54,6 +57,8 @@ has been recovered or copied.
   inputs the 60.2 MB compilation artifact is unsigned and rejected by the
   repository verifier. The debug APK also installs and reaches a resumed
   MainActivity on the `novelia_api36` emulator without a launch crash.
+- v1 product metadata is frozen at `1.0.0 (1)` with the user-facing name
+  `Novelia Reader` across Android, iOS, and macOS.
 - A bounded anonymous live-network smoke pass covers catalog paging with retry,
   both default ranking pages, detail and comments, adjacent/latest reader
   boundaries, a complete seven-chapter Sakura download, actual SQLite
@@ -76,6 +81,7 @@ has been recovered or copied.
 - [Ongoing whole-novel downloads](docs/adr/0003-whole-novel-downloads-track-future-chapters.md)
 - [SQLite local persistence](docs/adr/0004-sqlite-local-persistence.md)
 - [Private APK/IPA release guide](docs/private-release-guide.md)
+- [v1 release-candidate status](docs/v1-release-candidate.md)
 
 ## Reference artifact
 

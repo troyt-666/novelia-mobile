@@ -44,7 +44,9 @@ latest-activity-wins Reading History outbox. Owned-account login, refresh,
 prompt-free macOS restoration, folder-list and row-bearing Favorite-page DTOs,
 Favorite add, and Reading History write are verified; the UI does not invent
 folder counts or expose account rows outside the established general-content
-boundary. Favorite mutations fail immediately instead of being queued.
+boundary. Favorite removal, populated Reading History loading, and logout with
+local-state retention are also manually verified. Favorite mutations fail
+immediately instead of being queued.
 Signed-out transition clears only queued remote history so it cannot leak into
 a later account.
 
@@ -64,9 +66,12 @@ remote Reading History outbox; tokens and cookies remain outside SQLite.
 Reader launch now uses stale-while-revalidate semantics. A cached target is
 restored synchronously with any cached immediate neighbors, then revalidated in
 the background without changing the visible session. If the target is absent,
-only that target blocks launch; uncached neighbors are fetched lazily when the
-reader approaches their boundary. This prevents three sequential live timeout
-paths from delaying an already-cached Reading Position.
+only that target blocks launch; the next three chapters are then fetched
+sequentially in the background. The bounded forward horizon is replenished as
+the reader advances, shares in-flight requests with boundary navigation, and
+stops on the first speculative failure. This prevents three sequential live
+timeout paths from delaying an already-cached Reading Position while avoiding
+a burst of chapter requests.
 
 An opt-in anonymous live-network pass has now exercised catalog paging and its
 retry path, both pages of the default ranking, hydrated detail and comments,
@@ -79,13 +84,15 @@ reported original total; ranking results now cap only such positive
 over-reports, while negative counts and ordinary catalog/detail inconsistencies
 continue to fail closed.
 
-Static analysis is clean and 173 automated tests pass. Release macOS and iOS
+Static analysis is clean and 175 automated tests pass. Release macOS and iOS
 Simulator builds pass, and the Android release compiles to a 60.2 MB unsigned
 artifact when private signing inputs are absent. The repository verifier rejects
 that artifact and the debug-signed APK; release configuration no longer falls
 back to Flutter's shared debug certificate. Sanitized account response-shape
 diagnostics are debug-only and are absent from the rebuilt 51.1 MB macOS
-release. The debug app also installs and
+release. Android, iOS, and macOS generated metadata now agrees on v1 version
+`1.0.0 (1)` and the display name `Novelia Reader`. The debug app also installs
+and
 launches to a resumed MainActivity on the configured API 36 emulator without a
 launch crash. The prior JNI/Android build issue is resolved. The user explicitly
 chose to proceed while deferring physical Android and iOS profiling. Therefore

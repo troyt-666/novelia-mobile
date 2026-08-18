@@ -2,9 +2,9 @@
 
 Status: public-client contract plus owned-account login, refresh, macOS
 prompt-free restoration, favorite-folder metadata, a row-bearing Favorite page,
-Favorite add, and Reading History write verified on 2026-08-18. No credential,
-cookie value, token value, account identifier, folder title, or novel identity
-was recorded.
+Favorite add/remove, populated Reading History loading and writing, and logout
+with local-state retention verified on 2026-08-18. No credential, cookie value,
+token value, account identifier, folder title, or novel identity was recorded.
 
 ## Boundary
 
@@ -74,10 +74,8 @@ source files, shell arguments, logs, screenshots, or chat.
 
 ## Still to verify with an owned account
 
-- refresh-cookie expiry and logout invalidation;
+- refresh-cookie expiry and server-side logout invalidation;
 - access-token lifetime and expired-session status codes;
-- live favorite-folder creation, remove mutation status, and
-  cross-device visibility;
-- live Reading History page schema when it contains rows;
+- live favorite-folder creation and cross-device visibility;
 - Reading History cross-device conflict behavior;
 - whether concurrent refresh requests invalidate an earlier rotated cookie.
