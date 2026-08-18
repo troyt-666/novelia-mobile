@@ -12,9 +12,9 @@ has been recovered or copied.
 - Static APK audit: complete.
 - Signed-out live-site feature audit: complete.
 - Product and domain grilling baseline: complete.
-- Phase 1 paired-reader spike: implemented; manually inspected on macOS. The
-  requested Android/iOS physical-device profiling gate is explicitly deferred,
-  not treated as passed.
+- Phase 1 paired-reader spike: implemented and physically profiled on Android,
+  iPhone, and macOS. Install/launch and reader performance pass; the broader
+  VoiceOver/TalkBack, large-font, and typography matrix remains unclaimed.
 - Phase 2 vertical slice: the production app is wired to the anonymous,
   general-rated Novelia gateway with truthfully offline cached startup, live
   search/source/state/translation/tag/sort criteria, continuous catalog paging,
@@ -65,9 +65,12 @@ has been recovered or copied.
   close/reopen, and offline reader restoration. No account credentials were
   required. A live ranking synchronization race discovered during the pass is
   covered by a permanent regression test.
-- The JNI/Android build issue is resolved. Physical Android/iOS typography,
-  accessibility, and performance profiling remains explicitly deferred by the
-  user and is not treated as a passed release gate.
+- The JNI/Android build issue is resolved. A profile APK now installs directly
+  on the Android 16 arm64 phone and survives repeated fast scrolling near its
+  90 Hz cadence. A Personal Team iPhone profile build signs, installs, launches,
+  and completes a steady-scroll native hitch trace. The optimized macOS reader
+  also passes a synchronized rapid-scroll stress trace and manual trackpad
+  review. Formal assistive-technology and large-font device QA remains open.
 
 ## Documents
 
@@ -76,7 +79,7 @@ has been recovered or copied.
 - [Domain language](CONTEXT.md)
 - [Reimplementation plan](docs/reimplementation-plan.md)
 - [Anonymous gateway contract](docs/anonymous-gateway-contract-2026-08-17.md)
-- [Accepted cross-platform stack; physical gate deferred](docs/adr/0001-cross-platform-stack.md)
+- [Accepted cross-platform stack](docs/adr/0001-cross-platform-stack.md)
 - [Continuous cross-chapter reading](docs/adr/0002-continuous-cross-chapter-reading.md)
 - [Ongoing whole-novel downloads](docs/adr/0003-whole-novel-downloads-track-future-chapters.md)
 - [SQLite local persistence](docs/adr/0004-sqlite-local-persistence.md)

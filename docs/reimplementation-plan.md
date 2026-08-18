@@ -2,8 +2,8 @@
 
 Date: 2026-08-10  
 Last reconciled: 2026-08-18
-Planning status: accepted product baseline; Flutter continuation accepted with
-the ADR 0001 physical-device gate explicitly deferred
+Planning status: accepted product baseline; Flutter continuation confirmed by
+physical Android, iPhone, and macOS performance checks
 
 ## Outcome
 
@@ -94,11 +94,16 @@ release. Android, iOS, and macOS generated metadata now agrees on v1 version
 `1.0.0 (1)` and the display name `Novelia Reader`. The debug app also installs
 and
 launches to a resumed MainActivity on the configured API 36 emulator without a
-launch crash. The prior JNI/Android build issue is resolved. The user explicitly
-chose to proceed while deferring physical Android and iOS profiling. Therefore
-the Phase 2 software path is implemented and automated, but the Android/iOS
-physical-device portion of its exit gate and ADR 0001's physical-reader gate
-are not claimed as passed or release-ready.
+launch crash. The prior JNI/Android build issue is resolved. A profile APK also
+installs directly on the Android 16 arm64 phone, restores the persisted reader,
+and remains near its 90 Hz cadence under repeated swipes and a fast drag. A
+Personal Team profile build signs, installs, and launches on the connected
+iPhone; its recorded steady-scroll pass contains no native hitch, potential
+hang, or sampled frame lifetime above 18 ms. The optimized macOS reader passes
+a synchronized rapid-scroll stress trace and manual fast-trackpad review.
+Physical install and performance are therefore no longer deferred. A formal
+VoiceOver/TalkBack, large-font, and typography matrix remains unclaimed rather
+than being treated as passed by implication.
 
 ## Scope
 

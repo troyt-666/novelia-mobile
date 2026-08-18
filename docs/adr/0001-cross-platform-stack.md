@@ -1,32 +1,32 @@
 # ADR 0001: Cross-platform stack
 
-Status: **Accepted for continued implementation; physical-device gate deferred**  
+Status: **Accepted; physical performance verified**
 Date: 2026-08-10
 
-## Decision update — 2026-08-17
+## Decision update — 2026-08-18
 
-Continue Phase 2 implementation in Flutter. The user manually inspected the
-reader on macOS and explicitly chose to defer physical Android/iOS profiling.
-Automated reader, restoration, live/cache gateway, download, migration, and
-offline-relaunch tests are green (153 tests). A bounded anonymous live pass also
-verifies catalog/ranking/detail/comment reads, a complete download, actual
-database close/reopen, and offline restoration. The current app builds as a
-release macOS application, an iOS Simulator application, and Android debug and
-release APKs. The prior JNI/Android build issue is resolved; the current Android
-release APK is 59.3 MB, and the debug app completes an API 36 emulator
-install/launch smoke check.
+Continue in Flutter. Automated reader, restoration, live/cache gateway,
+download, migration, account, and offline-relaunch tests are green (175 tests),
+and the bounded anonymous live pass remains green. The prior JNI/Android build
+issue is resolved. A profile APK installs directly on the Android 16 arm64
+phone, restores the real reader, and remains near the 90 Hz display cadence
+under repeated swipes and a fast drag. A Personal Team iPhone profile build
+signs, installs, launches, and completes a steady-scroll native trace without a
+recorded hitch, potential hang, or sampled frame lifetime above 18 ms. The
+optimized macOS reader also passes synchronized rapid-scroll tracing and manual
+fast-trackpad review.
 
-This update does not claim that the reader-spike exit gate below passed. Real
-Android and iOS typography, selection, accessibility, and profile performance
-remain unknown and must be checked before a signed private release. If those
-checks expose a platform-level reader failure, the fallback decision remains
-available because the reader model, gateway, and database boundaries are kept
+The physical install and performance risk that motivated the gate is no longer
+deferred. This update does not imply completion of a formal VoiceOver/TalkBack,
+large-font, or device-typography matrix; those checks remain explicit release
+QA. If they expose a platform-level reader failure, the fallback decision stays
+available because the reader model, gateway, and database boundaries remain
 independent of Flutter widgets.
 
 ## Context
 
 The project needs Android and iOS applications maintained by a small team, with
-one distinctive feature: a fast, selectable, accessible reader that treats a
+one distinctive feature: a fast, accessible reader that treats a
 Chinese translation as primary and can show its associated Japanese block
 underneath for verification.
 Offline reading, authentication, file sharing, and background downloads must
@@ -72,15 +72,19 @@ iPhone/iPad. Flutter remains the implementation stack only if all of these pass:
 - stable semantic Japanese/Chinese pairing across widths and font scaling;
 - correct Japanese and Chinese glyph forms through explicit locales;
 - smooth long-chapter scrolling in release/profile builds;
-- text selection and copying within both languages;
 - VoiceOver and TalkBack traversal in displayed language order;
 - position restoration after relaunch and content revision;
 - acceptable native navigation, keyboard, share sheet, and safe-area behavior.
 
-If the iOS reader fails selection, accessibility, or typography requirements,
+If the iOS reader fails accessibility or typography requirements,
 retain the domain/gateway/database contracts and evaluate a native SwiftUI
 reader or Kotlin Multiplatform shared core. Do not force the whole product
 through a failing UI abstraction.
+
+Text selection, copying, highlights, and annotations are not v1 reader
+requirements under the accepted product scope. If selection is reintroduced,
+it requires a new cross-platform interaction and performance check rather than
+being inferred from this decision.
 
 ## Alternatives considered
 
