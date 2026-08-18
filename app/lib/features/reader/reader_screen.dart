@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../core/model/reader_models.dart';
 
@@ -43,11 +44,16 @@ class _ReaderScreenState extends State<ReaderScreen>
     with RestorationMixin, WidgetsBindingObserver {
   static const _boundaryTriggerExtent = 640.0;
   static const _boundaryRearmExtent = 1400.0;
+  static const _initialWindowItems = 128;
+  static const _windowExpansionItems = 96;
+  static const _jumpLeadInItems = 2;
+  static const _windowLeadInItems = 24;
 
   late List<NovelChapter> _loadedChapters;
   late List<ReaderStreamItem> _items;
   late Map<String, int> _itemIndices;
   final Map<String, GlobalKey> _itemKeys = {};
+  final Map<String, BuildContext> _mountedItemContexts = {};
   final _scrollController = ScrollController();
   final _viewportKey = GlobalKey(debugLabel: 'reader-viewport');
   final _anchorBlockId = RestorableStringN(null);
@@ -59,6 +65,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   late final RestorableDouble _japaneseOpacity;
   late final RestorableDouble _readingWidth;
   final Set<String> _bookmarks = {};
+  final Set<String> _mountedBlockIds = {};
 
   late ReaderSettings _settings;
   bool _chromeVisible = true;
@@ -105,7 +112,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final initialBoundaries = _initialBoundaryStatuses();
     _beforeBoundary = initialBoundaries.$1;
     _afterBoundary = initialBoundaries.$2;
-    _windowEnd = _items.length.clamp(0, 18);
+    _windowEnd = _items.length.clamp(0, _initialWindowItems);
     _bookmarks.addAll(widget.initialBookmarkedBlockIds);
     _activeChapterId =
         widget.initialPosition?.chapterId ??
@@ -153,10 +160,31 @@ class _ReaderScreenState extends State<ReaderScreen>
         _items[index].stableId: index,
     };
     for (final item in _items) {
-      _itemKeys.putIfAbsent(
-        item.stableId,
-        () => GlobalKey(debugLabel: item.stableId),
-      );
+      if (item is ChapterBoundaryItem) {
+        _itemKeys.putIfAbsent(
+          item.stableId,
+          () => GlobalKey(debugLabel: item.stableId),
+        );
+      }
+    }
+  }
+
+  BuildContext? _mountedContextFor(String stableId) {
+    final mountedContext = _mountedItemContexts[stableId];
+    if (mountedContext != null && mountedContext.mounted) {
+      return mountedContext;
+    }
+    final keyedContext = _itemKeys[stableId]?.currentContext;
+    return keyedContext != null && keyedContext.mounted ? keyedContext : null;
+  }
+
+  void _registerMountedItem(String stableId, BuildContext itemContext) {
+    _mountedItemContexts[stableId] = itemContext;
+  }
+
+  void _unregisterMountedItem(String stableId, BuildContext itemContext) {
+    if (identical(_mountedItemContexts[stableId], itemContext)) {
+      _mountedItemContexts.remove(stableId);
     }
   }
 
@@ -317,15 +345,21 @@ class _ReaderScreenState extends State<ReaderScreen>
     final targetIndex = _itemIndices[stableId];
     if (targetIndex == null || !_scrollController.hasClients) return;
 
-    var targetContext = _itemKeys[stableId]?.currentContext;
-    if (targetContext == null || !targetContext.mounted) {
+    var targetContext = _mountedContextFor(stableId);
+    if (targetContext == null) {
       setState(() {
-        _windowStart = (targetIndex - 2).clamp(0, _items.length);
-        _windowEnd = (targetIndex + 14).clamp(_windowStart, _items.length);
+        _windowStart = (targetIndex - _jumpLeadInItems).clamp(
+          0,
+          _items.length,
+        );
+        _windowEnd = (targetIndex + _initialWindowItems).clamp(
+          _windowStart,
+          _items.length,
+        );
       });
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
-      targetContext = _itemKeys[stableId]?.currentContext;
+      targetContext = _mountedContextFor(stableId);
     }
     if (targetContext != null && targetContext.mounted) {
       await Scrollable.ensureVisible(
@@ -340,7 +374,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (_adjustingWindow || _windowEnd >= _items.length) return;
     _adjustingWindow = true;
     setState(() {
-      _windowEnd = (_windowEnd + 12).clamp(_windowStart, _items.length);
+      _windowEnd = (_windowEnd + _windowExpansionItems).clamp(
+        _windowStart,
+        _items.length,
+      );
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _adjustingWindow = false;
@@ -357,7 +394,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     final oldMaxExtent = _scrollController.position.maxScrollExtent;
     final oldPixels = _scrollController.position.pixels;
     setState(() {
-      _windowStart = (_windowStart - 12).clamp(0, _windowEnd);
+      _windowStart = (_windowStart - _windowExpansionItems).clamp(
+        0,
+        _windowEnd,
+      );
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
@@ -566,7 +606,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     required ReaderBoundaryStatus beforeStatus,
     required _VisibleReaderAnchor? visibleAnchor,
   }) async {
-    final oldWindowSpan = (_windowEnd - _windowStart).clamp(1, 24);
+    final oldWindowSpan = (_windowEnd - _windowStart).clamp(
+      1,
+      _initialWindowItems,
+    );
     int? renderedAnchorIndex;
     setState(() {
       _preservingDynamicAnchor = true;
@@ -598,7 +641,10 @@ class _ReaderScreenState extends State<ReaderScreen>
       final oldMaxExtent = _scrollController.position.maxScrollExtent;
       final oldPixels = _scrollController.position.pixels;
       setState(() {
-        _windowStart = (renderedAnchorIndex! - 12).clamp(0, _windowEnd);
+        _windowStart = (renderedAnchorIndex! - _windowLeadInItems).clamp(
+          0,
+          _windowEnd,
+        );
       });
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || !_scrollController.hasClients) return;
@@ -615,13 +661,13 @@ class _ReaderScreenState extends State<ReaderScreen>
       if (!mounted || !_scrollController.hasClients) return;
     }
     if (visibleAnchor != null && _scrollController.hasClients) {
-      var itemContext = _itemKeys[visibleAnchor.stableId]?.currentContext;
-      if (itemContext == null || !itemContext.mounted) {
+      var itemContext = _mountedContextFor(visibleAnchor.stableId);
+      if (itemContext == null) {
         await _jumpToStableId(visibleAnchor.stableId);
         if (!mounted || !_scrollController.hasClients) return;
         await WidgetsBinding.instance.endOfFrame;
         if (!mounted || !_scrollController.hasClients) return;
-        itemContext = _itemKeys[visibleAnchor.stableId]?.currentContext;
+        itemContext = _mountedContextFor(visibleAnchor.stableId);
       }
       if (itemContext != null && itemContext.mounted) {
         await Scrollable.ensureVisible(
@@ -663,7 +709,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final viewportContext = _viewportKey.currentContext;
     final itemContext = anchor == null
         ? null
-        : _itemKeys[anchor.stableId]?.currentContext;
+        : _mountedContextFor(anchor.stableId);
     final viewportBox = viewportContext?.findRenderObject();
     final itemBox = itemContext?.findRenderObject();
     if (anchor == null ||
@@ -693,8 +739,16 @@ class _ReaderScreenState extends State<ReaderScreen>
     AlignedBlockItem? nearestVisible;
     var nearestTop = double.infinity;
 
-    for (final item in _items.whereType<AlignedBlockItem>()) {
-      final itemContext = _itemKeys[item.stableId]?.currentContext;
+    final mountedItems = <(int, AlignedBlockItem)>[];
+    for (final blockId in _mountedBlockIds) {
+      final index = _itemIndices['block:$blockId'];
+      if (index == null) continue;
+      final item = _items[index];
+      if (item is AlignedBlockItem) mountedItems.add((index, item));
+    }
+    mountedItems.sort((a, b) => a.$1.compareTo(b.$1));
+    for (final (_, item) in mountedItems) {
+      final itemContext = _mountedContextFor(item.stableId);
       final renderObject = itemContext?.findRenderObject();
       if (renderObject is! RenderBox || !renderObject.hasSize) continue;
       final top = renderObject.localToGlobal(Offset.zero).dy;
@@ -867,8 +921,14 @@ class _ReaderScreenState extends State<ReaderScreen>
         _loadedChapters = chapters;
         _rebuildStream();
         final targetIndex = _itemIndices['chapter:${entry.id}'] ?? 0;
-        _windowStart = (targetIndex - 2).clamp(0, _items.length);
-        _windowEnd = (targetIndex + 14).clamp(_windowStart, _items.length);
+        _windowStart = (targetIndex - _jumpLeadInItems).clamp(
+          0,
+          _items.length,
+        );
+        _windowEnd = (targetIndex + _initialWindowItems).clamp(
+          _windowStart,
+          _items.length,
+        );
         _beforeBoundary = window.before;
         _afterBoundary = window.after;
         _beforeLoadError = null;
@@ -1029,61 +1089,80 @@ class _ReaderScreenState extends State<ReaderScreen>
                   key: const ValueKey('reader-stream'),
                   child: SizedBox.expand(
                     key: _viewportKey,
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      physics: const ClampingScrollPhysics(),
-                      padding: EdgeInsets.only(
-                        top: MediaQuery.paddingOf(context).top + 88,
-                        bottom: MediaQuery.paddingOf(context).bottom + 112,
+                    child: RepaintBoundary(
+                      key: const ValueKey('reader-scroll-repaint-boundary'),
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        physics: const ClampingScrollPhysics(),
+                        scrollCacheExtent: const ScrollCacheExtent.viewport(2),
+                        addAutomaticKeepAlives: false,
+                        addSemanticIndexes: false,
+                        padding: EdgeInsets.only(
+                          top: MediaQuery.paddingOf(context).top + 88,
+                          bottom: MediaQuery.paddingOf(context).bottom + 112,
+                        ),
+                        itemCount:
+                            _windowEnd -
+                            _windowStart +
+                            (_windowStart == 0 ? 1 : 0) +
+                            (_windowEnd == _items.length ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          final showBeforeBoundary = _windowStart == 0;
+                          final streamLength = _windowEnd - _windowStart;
+                          if (showBeforeBoundary && index == 0) {
+                            return _ReaderAvailabilityBoundary(
+                              direction: ReaderLoadDirection.before,
+                              status: _beforeBoundary,
+                              loading: _beforeLoading,
+                              error: _beforeLoadError,
+                              onRetry: () => unawaited(
+                                _requestAdjacent(ReaderLoadDirection.before),
+                              ),
+                            );
+                          }
+                          final streamIndex =
+                              index - (showBeforeBoundary ? 1 : 0);
+                          if (streamIndex >= streamLength) {
+                            return _ReaderAvailabilityBoundary(
+                              direction: ReaderLoadDirection.after,
+                              status: _afterBoundary,
+                              loading: _afterLoading,
+                              error: _afterLoadError,
+                              onRetry: () => unawaited(
+                                _requestAdjacent(ReaderLoadDirection.after),
+                              ),
+                            );
+                          }
+                          final item = _items[_windowStart + streamIndex];
+                          return switch (item) {
+                            ChapterBoundaryItem() => _ChapterBoundary(
+                              item: item,
+                              itemKey: _itemKeys[item.stableId]!,
+                              settings: _settings,
+                              foreground: foreground,
+                            ),
+                            AlignedBlockItem() => _AlignedBlockView(
+                              item: item,
+                              settings: _settings,
+                              foreground: foreground,
+                              onMounted: (itemContext) {
+                                _mountedBlockIds.add(item.block.id);
+                                _registerMountedItem(
+                                  item.stableId,
+                                  itemContext,
+                                );
+                              },
+                              onUnmounted: (itemContext) {
+                                _mountedBlockIds.remove(item.block.id);
+                                _unregisterMountedItem(
+                                  item.stableId,
+                                  itemContext,
+                                );
+                              },
+                            ),
+                          };
+                        },
                       ),
-                      itemCount:
-                          _windowEnd -
-                          _windowStart +
-                          (_windowStart == 0 ? 1 : 0) +
-                          (_windowEnd == _items.length ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        final showBeforeBoundary = _windowStart == 0;
-                        final streamLength = _windowEnd - _windowStart;
-                        if (showBeforeBoundary && index == 0) {
-                          return _ReaderAvailabilityBoundary(
-                            direction: ReaderLoadDirection.before,
-                            status: _beforeBoundary,
-                            loading: _beforeLoading,
-                            error: _beforeLoadError,
-                            onRetry: () => unawaited(
-                              _requestAdjacent(ReaderLoadDirection.before),
-                            ),
-                          );
-                        }
-                        final streamIndex =
-                            index - (showBeforeBoundary ? 1 : 0);
-                        if (streamIndex >= streamLength) {
-                          return _ReaderAvailabilityBoundary(
-                            direction: ReaderLoadDirection.after,
-                            status: _afterBoundary,
-                            loading: _afterLoading,
-                            error: _afterLoadError,
-                            onRetry: () => unawaited(
-                              _requestAdjacent(ReaderLoadDirection.after),
-                            ),
-                          );
-                        }
-                        final item = _items[_windowStart + streamIndex];
-                        return switch (item) {
-                          ChapterBoundaryItem() => _ChapterBoundary(
-                            item: item,
-                            itemKey: _itemKeys[item.stableId]!,
-                            settings: _settings,
-                            foreground: foreground,
-                          ),
-                          AlignedBlockItem() => _AlignedBlockView(
-                            item: item,
-                            itemKey: _itemKeys[item.stableId]!,
-                            settings: _settings,
-                            foreground: foreground,
-                          ),
-                        };
-                      },
                     ),
                   ),
                 ),
@@ -1517,39 +1596,70 @@ class _TranslationNotice extends StatelessWidget {
   }
 }
 
-class _AlignedBlockView extends StatelessWidget {
+class _AlignedBlockView extends StatefulWidget {
   const _AlignedBlockView({
     required this.item,
-    required this.itemKey,
     required this.settings,
     required this.foreground,
+    required this.onMounted,
+    required this.onUnmounted,
   });
 
   final AlignedBlockItem item;
-  final GlobalKey itemKey;
   final ReaderSettings settings;
   final Color foreground;
+  final ValueChanged<BuildContext> onMounted;
+  final ValueChanged<BuildContext> onUnmounted;
+
+  @override
+  State<_AlignedBlockView> createState() => _AlignedBlockViewState();
+}
+
+class _AlignedBlockViewState extends State<_AlignedBlockView> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    widget.onMounted(context);
+  }
+
+  @override
+  void didUpdateWidget(_AlignedBlockView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.block.id == widget.item.block.id) return;
+    oldWidget.onUnmounted(context);
+    widget.onMounted(context);
+  }
+
+  @override
+  void dispose() {
+    widget.onUnmounted(context);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final translationState = item.chapter.translationState(
-      settings.translationSource,
+    final translationState = widget.item.chapter.translationState(
+      widget.settings.translationSource,
     );
     final translation = translationState == TranslationState.complete
-        ? item.block.translationFor(settings.translationSource)
+        ? widget.item.block.translationFor(widget.settings.translationSource)
         : null;
     final showJapanese =
         translation == null ||
-        settings.readingMode == ReadingMode.chineseJapanese;
-    final isDialogue = item.block.kind == AlignedBlockKind.dialogue;
+        widget.settings.readingMode == ReadingMode.chineseJapanese;
+    final isDialogue = widget.item.block.kind == AlignedBlockKind.dialogue;
+    final semanticLabel = [
+      if (translation != null) '中文：$translation',
+      if (showJapanese) '日文：${widget.item.block.japanese}',
+    ].join('\n');
 
     return Center(
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: settings.readingWidth),
+        constraints: BoxConstraints(maxWidth: widget.settings.readingWidth),
         child: Semantics(
-          key: itemKey,
           container: true,
-          explicitChildNodes: true,
+          excludeSemantics: true,
+          label: semanticLabel,
           child: Padding(
             padding: EdgeInsets.fromLTRB(
               isDialogue ? 34 : 24,
@@ -1561,42 +1671,36 @@ class _AlignedBlockView extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (translation != null)
-                  Semantics(
-                    label: '中文：$translation',
-                    child: SelectableText(
-                      translation,
-                      key: ValueKey('block-${item.block.id}-chinese'),
-                      style: TextStyle(
-                        locale: const Locale('zh', 'CN'),
-                        color: foreground,
-                        fontSize: settings.chineseFontSize,
-                        height: settings.lineHeight,
-                        fontWeight: FontWeight.w400,
-                        letterSpacing: 0.15,
-                      ),
+                  Text(
+                    translation,
+                    key: ValueKey('block-${widget.item.block.id}-chinese'),
+                    style: TextStyle(
+                      locale: const Locale('zh', 'CN'),
+                      color: widget.foreground,
+                      fontSize: widget.settings.chineseFontSize,
+                      height: widget.settings.lineHeight,
+                      fontWeight: FontWeight.w400,
+                      letterSpacing: 0.15,
                     ),
                   ),
                 if (translation != null && showJapanese)
-                  SizedBox(height: settings.chineseFontSize * 0.42),
+                  SizedBox(height: widget.settings.chineseFontSize * 0.42),
                 if (showJapanese)
-                  Semantics(
-                    label: '日文：${item.block.japanese}',
-                    child: SelectableText(
-                      item.block.japanese,
-                      key: ValueKey('block-${item.block.id}-japanese'),
-                      style: TextStyle(
-                        locale: const Locale('ja', 'JP'),
-                        color: foreground.withValues(
-                          alpha: translation == null
-                              ? 0.88
-                              : settings.japaneseOpacity,
-                        ),
-                        fontSize: translation == null
-                            ? settings.chineseFontSize * 0.92
-                            : settings.japaneseFontSize,
-                        height: settings.lineHeight,
-                        fontWeight: FontWeight.w400,
+                  Text(
+                    widget.item.block.japanese,
+                    key: ValueKey('block-${widget.item.block.id}-japanese'),
+                    style: TextStyle(
+                      locale: const Locale('ja', 'JP'),
+                      color: widget.foreground.withValues(
+                        alpha: translation == null
+                            ? 0.88
+                            : widget.settings.japaneseOpacity,
                       ),
+                      fontSize: translation == null
+                          ? widget.settings.chineseFontSize * 0.92
+                          : widget.settings.japaneseFontSize,
+                      height: widget.settings.lineHeight,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
               ],

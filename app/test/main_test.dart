@@ -143,6 +143,7 @@ void main() {
     expect(find.byKey(const ValueKey('reader-restoring')), findsNothing);
     expect(find.byKey(const ValueKey('block-c1-0-chinese')), findsOneWidget);
     expect(find.byKey(const ValueKey('block-c1-0-japanese')), findsOneWidget);
+    expect(find.byType(SelectableText), findsNothing);
 
     final chineseTop = tester
         .getTopLeft(find.byKey(const ValueKey('block-c1-0-chinese')))
