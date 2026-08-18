@@ -3,6 +3,16 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('v1 product metadata is release-ready', () {
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    expect(pubspec, contains('version: 1.0.0+1'));
+    expect(pubspec, isNot(contains('reader spike')));
+
+    final macInfo = File('macos/Runner/Info.plist').readAsStringSync();
+    expect(macInfo, contains('<key>CFBundleDisplayName</key>'));
+    expect(macInfo, contains('<string>Novelia Reader</string>'));
+  });
+
   test('Android release never falls back to the shared debug certificate', () {
     final gradle = File('android/app/build.gradle.kts').readAsStringSync();
     expect(gradle, contains('NOVELIA_ANDROID_STORE_FILE'));
