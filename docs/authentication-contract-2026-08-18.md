@@ -1,7 +1,8 @@
 # Novelia authentication compatibility contract — 2026-08-18
 
-Status: public-client contract plus owned-account login, refresh, secure macOS
-restoration, and favorite-folder listing verified on 2026-08-18. No credential,
+Status: public-client contract plus owned-account login, refresh, macOS
+prompt-free restoration, favorite-folder metadata, a row-bearing Favorite page,
+Favorite add, and Reading History write verified on 2026-08-18. No credential,
 cookie value, token value, account identifier, folder title, or novel identity
 was recorded.
 
@@ -33,8 +34,13 @@ was recorded.
 - `GET /api/user/favored` returned JSON fields `favoredWeb` and
   `favoredWenku`, each containing folder objects with string `id` and `title`.
 - The current public client pages Web Novel favorites with
-  `GET /api/user/favored-web/{folderId}?page={zeroBased}&pageSize=30` and pages
-  Reading History with
+  `GET /api/user/favored-web/{folderId}` plus the complete catalog query
+  (`page`, `pageSize`, `query`, `provider`, `type`, `level`, `translate`, and
+  `sort`). Omitting the catalog filter fields returned HTTP 404 in the owned
+  account smoke, while the ordinary catalog's numeric sort code returned HTTP
+  500; this endpoint expects the string `sort=update` or `sort=create`. The app
+  fixes `level=1`, `sort=update`, and the six general catalog providers at this
+  boundary. Reading History pages with
   `GET /api/user/read-history?page={zeroBased}&pageSize=30`.
 - Both page responses use the ordinary Web Novel outline page shape (`items`
   plus `pageNumber`). The app applies its existing general-content validation
@@ -52,9 +58,12 @@ opened as a top-level browser page it redirects to the website. Therefore a
 system-browser login cannot currently return a session to this app.
 
 The app may use the same direct password exchange as a compatibility flow. It
-must never persist or log the password. The returned refresh cookie and access
-token belong only in Keychain/Keystore-backed storage, must be deleted on
-logout, and must never enter SQLite, preferences, diagnostics, or fixtures.
+must never persist or log the password. Android and iOS keep the refresh cookie
+and access token in their protected credential stores. By explicit product
+choice, macOS keeps the combined session in user-scoped app preferences so
+ad-hoc development builds do not repeatedly request the login Keychain
+password. This macOS value is not encrypted; logout deletes it. Sessions must
+never enter SQLite, diagnostics, or fixtures.
 
 ## Live-test rule
 
@@ -67,8 +76,8 @@ source files, shell arguments, logs, screenshots, or chat.
 
 - refresh-cookie expiry and logout invalidation;
 - access-token lifetime and expired-session status codes;
-- live favorite-folder creation, add/remove mutation status codes, and
+- live favorite-folder creation, remove mutation status, and
   cross-device visibility;
-- live favorite-page and Reading History page schemas when they contain rows;
-- Reading History write status and cross-device conflict behavior;
+- live Reading History page schema when it contains rows;
+- Reading History cross-device conflict behavior;
 - whether concurrent refresh requests invalidate an earlier rotated cookie.

@@ -20,7 +20,8 @@ Independent Flutter reader for macOS, Android, and iOS.
   protected whole-novel downloads;
 - download pause/resume/retry/remove management and Translation Pending refresh;
 - native external-browser launch for original-work links.
-- direct hosted account login with Keychain/Keystore-backed refresh sessions;
+- direct hosted account login with protected Android/iOS refresh sessions and
+  prompt-free macOS app-local session persistence;
 - paginated remote Favorite Folder contents and Reading History;
 - Favorite Folder selection/creation plus confirmed removal contracts and a durable,
   latest-chapter-wins Reading History outbox that is cleared on sign-out.
@@ -28,7 +29,7 @@ Independent Flutter reader for macOS, Android, and iOS.
 Deterministic fixtures remain available for tests. Production composition uses
 the anonymous Novelia-compatible gateway by default and enables account data
 only after a locally entered login succeeds. Owned-account login, refresh,
-secure macOS restoration, and Favorite Folder metadata have been live-verified.
+macOS restoration, and Favorite Folder metadata have been live-verified.
 Account rows and mutations remain opt-in live steps.
 
 Use macOS as the default fast-feedback target:

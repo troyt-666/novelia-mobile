@@ -36,15 +36,17 @@ projections. The Syosetu ranking now pages through authoritative service pages,
 the original-work action opens through thin native Android/iOS/macOS browser
 channels, and Offline Downloads expose pause, resume, retry, full-disk failure,
 and confirmed removal UI. Phase 3 now has a direct hosted credential exchange,
-platform Keychain/Keystore session storage, truthful remote folder metadata,
+protected Android/iOS session storage, prompt-free macOS app-local session
+persistence, truthful remote folder metadata,
 paginated favorite-folder contents, a paginated remote Reading History view,
 confirmed Favorite removal with authoritative page reload, and a durable
 latest-activity-wins Reading History outbox. Owned-account login, refresh,
-secure macOS restoration, and folder-list DTOs are verified; the UI does not
-invent folder counts or expose account rows outside the established
-general-content boundary. Favorite mutations fail immediately instead of being
-queued. Signed-out transition clears only queued remote history so it cannot
-leak into a later account.
+prompt-free macOS restoration, folder-list and row-bearing Favorite-page DTOs,
+Favorite add, and Reading History write are verified; the UI does not invent
+folder counts or expose account rows outside the established general-content
+boundary. Favorite mutations fail immediately instead of being queued.
+Signed-out transition clears only queued remote history so it cannot leak into
+a later account.
 
 SQLite schema v5 stores local reader/application state, device-only search
 history, cached outlines/details/ordered TOCs, exact Japanese and Chinese
@@ -77,7 +79,7 @@ reported original total; ranking results now cap only such positive
 over-reports, while negative counts and ordinary catalog/detail inconsistencies
 continue to fail closed.
 
-Static analysis is clean and 172 automated tests pass. Release macOS and iOS
+Static analysis is clean and 173 automated tests pass. Release macOS and iOS
 Simulator builds pass, and the Android release compiles to a 60.2 MB unsigned
 artifact when private signing inputs are absent. The repository verifier rejects
 that artifact and the debug-signed APK; release configuration no longer falls
@@ -188,7 +190,7 @@ flowchart TD
   F --> G["Content API"]
   F --> H["Authentication service"]
   C --> I["Platform ports"]
-  I --> J["Keychain / Keystore"]
+  I --> J["Android Keystore / iOS Keychain / macOS app preferences"]
   I --> K["Background jobs and downloads"]
   I --> L["Files, links, share sheets"]
 ```
@@ -379,8 +381,10 @@ Requirements:
   action as a redacted diagnostic bundle. Do not enable automatic analytics or
   hosted telemetry in MVP.
 - Retry only safe/idempotent requests; coordinate concurrent `401` refreshes.
-- Store tokens only through Keychain/Keystore-backed secure storage, not SQLite
-  or ordinary preferences.
+- Store Android/iOS tokens only through protected platform storage, not SQLite
+  or ordinary preferences. On macOS, use one user-scoped app-preference value
+  by explicit product choice so ad-hoc builds never prompt for the login
+  Keychain password; document that this desktop value is not encrypted.
 - Prefer a system-browser OAuth/OIDC flow with PKCE if Novelia supports it.
 - Route login, registration, and password recovery through Novelia's hosted
   authentication when a supported system-browser callback flow exists; keep
@@ -419,6 +423,13 @@ rate-limited, and run only against an owned test account.
   a new production bundle ID.
 - An optional version check may open the private distribution/release page;
   download and installation remain manual.
+
+### macOS development target
+
+- Store the combined refresh session in user-scoped app preferences. This is
+  an accepted convenience tradeoff for a personal novel reader and avoids
+  repeated Keychain authorization when ad-hoc debug signatures change.
+- Never persist the password; logout removes the stored session value.
 
 ## Delivery phases and gates
 
@@ -561,7 +572,7 @@ and iOS system fonts and rasterizers differ.
 | iOS typography/selection/accessibility failure | High | Phase-1 physical-device gate and native-reader fallback |
 | Background jobs suspended by OS | Medium | Resumable queue and foreground reconciliation |
 | Unbounded growth from ongoing Novel Downloads | Medium | Visible per-novel/storage usage, pause/remove controls, and full-disk handling |
-| Token or content leakage | High | Keychain/Keystore, redacted logs, no secrets in DB/preferences |
+| Token or content leakage | High | Protected mobile stores, user-scoped macOS preferences by explicit tradeoff, redacted logs, no secrets in SQLite |
 | Cache/migration data loss | High | Transactional writes and snapshot migration tests |
 | Solo-project overarchitecture | Medium | Vertical slices, manual composition, defer non-core features |
 

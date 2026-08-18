@@ -22,11 +22,12 @@ has been recovered or copied.
   read-only comments, native external-browser handoff to the original work,
   bounded dynamic reader windows, and explicit whole-novel downloads.
 - Phase 3 account slice: the hosted username/password exchange is wired with
-  password-in-memory-only handling, platform Keychain/Keystore session
-  storage, refresh/logout, truthful paginated remote Favorite Folders and
+  password-in-memory-only handling, protected Android/iOS session storage,
+  prompt-free macOS app-local session persistence, refresh/logout, truthful
+  paginated remote Favorite Folders and
   Reading History, the one-folder/multi-folder favorite flow, confirmed
   Favorite removal with authoritative page reload, and a durable
-  latest-chapter-wins Reading History outbox. Login, refresh, secure macOS
+  latest-chapter-wins Reading History outbox. Login, refresh, macOS
   restoration, and folder metadata have passed an owned-account smoke.
 - SQLite schema v5 persists catalog/detail/TOC records, exact Japanese and
   Chinese chapter payloads, reader position, bookmarks, settings, recent
@@ -45,7 +46,7 @@ has been recovered or copied.
 - The Library exposes truthful download failure details plus pause, resume,
   retry, and confirmed removal controls. Removing an Offline Download preserves
   local reading progress and bookmarks.
-- Current automated checkpoint: static analysis is clean and 172 tests pass,
+- Current automated checkpoint: static analysis is clean and 173 tests pass,
   including a file-backed online-download, close/reopen, network-failure,
   offline-resume, and pending-translation-refresh contract. Release macOS and
   Android compilation and the iOS Simulator build pass. Android releases no
