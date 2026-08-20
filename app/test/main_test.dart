@@ -60,6 +60,7 @@ ScrollableState _readerScrollable(WidgetTester tester) {
 void main() {
   Future<void> pumpReader(
     WidgetTester tester, {
+    ReaderNovel? novel,
     ReadingPosition? initialPosition,
     ValueChanged<ReadingPosition>? onPositionChanged,
     ReaderBookmarkChanged? onBookmarkChanged,
@@ -75,7 +76,7 @@ void main() {
       MaterialApp(
         restorationScopeId: 'reader-tests',
         home: ReaderScreen(
-          novel: fixtureNovel,
+          novel: novel ?? fixtureNovel,
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           initialPosition: initialPosition,
@@ -152,6 +153,47 @@ void main() {
         .getTopLeft(find.byKey(const ValueKey('block-c1-0-japanese')))
         .dy;
     expect(chineseTop, lessThan(japaneseTop));
+  });
+
+  testWidgets('renders normalized illustration blocks as images, not URLs', (
+    tester,
+  ) async {
+    const imageUrl =
+        'https://47209.mitemin.net/userpageimage/viewimagebig/icode/i971569/';
+    final novel = ReaderNovel(
+      id: 'illustrated-novel',
+      chineseTitle: '插图小说',
+      japaneseTitle: '挿絵小説',
+      author: '作者',
+      chapters: [
+        NovelChapter(
+          id: 'illustrated-chapter',
+          index: 1,
+          chineseTitle: '第一章',
+          japaneseTitle: '第一話',
+          publishedAt: DateTime.utc(2026, 8, 18),
+          blocks: const [
+            AlignedBlock(
+              id: 'illustration-1',
+              ordinal: 0,
+              japanese: '<图片>$imageUrl',
+              translations: {},
+              kind: AlignedBlockKind.illustration,
+            ),
+          ],
+        ),
+      ],
+    );
+
+    await pumpReader(tester, novel: novel);
+
+    final imageFinder = find.byKey(
+      const ValueKey('block-illustration-1-illustration'),
+    );
+    expect(imageFinder, findsOneWidget);
+    expect(find.text('<图片>$imageUrl'), findsNothing);
+    final image = tester.widget<Image>(imageFinder);
+    expect((image.image as NetworkImage).url, imageUrl);
   });
 
   testWidgets('reading taps dismiss chrome and center taps reveal it', (

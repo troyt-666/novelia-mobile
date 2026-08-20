@@ -1680,6 +1680,13 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.item.block.kind == AlignedBlockKind.illustration) {
+      return _IllustrationBlockView(
+        block: widget.item.block,
+        readingWidth: widget.settings.readingWidth,
+        foreground: widget.foreground,
+      );
+    }
     final translationState = widget.item.chapter.translationState(
       widget.settings.translationSource,
     );
@@ -1749,6 +1756,94 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _IllustrationBlockView extends StatelessWidget {
+  const _IllustrationBlockView({
+    required this.block,
+    required this.readingWidth,
+    required this.foreground,
+  });
+
+  final AlignedBlock block;
+  final double readingWidth;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = block.illustrationUri;
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: readingWidth),
+        child: Semantics(
+          container: true,
+          image: true,
+          label: '小说插图',
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            child: uri == null
+                ? _IllustrationFailure(foreground: foreground)
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.network(
+                      uri.toString(),
+                      key: ValueKey('block-${block.id}-illustration'),
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                      headers: uri.host.endsWith('.pximg.net')
+                          ? const {'Referer': 'https://www.pixiv.net/'}
+                          : null,
+                      frameBuilder: (context, child, frame, synchronous) {
+                        if (synchronous || frame != null) return child;
+                        return const SizedBox(
+                          height: 180,
+                          child: Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) =>
+                          _IllustrationFailure(foreground: foreground),
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IllustrationFailure extends StatelessWidget {
+  const _IllustrationFailure({required this.foreground});
+
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('illustration-load-failure'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 36),
+      decoration: BoxDecoration(
+        border: Border.all(color: foreground.withValues(alpha: 0.22)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.broken_image_outlined,
+            color: foreground.withValues(alpha: 0.64),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '插图暂时无法加载',
+            style: TextStyle(color: foreground.withValues(alpha: 0.72)),
+          ),
+        ],
       ),
     );
   }
