@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/account/account_models.dart';
 import '../../core/offline/offline_models.dart';
@@ -10,6 +13,9 @@ class SettingsScreen extends StatelessWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     required this.onClearSearchHistory,
+    this.onManageOfflineDownloads,
+    this.onCacheLimitChanged,
+    this.onClearReadingCache,
     this.storageSummary = const OfflineStorageSummary(
       cacheBytes: 0,
       offlineDownloadBytes: 0,
@@ -30,6 +36,9 @@ class SettingsScreen extends StatelessWidget {
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final VoidCallback onClearSearchHistory;
+  final VoidCallback? onManageOfflineDownloads;
+  final ValueChanged<int>? onCacheLimitChanged;
+  final FutureOr<int> Function()? onClearReadingCache;
   final OfflineStorageSummary storageSummary;
 
   /// Null means that no cache limit is currently configured.
@@ -136,7 +145,10 @@ class SettingsScreen extends StatelessWidget {
                   ' · $downloadedNovelCount 部小说'
                   ' · ${storageSummary.offlineDownloadChapterCount} 章',
                 ),
-                trailing: const Icon(Icons.chevron_right),
+                trailing: onManageOfflineDownloads == null
+                    ? null
+                    : const Icon(Icons.chevron_right),
+                onTap: onManageOfflineDownloads,
               ),
               const Divider(height: 1),
               ListTile(
@@ -148,7 +160,12 @@ class SettingsScreen extends StatelessWidget {
                   ' · ${storageSummary.cacheChapterCount} 章'
                   ' · ${_cacheLimitLabel(cacheLimitBytes)}',
                 ),
-                trailing: const Icon(Icons.chevron_right),
+                trailing: onClearReadingCache == null
+                    ? null
+                    : const Icon(Icons.chevron_right),
+                onTap: onClearReadingCache == null
+                    ? null
+                    : () => _showCacheManager(context),
               ),
               const Divider(height: 1),
               ListTile(
@@ -158,10 +175,13 @@ class SettingsScreen extends StatelessWidget {
                 onTap: onClearSearchHistory,
               ),
               const Divider(height: 1),
-              const ListTile(
-                leading: Icon(Icons.bug_report_outlined),
-                title: Text('导出诊断信息'),
-                subtitle: Text('不包含章节文本、令牌或账号标识'),
+              ListTile(
+                key: const ValueKey('export-diagnostics-button'),
+                leading: const Icon(Icons.bug_report_outlined),
+                title: const Text('导出诊断信息'),
+                subtitle: const Text('不包含章节文本、令牌或账号标识'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _showDiagnostics(context),
               ),
             ],
           ),
@@ -193,6 +213,171 @@ class SettingsScreen extends StatelessWidget {
   static String _cacheLimitLabel(int? cacheLimitBytes) {
     if (cacheLimitBytes == null) return '上限未设置';
     return '上限 ${formatStorageBytes(cacheLimitBytes)}';
+  }
+
+  Future<void> _showCacheManager(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final limit = cacheLimitBytes;
+    final standardLimits = <int>{
+      ?limit,
+      64 * 1024 * 1024,
+      128 * 1024 * 1024,
+      256 * 1024 * 1024,
+      512 * 1024 * 1024,
+      1024 * 1024 * 1024,
+    }.toList()..sort();
+    var selectedLimit = limit;
+    var clearing = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '阅读缓存',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                const Text('缓存用于加快再次打开章节；清空后会在需要时重新获取，不会删除离线下载、阅读进度或书签。'),
+                const SizedBox(height: 16),
+                Text(
+                  '当前 ${formatStorageBytes(storageSummary.cacheBytes)}'
+                  ' · ${storageSummary.cacheChapterCount} 章',
+                  key: const ValueKey('cache-management-summary'),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<int>(
+                  key: const ValueKey('cache-limit-selector'),
+                  initialValue: selectedLimit,
+                  decoration: const InputDecoration(
+                    labelText: '缓存上限',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final value in standardLimits)
+                      DropdownMenuItem(
+                        value: value,
+                        child: Text(formatStorageBytes(value)),
+                      ),
+                  ],
+                  onChanged: onCacheLimitChanged == null
+                      ? null
+                      : (value) {
+                          if (value == null || value == selectedLimit) return;
+                          setSheetState(() => selectedLimit = value);
+                          onCacheLimitChanged!(value);
+                          ScaffoldMessenger.of(sheetContext)
+                            ..hideCurrentSnackBar()
+                            ..showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  '缓存上限已设为 ${formatStorageBytes(value)}',
+                                ),
+                              ),
+                            );
+                        },
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  key: const ValueKey('clear-reading-cache-button'),
+                  onPressed: clearing
+                      ? null
+                      : () async {
+                          setSheetState(() => clearing = true);
+                          try {
+                            final removed = await onClearReadingCache!();
+                            if (!sheetContext.mounted) return;
+                            Navigator.of(sheetContext).pop();
+                            messenger
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    removed == 0
+                                        ? '阅读缓存已经是空的'
+                                        : '已清除 $removed 章阅读缓存',
+                                  ),
+                                ),
+                              );
+                          } finally {
+                            if (sheetContext.mounted) {
+                              setSheetState(() => clearing = false);
+                            }
+                          }
+                        },
+                  icon: clearing
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_sweep_outlined),
+                  label: const Text('清空阅读缓存'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDiagnostics(BuildContext context) async {
+    final diagnostics = <String>[
+      'JFZ Reader diagnostics',
+      'generatedAt=${DateTime.now().toUtc().toIso8601String()}',
+      'version=1.0.0+1',
+      'theme=${themeMode.name}',
+      'accountState=${accountSession.status.name}',
+      'offlineDownloadBytes=${storageSummary.offlineDownloadBytes}',
+      'offlineDownloadChapters=${storageSummary.offlineDownloadChapterCount}',
+      'cacheBytes=${storageSummary.cacheBytes}',
+      'cacheChapters=${storageSummary.cacheChapterCount}',
+      'cacheLimitBytes=${cacheLimitBytes ?? 'unknown'}',
+    ].join('\n');
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('诊断信息'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              diagnostics,
+              key: const ValueKey('diagnostics-preview'),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+          FilledButton.icon(
+            key: const ValueKey('copy-diagnostics-button'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: diagnostics));
+              if (!dialogContext.mounted) return;
+              Navigator.of(dialogContext).pop();
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(const SnackBar(content: Text('诊断信息已复制')));
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('复制'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openAccount(BuildContext context) async {

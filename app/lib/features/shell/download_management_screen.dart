@@ -14,17 +14,24 @@ typedef DownloadManagementHandler =
       LibraryProtectedDownload download,
     );
 
+typedef DownloadManagementSnapshotLoader =
+    FutureOr<List<LibraryProtectedDownload>> Function();
+
 class DownloadManagementScreen extends StatefulWidget {
   const DownloadManagementScreen({
     required this.downloads,
     required this.onAction,
     required this.onOpenNovel,
+    this.snapshotLoader,
+    this.refreshInterval = const Duration(milliseconds: 400),
     super.key,
-  });
+  }) : assert(refreshInterval > Duration.zero);
 
   final List<LibraryProtectedDownload> downloads;
   final DownloadManagementHandler onAction;
   final ValueChanged<CatalogNovel> onOpenNovel;
+  final DownloadManagementSnapshotLoader? snapshotLoader;
+  final Duration refreshInterval;
 
   @override
   State<DownloadManagementScreen> createState() =>
@@ -32,10 +39,86 @@ class DownloadManagementScreen extends StatefulWidget {
 }
 
 class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
-  late final List<LibraryProtectedDownload> _downloads = List.of(
-    widget.downloads,
-  );
+  late List<LibraryProtectedDownload> _downloads;
+  late String _downloadSignature;
   final Set<String> _busyGroups = <String>{};
+  Timer? _refreshTimer;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _downloads = List.of(widget.downloads);
+    _downloadSignature = _signature(_downloads);
+    if (widget.snapshotLoader != null) {
+      unawaited(_refreshDownloads());
+      _refreshTimer = Timer.periodic(
+        widget.refreshInterval,
+        (_) => unawaited(_refreshDownloads()),
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DownloadManagementScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.snapshotLoader == null) {
+      _replaceDownloads(widget.downloads);
+    }
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshDownloads() async {
+    final loader = widget.snapshotLoader;
+    if (loader == null || _refreshing) return;
+    _refreshing = true;
+    try {
+      final latest = await Future<List<LibraryProtectedDownload>>.sync(loader);
+      if (mounted) _replaceDownloads(latest);
+    } on Object {
+      // Keep the last truthful snapshot. Actions surface their own failures.
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  void _replaceDownloads(List<LibraryProtectedDownload> latest) {
+    final signature = _signature(latest);
+    if (signature == _downloadSignature) return;
+    setState(() {
+      _downloads = List.of(latest);
+      _downloadSignature = signature;
+      _busyGroups.removeWhere(
+        (key) => !_downloads.any((download) => download.groupKey == key),
+      );
+    });
+  }
+
+  static String _signature(Iterable<LibraryProtectedDownload> downloads) {
+    return [
+      for (final download in downloads) ...[
+        download.groupKey,
+        '${download.enabled}',
+        ...download.intentIds,
+        for (final chapter in download.chapters)
+          [
+            chapter.chapterId,
+            chapter.taskState.name,
+            '${chapter.byteCount}',
+            '${chapter.bytesReceived}',
+            '${chapter.totalBytes}',
+            '${chapter.translationAvailable}',
+            chapter.failure?.kind.name ?? '',
+            chapter.failure?.message ?? '',
+          ].join(':'),
+      ],
+    ].join('|');
+  }
 
   Future<void> _run(
     DownloadManagementAction action,
@@ -55,6 +138,7 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
         } else {
           _downloads[index] = updated;
         }
+        _downloadSignature = _signature(_downloads);
       });
     } on Object {
       if (!mounted) return;
@@ -106,27 +190,32 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
                 key: ValueKey('downloads-management-empty'),
               ),
             )
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-              itemCount: _downloads.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final download = _downloads[index];
-                final busy = _busyGroups.contains(download.groupKey);
-                return _ManagedDownloadCard(
-                  download: download,
-                  busy: busy,
-                  onOpen: () => widget.onOpenNovel(download.novel),
-                  onPause: () =>
-                      unawaited(_run(DownloadManagementAction.pause, download)),
-                  onResume: () => unawaited(
-                    _run(DownloadManagementAction.resume, download),
-                  ),
-                  onRetry: () =>
-                      unawaited(_run(DownloadManagementAction.retry, download)),
-                  onRemove: () => unawaited(_confirmRemove(download)),
-                );
-              },
+          : RefreshIndicator(
+              onRefresh: _refreshDownloads,
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                itemCount: _downloads.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final download = _downloads[index];
+                  final busy = _busyGroups.contains(download.groupKey);
+                  return _ManagedDownloadCard(
+                    download: download,
+                    busy: busy,
+                    onOpen: () => widget.onOpenNovel(download.novel),
+                    onPause: () => unawaited(
+                      _run(DownloadManagementAction.pause, download),
+                    ),
+                    onResume: () => unawaited(
+                      _run(DownloadManagementAction.resume, download),
+                    ),
+                    onRetry: () => unawaited(
+                      _run(DownloadManagementAction.retry, download),
+                    ),
+                    onRemove: () => unawaited(_confirmRemove(download)),
+                  );
+                },
+              ),
             ),
     );
   }
@@ -156,6 +245,9 @@ class _ManagedDownloadCard extends StatelessWidget {
     final failures = download.chapters
         .where((chapter) => chapter.taskState == DownloadTaskState.failed)
         .toList(growable: false);
+    final progress = download.progressFraction;
+    final activeChapter = _currentChapter(download);
+    final colors = Theme.of(context).colorScheme;
     return Card.outlined(
       key: ValueKey('managed-download-${download.groupKey}'),
       margin: EdgeInsets.zero,
@@ -169,7 +261,7 @@ class _ManagedDownloadCard extends StatelessWidget {
               onTap: busy ? null : onOpen,
               child: Row(
                 children: [
-                  const CircleAvatar(child: Icon(Icons.offline_pin_outlined)),
+                  CircleAvatar(child: Icon(_statusIcon(download))),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -188,6 +280,42 @@ class _ManagedDownloadCard extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _DownloadStatusBadge(download: download),
+                const Spacer(),
+                Text(
+                  download.chapters.isEmpty
+                      ? '正在准备章节列表…'
+                      : '${download.completedChapterCount} / '
+                            '${download.chapters.length} 章 · '
+                            '${((progress ?? 0) * 100).round()}%',
+                  key: ValueKey('download-progress-label-${download.groupKey}'),
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              key: ValueKey('download-progress-${download.groupKey}'),
+              value: progress,
+              minHeight: 7,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            if (activeChapter != null) ...[
+              const SizedBox(height: 9),
+              Text(
+                '${activeChapter.chapterId} · '
+                '${_phaseLabel(activeChapter)}${_byteLabel(activeChapter)}',
+                key: ValueKey('download-current-${download.groupKey}'),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ],
             if (failures.isNotEmpty) ...[
               const SizedBox(height: 14),
               for (final chapter in failures)
@@ -205,46 +333,109 @@ class _ManagedDownloadCard extends StatelessWidget {
                 ),
             ],
             const SizedBox(height: 14),
-            if (busy)
-              const LinearProgressIndicator()
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+            if (busy) ...[
+              const Row(
                 children: [
-                  if (download.enabled)
-                    OutlinedButton.icon(
-                      key: ValueKey('pause-download-${download.groupKey}'),
-                      onPressed: onPause,
-                      icon: const Icon(Icons.pause),
-                      label: const Text('暂停'),
-                    )
-                  else
-                    FilledButton.tonalIcon(
-                      key: ValueKey('resume-download-${download.groupKey}'),
-                      onPressed: onResume,
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('继续'),
-                    ),
-                  if (download.retryableFailureCount > 0)
-                    FilledButton.tonalIcon(
-                      key: ValueKey('retry-download-${download.groupKey}'),
-                      onPressed: onRetry,
-                      icon: const Icon(Icons.refresh),
-                      label: Text('重试 ${download.retryableFailureCount} 章'),
-                    ),
-                  TextButton.icon(
-                    key: ValueKey('remove-download-${download.groupKey}'),
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('删除'),
+                  SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   ),
+                  SizedBox(width: 8),
+                  Text('正在更新下载任务…'),
                 ],
               ),
+              const SizedBox(height: 10),
+            ],
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (download.enabled && !download.isComplete)
+                  OutlinedButton.icon(
+                    key: ValueKey('pause-download-${download.groupKey}'),
+                    onPressed: busy ? null : onPause,
+                    icon: const Icon(Icons.pause),
+                    label: const Text('暂停'),
+                  )
+                else if (!download.enabled && !download.isComplete)
+                  FilledButton.tonalIcon(
+                    key: ValueKey('resume-download-${download.groupKey}'),
+                    onPressed: busy ? null : onResume,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('继续'),
+                  ),
+                if (download.retryableFailureCount > 0)
+                  FilledButton.tonalIcon(
+                    key: ValueKey('retry-download-${download.groupKey}'),
+                    onPressed: busy ? null : onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: Text('重试 ${download.retryableFailureCount} 章'),
+                  ),
+                TextButton.icon(
+                  key: ValueKey('remove-download-${download.groupKey}'),
+                  onPressed: busy ? null : onRemove,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('删除'),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  static LibraryDownloadChapter? _currentChapter(
+    LibraryProtectedDownload download,
+  ) {
+    for (final chapter in download.chapters) {
+      if (const {
+        DownloadTaskState.fetching,
+        DownloadTaskState.validating,
+        DownloadTaskState.storing,
+      }.contains(chapter.taskState)) {
+        return chapter;
+      }
+    }
+    for (final chapter in download.chapters) {
+      if (chapter.taskState == DownloadTaskState.queued) return chapter;
+    }
+    return null;
+  }
+
+  static IconData _statusIcon(LibraryProtectedDownload download) {
+    if (download.isComplete) return Icons.offline_pin;
+    if (download.activeChapterCount > 0) return Icons.downloading;
+    if (!download.enabled ||
+        download.countWithState(DownloadTaskState.paused) > 0) {
+      return Icons.pause_circle_outline;
+    }
+    if (download.countWithState(DownloadTaskState.failed) > 0) {
+      return Icons.error_outline;
+    }
+    return Icons.schedule;
+  }
+
+  static String _phaseLabel(LibraryDownloadChapter chapter) {
+    return switch (chapter.taskState) {
+      DownloadTaskState.queued => '等待下载',
+      DownloadTaskState.fetching => '正在下载',
+      DownloadTaskState.validating => '正在校验',
+      DownloadTaskState.storing => '正在保存',
+      DownloadTaskState.paused => '已暂停',
+      DownloadTaskState.failed => '下载失败',
+      DownloadTaskState.stored => '已完成',
+      DownloadTaskState.removed => '已删除',
+    };
+  }
+
+  static String _byteLabel(LibraryDownloadChapter chapter) {
+    final total = chapter.totalBytes;
+    if (chapter.taskState != DownloadTaskState.fetching || total == null) {
+      return '';
+    }
+    return ' · ${formatStorageBytes(chapter.bytesReceived)} / '
+        '${formatStorageBytes(total)}';
   }
 
   static String _failureLabel(DownloadFailure? failure) {
@@ -266,5 +457,51 @@ class _ManagedDownloadCard extends StatelessWidget {
       DownloadFailureKind.unknown => failure.message,
       DownloadFailureKind.insufficientStorage => '存储空间不足',
     };
+  }
+}
+
+class _DownloadStatusBadge extends StatelessWidget {
+  const _DownloadStatusBadge({required this.download});
+
+  final LibraryProtectedDownload download;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final (label, background, foreground) = _appearance(colors);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        child: Text(
+          label,
+          key: ValueKey('download-status-${download.groupKey}'),
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: foreground,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+
+  (String, Color, Color) _appearance(ColorScheme colors) {
+    if (download.isComplete) {
+      return ('已完成', colors.tertiaryContainer, colors.onTertiaryContainer);
+    }
+    if (download.activeChapterCount > 0) {
+      return ('下载中', colors.primaryContainer, colors.onPrimaryContainer);
+    }
+    if (!download.enabled ||
+        download.countWithState(DownloadTaskState.paused) > 0) {
+      return ('已暂停', colors.secondaryContainer, colors.onSecondaryContainer);
+    }
+    if (download.countWithState(DownloadTaskState.failed) > 0) {
+      return ('需要处理', colors.errorContainer, colors.onErrorContainer);
+    }
+    return ('等待中', colors.surfaceContainerHighest, colors.onSurfaceVariant);
   }
 }

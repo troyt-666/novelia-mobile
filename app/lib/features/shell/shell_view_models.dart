@@ -26,17 +26,32 @@ class LibraryDownloadChapter {
     required this.byteCount,
     required this.translationAvailable,
     required this.taskState,
+    this.bytesReceived = 0,
+    this.totalBytes,
     this.failure,
   }) {
     if (chapterId.isEmpty) throw ArgumentError.value(chapterId, 'chapterId');
     if (byteCount < 0) throw ArgumentError.value(byteCount, 'byteCount');
+    if (bytesReceived < 0 ||
+        (totalBytes != null &&
+            (totalBytes! < 0 || bytesReceived > totalBytes!))) {
+      throw ArgumentError('Download byte progress is inconsistent.');
+    }
   }
 
   final String chapterId;
   final int byteCount;
   final bool translationAvailable;
   final DownloadTaskState taskState;
+  final int bytesReceived;
+  final int? totalBytes;
   final DownloadFailure? failure;
+
+  double? get byteProgressFraction {
+    final total = totalBytes;
+    if (total == null || total <= 0) return null;
+    return (bytesReceived / total).clamp(0.0, 1.0);
+  }
 }
 
 class LibraryProtectedDownload {
@@ -93,6 +108,36 @@ class LibraryProtectedDownload {
             chapter.failure?.retryable != true,
       )
       .length;
+
+  int get completedChapterCount => countWithState(DownloadTaskState.stored);
+
+  bool get isComplete =>
+      chapters.isNotEmpty && completedChapterCount == chapters.length;
+
+  int get activeChapterCount => chapters
+      .where(
+        (chapter) => const {
+          DownloadTaskState.fetching,
+          DownloadTaskState.validating,
+          DownloadTaskState.storing,
+        }.contains(chapter.taskState),
+      )
+      .length;
+
+  /// Chapter completion is always available once the TOC has been reconciled.
+  /// A known byte fraction contributes partial credit for the active chapter.
+  double? get progressFraction {
+    if (chapters.isEmpty) return null;
+    var completed = 0.0;
+    for (final chapter in chapters) {
+      if (chapter.taskState == DownloadTaskState.stored) {
+        completed += 1;
+      } else if (chapter.taskState == DownloadTaskState.fetching) {
+        completed += chapter.byteProgressFraction ?? 0;
+      }
+    }
+    return (completed / chapters.length).clamp(0.0, 1.0);
+  }
 }
 
 class LibraryBookmarkItem {
@@ -162,19 +207,21 @@ String formatStorageBytes(int bytes) {
 
 String libraryDownloadSummary(LibraryProtectedDownload download) {
   final status = <String>[];
-  final failed = download.countWithState(DownloadTaskState.failed);
-  final paused = download.countWithState(DownloadTaskState.paused);
-  final active = download.chapters.where((chapter) {
-    return const {
-      DownloadTaskState.queued,
-      DownloadTaskState.fetching,
-      DownloadTaskState.validating,
-      DownloadTaskState.storing,
-    }.contains(chapter.taskState);
-  }).length;
-  if (failed > 0) status.add('$failed 章失败');
-  if (paused > 0 || !download.enabled) status.add('已暂停');
-  if (active > 0) status.add('$active 章下载中');
+  if (!download.isComplete) {
+    final failed = download.countWithState(DownloadTaskState.failed);
+    final paused = download.countWithState(DownloadTaskState.paused);
+    final active = download.chapters.where((chapter) {
+      return const {
+        DownloadTaskState.queued,
+        DownloadTaskState.fetching,
+        DownloadTaskState.validating,
+        DownloadTaskState.storing,
+      }.contains(chapter.taskState);
+    }).length;
+    if (failed > 0) status.add('$failed 章失败');
+    if (paused > 0 || !download.enabled) status.add('已暂停');
+    if (active > 0) status.add('$active 章下载中');
+  }
   if (download.translationPendingCount > 0) {
     status.add('${download.translationPendingCount} 章待翻译');
   }

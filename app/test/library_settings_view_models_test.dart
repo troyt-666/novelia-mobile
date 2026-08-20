@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
@@ -241,5 +242,82 @@ void main() {
         );
       },
     );
+
+    testWidgets('storage and privacy rows perform their advertised actions', (
+      tester,
+    ) async {
+      var openedDownloads = 0;
+      var clearedCache = 0;
+      final cacheLimits = <int>[];
+      await pumpScreen(
+        tester,
+        SettingsScreen(
+          themeMode: ThemeMode.system,
+          onThemeModeChanged: (_) {},
+          onClearSearchHistory: () {},
+          onManageOfflineDownloads: () => openedDownloads += 1,
+          onCacheLimitChanged: cacheLimits.add,
+          onClearReadingCache: () async {
+            clearedCache += 1;
+            return 3;
+          },
+          storageSummary: const OfflineStorageSummary(
+            cacheBytes: 2048,
+            offlineDownloadBytes: 4096,
+            cacheChapterCount: 3,
+            offlineDownloadChapterCount: 2,
+            perNovel: [],
+          ),
+          cacheLimitBytes: 256 * 1024 * 1024,
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('settings-offline-storage')));
+      expect(openedDownloads, 1);
+
+      await tester.tap(find.byKey(const ValueKey('settings-cache-storage')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('不会删除离线下载'), findsOneWidget);
+      expect(find.text('当前 2.00 KB · 3 章'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('cache-limit-selector')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('512 MB').last);
+      await tester.pumpAndSettle();
+      expect(cacheLimits, [512 * 1024 * 1024]);
+
+      await tester.tap(
+        find.byKey(const ValueKey('clear-reading-cache-button')),
+      );
+      await tester.pumpAndSettle();
+      expect(clearedCache, 1);
+      expect(find.text('已清除 3 章阅读缓存'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('export-diagnostics-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('diagnostics-preview')), findsOneWidget);
+      expect(find.textContaining('offlineDownloadBytes=4096'), findsOneWidget);
+      String? copiedDiagnostics;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedDiagnostics =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('copy-diagnostics-button')));
+      await tester.pumpAndSettle();
+      expect(copiedDiagnostics, contains('JFZ Reader diagnostics'));
+      expect(copiedDiagnostics, contains('cacheBytes=2048'));
+    });
   });
 }

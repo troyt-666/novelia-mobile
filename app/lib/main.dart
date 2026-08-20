@@ -901,6 +901,20 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     );
   }
 
+  void _setCacheLimit(int bytes) {
+    if (bytes == _cacheLimitBytes) return;
+    _cacheLimitBytes = bytes;
+    _saveSettings();
+    _repository.evictCacheTo(maxBytes: bytes);
+    if (mounted) setState(() {});
+  }
+
+  Future<int> _clearReadingCache() async {
+    final removed = _repository.evictCacheTo(maxBytes: 0);
+    if (mounted) setState(() {});
+    return removed.length;
+  }
+
   void _saveTopLevelRoute(int destination) {
     _currentDestination = destination;
     _repository.saveLastRoute(
@@ -1315,22 +1329,38 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           enabled: intents.any((intent) => intent.enabled),
           chapters: [
             for (final chapterId in chapterIds)
-              LibraryDownloadChapter(
-                chapterId: chapterId,
-                byteCount: copies[chapterId]?.totalBytes ?? 0,
-                translationAvailable:
-                    copies[chapterId]?.translationBytes != null,
-                taskState: _displayTaskState(
-                  copies[chapterId],
-                  tasks[chapterId],
-                ),
-                failure: tasks[chapterId]?.failure,
+              _libraryDownloadChapter(
+                chapterId,
+                copy: copies[chapterId],
+                task: tasks[chapterId],
               ),
           ],
         ),
       );
     }
     return List.unmodifiable(downloads);
+  }
+
+  static LibraryDownloadChapter _libraryDownloadChapter(
+    String chapterId, {
+    required OfflineChapterCopy? copy,
+    required DownloadTask? task,
+  }) {
+    final storedBytes = copy?.totalBytes;
+    final state = _displayTaskState(copy, task);
+    return LibraryDownloadChapter(
+      chapterId: chapterId,
+      byteCount: storedBytes ?? 0,
+      translationAvailable: copy?.translationBytes != null,
+      taskState: state,
+      bytesReceived: state == DownloadTaskState.stored
+          ? storedBytes ?? task?.bytesReceived ?? 0
+          : task?.bytesReceived ?? 0,
+      totalBytes: state == DownloadTaskState.stored
+          ? storedBytes ?? task?.totalBytes
+          : task?.totalBytes,
+      failure: task?.failure,
+    );
   }
 
   static DownloadTaskState _displayTaskState(
@@ -1428,6 +1458,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
             : _createFavoriteFolder,
         storageSummary: _repository.storageSummary(),
         cacheLimitBytes: _cacheLimitBytes,
+        onCacheLimitChanged: _setCacheLimit,
+        onClearReadingCache: _clearReadingCache,
         initialCatalogCriteria: _catalogCriteria,
         onCatalogCriteriaRequested: widget.contentCoordinator == null
             ? null
@@ -1492,6 +1524,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         },
         onDownloadRequested: _downloadNovel,
         onDownloadManagementRequested: _manageDownload,
+        downloadManagementSnapshotLoader: () =>
+            _libraryDownloads(_localNovelsById()),
         readerBuilder: (context, data) {
           final novel = data.novel;
           // The shell has already resolved explicit chapter selection, saved

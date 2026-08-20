@@ -143,6 +143,60 @@ void main() {
     expect(repository.recentSearches(), isEmpty);
   });
 
+  testWidgets('settings manages offline downloads and clears only cache', (
+    tester,
+  ) async {
+    final repository = SqliteOfflineRepository.openInMemory();
+    repository.saveCopy(
+      OfflineChapterCopy(
+        id: 'settings-cache-copy',
+        novelId: fixtureNovel.id,
+        chapterId: 'chapter-1',
+        kind: OfflineCopyKind.cacheCopy,
+        translationSource: TranslationSource.sakura,
+        originalBytes: 120,
+        translationBytes: 80,
+        storedAt: DateTime.utc(2026, 8, 18),
+        revision: 'r1',
+      ),
+    );
+    await pumpApp(tester, repository);
+    await tester.tap(find.byKey(const ValueKey('nav-settings')));
+    await tester.pumpAndSettle();
+
+    final offlineStorage = find.byKey(
+      const ValueKey('settings-offline-storage'),
+    );
+    await tester.scrollUntilVisible(
+      offlineStorage,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(offlineStorage);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('downloads-management-screen')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('downloads-management-empty')),
+      findsOneWidget,
+    );
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('downloads-management-screen'))),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('200 B · 1 章'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('settings-cache-storage')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('clear-reading-cache-button')));
+    await tester.pumpAndSettle();
+
+    expect(repository.listCopies(kind: OfflineCopyKind.cacheCopy), isEmpty);
+    expect(find.text('0 B · 0 章 · 上限 256 MB'), findsOneWidget);
+  });
+
   testWidgets('bookmark and Novel Download actions commit to SQLite', (
     tester,
   ) async {
@@ -206,14 +260,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final groupKey = '${fixtureNovel.id}::${TranslationSource.sakura.name}';
-    await tester.tap(find.byKey(ValueKey('pause-download-$groupKey')));
-    await tester.pumpAndSettle();
-    expect(repository.listIntents().single.enabled, isFalse);
-    expect(find.byKey(ValueKey('resume-download-$groupKey')), findsOneWidget);
-
-    await tester.tap(find.byKey(ValueKey('resume-download-$groupKey')));
-    await tester.pumpAndSettle();
     expect(repository.listIntents().single.enabled, isTrue);
+    expect(find.byKey(ValueKey('pause-download-$groupKey')), findsNothing);
+    expect(find.text('已完成'), findsOneWidget);
 
     await tester.tap(find.byKey(ValueKey('remove-download-$groupKey')));
     await tester.pumpAndSettle();

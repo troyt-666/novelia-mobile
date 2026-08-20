@@ -56,6 +56,7 @@ class NoveliaShell extends StatefulWidget {
     this.onFavoriteFolderCreateRequested,
     this.onDownloadRequested,
     this.onDownloadManagementRequested,
+    this.downloadManagementSnapshotLoader,
     this.onOpenOriginalRequested,
     this.onLoginRequested,
     this.accountSession = const AccountSessionSnapshot.signedOut(),
@@ -77,6 +78,8 @@ class NoveliaShell extends StatefulWidget {
       perNovel: [],
     ),
     this.cacheLimitBytes,
+    this.onCacheLimitChanged,
+    this.onClearReadingCache,
     this.initialCatalogCriteria = const CatalogCriteria(),
     this.onCatalogCriteriaRequested,
     this.onCatalogSearchRequested,
@@ -114,6 +117,7 @@ class NoveliaShell extends StatefulWidget {
   final FavoriteFolderCreateRequested? onFavoriteFolderCreateRequested;
   final NovelDownloadRequested? onDownloadRequested;
   final DownloadManagementHandler? onDownloadManagementRequested;
+  final DownloadManagementSnapshotLoader? downloadManagementSnapshotLoader;
   final NovelOriginalRequested? onOpenOriginalRequested;
   final VoidCallback? onLoginRequested;
   final AccountSessionSnapshot accountSession;
@@ -129,6 +133,8 @@ class NoveliaShell extends StatefulWidget {
   final RemoteNovelPageLoader? readingHistoryLoader;
   final OfflineStorageSummary storageSummary;
   final int? cacheLimitBytes;
+  final ValueChanged<int>? onCacheLimitChanged;
+  final FutureOr<int> Function()? onClearReadingCache;
   final CatalogCriteria initialCatalogCriteria;
   final CatalogCriteriaRequested? onCatalogCriteriaRequested;
 
@@ -690,6 +696,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
         builder: (_) => DownloadManagementScreen(
           downloads: widget.protectedDownloads,
           onAction: handler,
+          snapshotLoader: widget.downloadManagementSnapshotLoader,
           onOpenNovel: _openNovel,
         ),
         settings: const RouteSettings(name: '/library/downloads'),
@@ -796,6 +803,11 @@ class _NoveliaShellState extends State<NoveliaShell> {
         onThemeModeChanged: widget.onThemeModeChanged,
         storageSummary: widget.storageSummary,
         cacheLimitBytes: widget.cacheLimitBytes,
+        onManageOfflineDownloads: widget.onDownloadManagementRequested == null
+            ? null
+            : _openDownloadsManager,
+        onCacheLimitChanged: widget.onCacheLimitChanged,
+        onClearReadingCache: widget.onClearReadingCache,
         onClearSearchHistory: () {
           setState(_recentSearches.clear);
           _notifyRecentSearchesChanged();
