@@ -89,7 +89,10 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
         pageSize: pageSize,
       ).toQueryParameters()..['sort'] = 'update',
     );
-    return codec.decodeNovelPage(_decodeJson(response.body, 'Favorites page'));
+    return codec.decodeNovelPage(
+      _decodeJson(response.body, 'Favorites page'),
+      assumedFavoriteFolderId: folderId,
+    );
   }
 
   @override

@@ -488,6 +488,9 @@ class NoveliaContentCacheAdapter {
   static AlignedBlockKind _kindFor(String original) {
     if (original.isEmpty) return AlignedBlockKind.separator;
     final trimmed = original.trimLeft();
+    if (trimmed.startsWith(AlignedBlock.illustrationPrefix)) {
+      return AlignedBlockKind.illustration;
+    }
     if (trimmed.startsWith('「') ||
         trimmed.startsWith('『') ||
         trimmed.startsWith('“')) {

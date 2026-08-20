@@ -35,6 +35,7 @@ void main() {
           'youdao': 10,
           'gpt': 8,
           'sakura': 7,
+          'favored': 'folder-1',
           'updateAt': 1_787_000_000,
         },
       ],
@@ -45,6 +46,7 @@ void main() {
     expect(page.items.single.key, key);
     expect(page.items.single.baiduChapters, 4);
     expect(page.items.single.youdaoChapters, 10);
+    expect(page.items.single.favoriteFolderId, 'folder-1');
   });
 
   test('decodes sectioned details without inventing chapter IDs', () {
@@ -76,6 +78,7 @@ void main() {
       'youdao': 1,
       'gpt': 0,
       'sakura': 1,
+      'favored': 'folder-1',
     });
 
     expect(novel.toc.first.isSection, isTrue);
@@ -83,6 +86,7 @@ void main() {
     expect(novel.toc.last.chapterId, 'c1');
     expect(novel.toc.last.createdAt, isNotNull);
     expect(novel.baiduChapters, 0);
+    expect(novel.favoriteFolderId, 'folder-1');
   });
 
   test('keeps independently omitted and mismatched translation arrays', () {
@@ -102,6 +106,31 @@ void main() {
     expect(chapter.sakuraParagraphs, hasLength(1));
     expect(chapter.previousChapterId, isNull);
     expect(chapter.nextChapterId, 'c2');
+  });
+
+  test('maps normalized illustration paragraphs to safe image blocks', () {
+    const imageUrl =
+        'https://47209.mitemin.net/userpageimage/viewimagebig/icode/i971569/';
+    final chapter = const NoveliaReaderAdapter().buildSingleChapter(
+      payload: NoveliaChapterPayload(
+        key: key,
+        chapterId: 'c1',
+        japaneseTitle: '挿絵の章',
+        chineseTitle: '插图章节',
+        novelJapaneseTitle: '作品',
+        novelChineseTitle: '作品',
+        previousChapterId: null,
+        nextChapterId: null,
+        originalParagraphs: const ['<图片>$imageUrl'],
+        baiduParagraphs: const [],
+        youdaoParagraphs: const [],
+        gptParagraphs: const [],
+        sakuraParagraphs: const [],
+      ),
+    );
+
+    expect(chapter.blocks.single.kind, AlignedBlockKind.illustration);
+    expect(chapter.blocks.single.illustrationUri, Uri.parse(imageUrl));
   });
 
   test('decodes one bounded comment page with embedded replies', () {

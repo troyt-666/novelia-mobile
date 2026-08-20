@@ -150,6 +150,7 @@ class NoveliaNovelOutline {
     required this.gptChapters,
     required this.sakuraChapters,
     required this.updatedAt,
+    this.favoriteFolderId,
   });
 
   final NoveliaNovelKey key;
@@ -166,6 +167,7 @@ class NoveliaNovelOutline {
   final int gptChapters;
   final int sakuraChapters;
   final DateTime? updatedAt;
+  final String? favoriteFolderId;
 }
 
 class NoveliaAuthor {
@@ -212,6 +214,7 @@ class NoveliaNovelDetails {
     required this.youdaoChapters,
     required this.gptChapters,
     required this.sakuraChapters,
+    this.favoriteFolderId,
   });
 
   final NoveliaNovelKey key;
@@ -233,6 +236,7 @@ class NoveliaNovelDetails {
   final int youdaoChapters;
   final int gptChapters;
   final int sakuraChapters;
+  final String? favoriteFolderId;
 }
 
 class NoveliaChapterPayload {

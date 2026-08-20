@@ -85,6 +85,7 @@ class NoveliaDomainAdapter {
       ),
       declaredChapterCount: outline.totalChapters,
       originalUrl: originalUri(outline.key),
+      isFavorite: outline.favoriteFolderId != null,
     );
   }
 
@@ -142,6 +143,7 @@ class NoveliaDomainAdapter {
       chapterSections: mappedToc.sections,
       comments: comments,
       originalUrl: originalUri(details.key),
+      isFavorite: details.favoriteFolderId != null,
     );
   }
 

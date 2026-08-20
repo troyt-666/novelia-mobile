@@ -7,11 +7,19 @@ import 'novelia_gateway.dart';
 class NoveliaJsonCodec {
   const NoveliaJsonCodec();
 
-  NoveliaPage<NoveliaNovelOutline> decodeNovelPage(Object? json) {
+  NoveliaPage<NoveliaNovelOutline> decodeNovelPage(
+    Object? json, {
+    String? assumedFavoriteFolderId,
+  }) {
     final root = _map(json, 'catalog page');
     return NoveliaPage(
       items: _list(root['items'], 'catalog items')
-          .map((item) => _decodeNovelOutline(_map(item, 'catalog item')))
+          .map(
+            (item) => _decodeNovelOutline(
+              _map(item, 'catalog item'),
+              assumedFavoriteFolderId: assumedFavoriteFolderId,
+            ),
+          )
           .toList(growable: false),
       pageCount: _integer(root['pageNumber'], 'pageNumber'),
     );
@@ -60,6 +68,7 @@ class NoveliaJsonCodec {
       youdaoChapters: _integerOrZero(root['youdao'], 'youdao'),
       gptChapters: _integerOrZero(root['gpt'], 'gpt'),
       sakuraChapters: _integerOrZero(root['sakura'], 'sakura'),
+      favoriteFolderId: _optionalString(root['favored']),
     );
   }
 
@@ -105,7 +114,10 @@ class NoveliaJsonCodec {
     );
   }
 
-  NoveliaNovelOutline _decodeNovelOutline(Map<String, Object?> value) {
+  NoveliaNovelOutline _decodeNovelOutline(
+    Map<String, Object?> value, {
+    String? assumedFavoriteFolderId,
+  }) {
     return NoveliaNovelOutline(
       key: NoveliaNovelKey(
         providerId: _string(value['providerId'], 'providerId'),
@@ -124,6 +136,8 @@ class NoveliaJsonCodec {
       gptChapters: _integerOrZero(value['gpt'], 'gpt'),
       sakuraChapters: _integerOrZero(value['sakura'], 'sakura'),
       updatedAt: _epochSeconds(value['updateAt'], 'updateAt'),
+      favoriteFolderId:
+          _optionalString(value['favored']) ?? assumedFavoriteFolderId,
     );
   }
 

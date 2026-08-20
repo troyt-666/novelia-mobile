@@ -21,7 +21,7 @@ enum TranslationSource {
 
 enum TranslationState { complete, pending, invalid }
 
-enum AlignedBlockKind { heading, paragraph, dialogue, separator }
+enum AlignedBlockKind { heading, paragraph, dialogue, separator, illustration }
 
 @immutable
 class ReaderSettings {
@@ -66,6 +66,8 @@ class ReaderSettings {
 
 @immutable
 class AlignedBlock {
+  static const illustrationPrefix = '<图片>';
+
   const AlignedBlock({
     required this.id,
     required this.ordinal,
@@ -79,6 +81,20 @@ class AlignedBlock {
   final String japanese;
   final Map<TranslationSource, String> translations;
   final AlignedBlockKind kind;
+
+  /// The service normalizes provider-specific illustration markup to
+  /// `<图片>https://…`. Keep the transport marker out of presentation code and
+  /// reject non-Web schemes before handing the URI to an image widget.
+  Uri? get illustrationUri {
+    if (kind != AlignedBlockKind.illustration) return null;
+    final value = japanese.trimLeft();
+    if (!value.startsWith(illustrationPrefix)) return null;
+    final uri = Uri.tryParse(value.substring(illustrationPrefix.length).trim());
+    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+      return null;
+    }
+    return uri;
+  }
 
   String? translationFor(TranslationSource source) {
     final value = translations[source]?.trim();
