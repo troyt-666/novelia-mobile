@@ -83,6 +83,7 @@ class NoveliaShell extends StatefulWidget {
     this.onCatalogLoadMoreRequested,
     this.catalogTotalCount,
     this.catalogHasMore = false,
+    this.catalogLoading = false,
     this.catalogLoadingMore = false,
     this.catalogLoadMoreFailed = false,
     this.rankingsLoader,
@@ -137,6 +138,7 @@ class NoveliaShell extends StatefulWidget {
   final FutureOr<void> Function()? onCatalogLoadMoreRequested;
   final int? catalogTotalCount;
   final bool catalogHasMore;
+  final bool catalogLoading;
   final bool catalogLoadingMore;
   final bool catalogLoadMoreFailed;
   final RankingsLoader? rankingsLoader;
@@ -228,23 +230,27 @@ class _NoveliaShellState extends State<NoveliaShell> {
     unawaited(_requestCatalogCriteria(criteria).catchError((_) {}));
   }
 
+  void _openTag(String tag) {
+    _openRemoteCatalogCriteria(CatalogCriteria(exactTag: tag));
+  }
+
   void _showFixtureAction(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _requestFavorite(CatalogNovel novel) async {
+  Future<bool> _requestFavorite(CatalogNovel novel) async {
     if (widget.onFavoriteToFolderRequested == null &&
         widget.onFavoriteRequested != null) {
       widget.onFavoriteRequested!(novel);
-      return;
+      return true;
     }
     if (!widget.accountSession.isSignedIn) {
       final login = widget.onAccountLogin;
       if (login == null) {
         widget.onLoginRequested?.call();
-        return;
+        return false;
       }
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
@@ -255,26 +261,26 @@ class _NoveliaShellState extends State<NoveliaShell> {
           settings: const RouteSettings(name: '/account/login'),
         ),
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       if (widget.accountSession.isSignedIn) {
         _showFixtureAction('登录成功，请再次点击收藏');
       }
-      return;
+      return false;
     }
     final callback = widget.onFavoriteToFolderRequested;
     if (callback == null) {
       widget.onFavoriteRequested?.call(novel);
-      return;
+      return widget.onFavoriteRequested != null;
     }
     if (widget.remoteFavorites.status == RemoteFavoritesStatus.unavailable) {
       _showFixtureAction('收藏夹暂不可用，请稍后重试');
-      return;
+      return false;
     }
     final folders = widget.remoteFavorites.folders;
     try {
       if (folders.isEmpty) {
         final created = await _createFavoriteFolder();
-        if (created == null || !mounted) return;
+        if (created == null || !mounted) return false;
         await callback(novel, created.id);
         _lastFavoriteFolderId = created.id;
       } else if (folders.length == 1) {
@@ -282,10 +288,10 @@ class _NoveliaShellState extends State<NoveliaShell> {
         _lastFavoriteFolderId = folders.single.id;
       } else {
         final folderId = await _chooseFavoriteFolder(folders);
-        if (folderId == null || !mounted) return;
+        if (folderId == null || !mounted) return false;
         if (folderId == _createFolderChoice) {
           final created = await _createFavoriteFolder();
-          if (created == null || !mounted) return;
+          if (created == null || !mounted) return false;
           await callback(novel, created.id);
           _lastFavoriteFolderId = created.id;
         } else {
@@ -294,8 +300,10 @@ class _NoveliaShellState extends State<NoveliaShell> {
         }
       }
       if (mounted) _showFixtureAction('已加入收藏夹');
+      return true;
     } on Object {
       if (mounted) _showFixtureAction('收藏失败，请检查网络后重试');
+      return false;
     }
   }
 
@@ -415,6 +423,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
           title: folder.title,
           loader: (page) => loader(folder.id, page),
           onOpenNovel: _openNovel,
+          onTagSelected: _openTag,
           onRemoveNovel: widget.onFavoriteFromFolderRemoveRequested == null
               ? null
               : (novel) => widget.onFavoriteFromFolderRemoveRequested!(
@@ -454,6 +463,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
           title: '阅读历史',
           loader: loader,
           onOpenNovel: _openNovel,
+          onTagSelected: _openTag,
         ),
         settings: const RouteSettings(name: '/read-history'),
       ),
@@ -647,16 +657,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
                       sort: CatalogSort.relevance,
                     ),
                   ),
-            onTagSelected: widget.onCatalogCriteriaRequested == null
-                ? (tag) => _openSearchResults(
-                    '标签：$tag',
-                    widget.novels
-                        .where((item) => item.tags.contains(tag))
-                        .toList(),
-                  )
-                : (tag) => _openRemoteCatalogCriteria(
-                    CatalogCriteria(exactTag: tag),
-                  ),
+            onTagSelected: _openTag,
           ),
         ),
         settings: RouteSettings(name: '/novel/${outline.id}'),
@@ -674,6 +675,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
           title: title,
           novels: novels,
           onOpenNovel: _openNovel,
+          onTagSelected: _openTag,
         ),
         settings: const RouteSettings(name: '/catalog/search'),
       ),
@@ -702,6 +704,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
           novels: widget.novels,
           loader: widget.rankingsLoader,
           onOpenNovel: _openNovel,
+          onTagSelected: _openTag,
         ),
         settings: const RouteSettings(name: '/rankings'),
       ),
@@ -744,8 +747,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
         mostClickedNovels: widget.mostClickedNovels,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
-        onTagSelected: (tag) =>
-            _openRemoteCatalogCriteria(CatalogCriteria(exactTag: tag)),
+        onTagSelected: _openTag,
       ),
       DiscoverScreen(
         mode: DiscoverScreenMode.search,
@@ -759,12 +761,14 @@ class _NoveliaShellState extends State<NoveliaShell> {
         onLoadMoreRequested: widget.onCatalogLoadMoreRequested,
         catalogTotalCount: widget.catalogTotalCount,
         catalogHasMore: widget.catalogHasMore,
+        catalogLoading: widget.catalogLoading,
         catalogLoadingMore: widget.catalogLoadingMore,
         catalogLoadMoreFailed: widget.catalogLoadMoreFailed,
         recentSearches: _recentSearches,
         onSearchCommitted: _rememberSearch,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
+        onTagSelected: _openTag,
       ),
       LibraryScreen(
         novels: widget.novels,

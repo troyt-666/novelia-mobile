@@ -32,6 +32,7 @@ class RemoteNovelListScreen extends StatefulWidget {
     required this.title,
     required this.loader,
     required this.onOpenNovel,
+    required this.onTagSelected,
     this.onRemoveNovel,
     super.key,
   });
@@ -39,6 +40,7 @@ class RemoteNovelListScreen extends StatefulWidget {
   final String title;
   final RemoteNovelPageLoader loader;
   final ValueChanged<CatalogNovel> onOpenNovel;
+  final ValueChanged<String> onTagSelected;
   final RemoteNovelRemoveHandler? onRemoveNovel;
 
   @override
@@ -162,6 +164,7 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen> {
           : _RemoteNovelPage(
               page: page,
               onOpenNovel: widget.onOpenNovel,
+              onTagSelected: widget.onTagSelected,
               onRemoveNovel: widget.onRemoveNovel == null ? null : _removeNovel,
               removingNovelIds: _removingNovelIds,
               onPrevious: page.pageNumber > 1
@@ -179,6 +182,7 @@ class _RemoteNovelPage extends StatelessWidget {
   const _RemoteNovelPage({
     required this.page,
     required this.onOpenNovel,
+    required this.onTagSelected,
     required this.onRemoveNovel,
     required this.removingNovelIds,
     required this.onPrevious,
@@ -187,6 +191,7 @@ class _RemoteNovelPage extends StatelessWidget {
 
   final RemoteNovelPageView page;
   final ValueChanged<CatalogNovel> onOpenNovel;
+  final ValueChanged<String> onTagSelected;
   final ValueChanged<CatalogNovel>? onRemoveNovel;
   final Set<String> removingNovelIds;
   final VoidCallback? onPrevious;
@@ -207,6 +212,7 @@ class _RemoteNovelPage extends StatelessWidget {
             CatalogNovelCard(
               novel: page.novels[index],
               onOpen: () => onOpenNovel(page.novels[index]),
+              onTagSelected: onTagSelected,
               footer: onRemoveNovel == null
                   ? null
                   : Align(

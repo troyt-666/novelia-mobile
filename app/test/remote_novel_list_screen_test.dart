@@ -28,6 +28,7 @@ void main() {
             );
           },
           onOpenNovel: (novel) => opened = novel,
+          onTagSelected: (_) {},
         ),
       ),
     );
@@ -63,6 +64,7 @@ void main() {
             );
           },
           onOpenNovel: (_) {},
+          onTagSelected: (_) {},
         ),
       ),
     );
@@ -97,6 +99,7 @@ void main() {
             );
           },
           onOpenNovel: (_) {},
+          onTagSelected: (_) {},
           onRemoveNovel: (novel) async => removed = novel,
         ),
       ),
@@ -135,6 +138,7 @@ void main() {
             );
           },
           onOpenNovel: (_) {},
+          onTagSelected: (_) {},
           onRemoveNovel: (_) => throw StateError('offline'),
         ),
       ),

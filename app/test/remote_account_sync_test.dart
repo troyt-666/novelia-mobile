@@ -144,7 +144,9 @@ void main() {
 
       expect(folders.map((folder) => folder.title), ['默认收藏夹', '以后读']);
       expect(favorites.items.single.key.novelId, 'favorite-novel');
+      expect(favorites.items.single.favoriteFolderId, 'default');
       expect(history.items.single.key.novelId, 'history-novel');
+      expect(history.items.single.favoriteFolderId, isNull);
       expect(history.pageCount, 2);
       expect(created.id, 'created');
       expect(forceRefreshes, 1);

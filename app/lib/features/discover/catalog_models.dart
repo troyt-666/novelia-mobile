@@ -249,6 +249,7 @@ class CatalogNovel {
     this.chapterSections = const [],
     this.comments = const [],
     this.originalUrl,
+    this.isFavorite = false,
   }) : assert(
          declaredChapterCount == null || declaredChapterCount >= 0,
          'declaredChapterCount cannot be negative.',
@@ -278,6 +279,7 @@ class CatalogNovel {
   final List<CatalogChapterSection> chapterSections;
   final List<NovelComment> comments;
   final Uri? originalUrl;
+  final bool isFavorite;
 
   /// Known chapter total, or null when neither service metadata nor a hydrated
   /// catalog establishes it.
@@ -290,6 +292,30 @@ class CatalogNovel {
   int get chapterCount => knownChapterCount ?? 0;
 
   bool get hasChapterCatalog => readerNovel != null;
+
+  CatalogNovel copyWith({bool? isFavorite}) {
+    return CatalogNovel(
+      id: id,
+      chineseTitle: chineseTitle,
+      japaneseTitle: japaneseTitle,
+      author: author,
+      source: source,
+      publicationState: publicationState,
+      wordCount: wordCount,
+      updatedAt: updatedAt,
+      tags: tags,
+      synopsis: synopsis,
+      points: points,
+      views: views,
+      translationCoverage: translationCoverage,
+      readerNovel: readerNovel,
+      declaredChapterCount: declaredChapterCount,
+      chapterSections: chapterSections,
+      comments: comments,
+      originalUrl: originalUrl,
+      isFavorite: isFavorite ?? this.isFavorite,
+    );
+  }
 
   TranslationCoverage? coverageFor(String sourceName) {
     for (final coverage in translationCoverage) {

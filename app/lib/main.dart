@@ -140,6 +140,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _catalogPageIndex = -1;
   var _catalogTotalPages = 0;
   var _catalogCriteria = const CatalogCriteria();
+  var _catalogLoading = false;
   var _catalogLoadingMore = false;
   var _catalogLoadMoreFailed = false;
   var _mostClickedNovels = const <CatalogNovel>[];
@@ -486,6 +487,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     } else if (mounted && !append) {
       setState(() {
         _catalogCriteria = requestedCriteria;
+        _catalogLoading = true;
         _catalogLoadingMore = false;
         _catalogLoadMoreFailed = false;
         if (criteriaChanged) {
@@ -523,6 +525,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       setState(() {
         _catalogAvailability = result.availability;
         _catalogCriteria = requestedCriteria;
+        _catalogLoading = false;
         _catalogLoadingMore = false;
         _catalogLoadMoreFailed = append && slice == null;
         if (slice != null) {
@@ -555,6 +558,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     } on Object {
       if (!mounted || generation != _catalogLoadGeneration) return;
       setState(() {
+        _catalogLoading = false;
         _catalogLoadingMore = false;
         _catalogLoadMoreFailed = append;
         if (_catalogNovels.isEmpty) {
@@ -1434,6 +1438,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         catalogHasMore:
             _catalogPageIndex >= 0 &&
             _catalogPageIndex + 1 < _catalogTotalPages,
+        catalogLoading: _catalogLoading,
         catalogLoadingMore: _catalogLoadingMore,
         catalogLoadMoreFailed: _catalogLoadMoreFailed,
         mostClickedNovels: _mostClickedNovels,

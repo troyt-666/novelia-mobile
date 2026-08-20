@@ -151,6 +151,7 @@ void main() {
     );
     final favoriteRequests = <(String, int)>[];
     final historyRequests = <int>[];
+    final favoriteNovel = fixtureCatalogNovels.first.copyWith(isFavorite: true);
     await pumpShell(
       tester,
       accountSession: AccountSessionSnapshot.signedIn(profile),
@@ -160,11 +161,12 @@ void main() {
       favoriteFolderLoader: (folderId, page) async {
         favoriteRequests.add((folderId, page));
         return RemoteNovelPageView(
-          novels: [fixtureCatalogNovels.first],
+          novels: [favoriteNovel],
           pageNumber: page,
           totalPages: 1,
         );
       },
+      onFavoriteToFolderRequested: (_, _) async {},
       readingHistoryLoader: (page) async {
         historyRequests.add(page);
         return RemoteNovelPageView(
@@ -179,10 +181,26 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('favorite-folder-default')));
     await tester.pumpAndSettle();
-    expect(find.text(fixtureCatalogNovels.first.chineseTitle), findsOneWidget);
+    expect(find.text(favoriteNovel.chineseTitle), findsOneWidget);
     expect(favoriteRequests, [('default', 1)]);
 
+    await tester.tap(find.byKey(ValueKey('open-details-${favoriteNovel.id}')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('favorite-icon-solid')), findsOneWidget);
+    expect(find.byKey(const ValueKey('favorite-icon-hollow')), findsNothing);
     await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    final favoriteTag = favoriteNovel.tags.first;
+    final favoriteTagFinder = find.byKey(
+      ValueKey('catalog-tag-${favoriteNovel.id}-$favoriteTag'),
+    );
+    await tester.scrollUntilVisible(favoriteTagFinder, 300);
+    await tester.tap(favoriteTagFinder);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('discover-search-field')), findsOneWidget);
+    expect(find.text('标签“$favoriteTag” · 1 部'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('阅读历史'));
     await tester.pumpAndSettle();
@@ -377,6 +395,34 @@ void main() {
     expect(find.text('已加载 1 部小说'), findsOneWidget);
   });
 
+  testWidgets('initial remote search shows loading instead of empty results', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DiscoverScreen(
+            mode: DiscoverScreenMode.search,
+            novels: const [],
+            catalogAvailability: CatalogAvailability.available,
+            catalogLoading: true,
+            onOpenNovel: (_) {},
+            onOpenRankings: () {},
+            onCriteriaRequested: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('catalog-search-loading')),
+      findsOneWidget,
+    );
+    expect(find.text('正在搜索…'), findsOneWidget);
+    expect(find.text('没有匹配的小说'), findsNothing);
+  });
+
   testWidgets('remote catalog controls delegate complete typed criteria', (
     tester,
   ) async {
@@ -550,8 +596,11 @@ void main() {
 
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('favorite-icon-hollow')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('favorite-novel-button')));
+    await tester.pumpAndSettle();
     expect(favorite, same(novel));
+    expect(find.byKey(const ValueKey('favorite-icon-solid')), findsOneWidget);
 
     final originalButton = find.byKey(
       const ValueKey('open-original-site-button'),

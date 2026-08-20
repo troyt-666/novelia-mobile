@@ -22,6 +22,7 @@ class DiscoverScreen extends StatefulWidget {
     this.onLoadMoreRequested,
     this.catalogTotalCount,
     this.catalogHasMore = false,
+    this.catalogLoading = false,
     this.catalogLoadingMore = false,
     this.catalogLoadMoreFailed = false,
     this.mostClickedNovels = const [],
@@ -48,6 +49,7 @@ class DiscoverScreen extends StatefulWidget {
   final FutureOr<void> Function()? onLoadMoreRequested;
   final int? catalogTotalCount;
   final bool catalogHasMore;
+  final bool catalogLoading;
   final bool catalogLoadingMore;
   final bool catalogLoadMoreFailed;
   final List<CatalogNovel> mostClickedNovels;
@@ -306,6 +308,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   String _resultCountLabel(int loadedCount) {
+    if (widget.catalogLoading) return '正在搜索…';
     final total = widget.catalogTotalCount;
     if (total != null) {
       return _exactTag == null
@@ -416,7 +419,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   onOpenDetails: widget.onContinueReading == null
                       ? null
                       : () => widget.onOpenNovel(continued),
-                  onTagSelected: widget.onTagSelected,
+                  onTagSelected: widget.onTagSelected ?? _selectTag,
                 ),
               ),
             ),
@@ -441,6 +444,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                         compact: true,
                         novel: novel,
                         onOpen: () => widget.onOpenNovel(novel),
+                        onTagSelected: widget.onTagSelected ?? _selectTag,
                       ),
                     );
                   },
@@ -462,6 +466,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                     novel: novel,
                     compact: true,
                     onOpen: () => widget.onOpenNovel(novel),
+                    onTagSelected: widget.onTagSelected ?? _selectTag,
                   );
                 },
               ),
@@ -509,7 +514,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                     return CatalogNovelCard(
                       novel: novel,
                       onOpen: () => widget.onOpenNovel(novel),
-                      onTagSelected: widget.onTagSelected,
+                      onTagSelected: widget.onTagSelected ?? _selectTag,
                     );
                   },
                 ),
@@ -631,7 +636,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 ),
               ),
             ),
-          if (showSearch && novels.isEmpty)
+          if (showSearch && widget.catalogLoading)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: _CatalogLoading(),
+            )
+          else if (showSearch && novels.isEmpty)
             const SliverFillRemaining(
               hasScrollBody: false,
               child: _EmptyCatalog(),
@@ -660,6 +670,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ),
             ),
           if (showSearch &&
+              !widget.catalogLoading &&
               widget.onLoadMoreRequested != null &&
               (widget.catalogHasMore ||
                   widget.catalogLoadingMore ||
@@ -921,6 +932,29 @@ class _EmptyCatalog extends StatelessWidget {
             Text('没有匹配的小说', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 6),
             const Text('请尝试其他关键词或减少筛选条件。'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogLoading extends StatelessWidget {
+  const _CatalogLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Semantics(
+        liveRegion: true,
+        label: '正在搜索小说',
+        child: const Column(
+          key: ValueKey('catalog-search-loading'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 14),
+            Text('正在搜索小说…'),
           ],
         ),
       ),

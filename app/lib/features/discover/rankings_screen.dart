@@ -42,12 +42,14 @@ class RankingsScreen extends StatefulWidget {
   const RankingsScreen({
     required this.novels,
     required this.onOpenNovel,
+    required this.onTagSelected,
     this.loader,
     super.key,
   });
 
   final List<CatalogNovel> novels;
   final ValueChanged<CatalogNovel> onOpenNovel;
+  final ValueChanged<String> onTagSelected;
   final RankingsLoader? loader;
 
   @override
@@ -203,6 +205,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                     child: CatalogNovelCard(
                       novel: ranked[index],
                       onOpen: () => widget.onOpenNovel(ranked[index]),
+                      onTagSelected: widget.onTagSelected,
                     ),
                   ),
                 ],
@@ -264,6 +267,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                       rank: page.firstRank + index,
                       novel: page.novels[index],
                       onOpen: () => widget.onOpenNovel(page.novels[index]),
+                      onTagSelected: widget.onTagSelected,
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -310,11 +314,13 @@ class _RankedNovelRow extends StatelessWidget {
     required this.rank,
     required this.novel,
     required this.onOpen,
+    required this.onTagSelected,
   });
 
   final int rank;
   final CatalogNovel novel;
   final VoidCallback onOpen;
+  final ValueChanged<String> onTagSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -337,7 +343,11 @@ class _RankedNovelRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: CatalogNovelCard(novel: novel, onOpen: onOpen),
+          child: CatalogNovelCard(
+            novel: novel,
+            onOpen: onOpen,
+            onTagSelected: onTagSelected,
+          ),
         ),
       ],
     );

@@ -8,12 +8,14 @@ class CatalogSearchResultsScreen extends StatelessWidget {
     required this.title,
     required this.novels,
     required this.onOpenNovel,
+    required this.onTagSelected,
     super.key,
   });
 
   final String title;
   final List<CatalogNovel> novels;
   final ValueChanged<CatalogNovel> onOpenNovel;
+  final ValueChanged<String> onTagSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +33,7 @@ class CatalogSearchResultsScreen extends StatelessWidget {
                 return CatalogNovelCard(
                   novel: novel,
                   onOpen: () => onOpenNovel(novel),
+                  onTagSelected: onTagSelected,
                 );
               },
             ),

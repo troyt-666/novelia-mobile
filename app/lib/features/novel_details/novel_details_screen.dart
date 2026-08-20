@@ -22,7 +22,7 @@ class NovelDetailsScreen extends StatefulWidget {
 
   final CatalogNovel novel;
   final ValueChanged<NovelChapter?> onOpenReader;
-  final VoidCallback? onFavorite;
+  final FutureOr<bool> Function()? onFavorite;
   final FutureOr<void> Function()? onDownload;
   final FutureOr<void> Function()? onOpenOriginal;
   final ValueChanged<String>? onAuthorSelected;
@@ -45,8 +45,30 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
   int _requestedCommentPage = 1;
   bool _downloadStarting = false;
   bool _openingOriginal = false;
+  late bool _isFavorite = widget.novel.isFavorite;
+  bool _favoriteStarting = false;
 
   bool get _usesRemoteComments => widget.commentPageLoader != null;
+
+  @override
+  void didUpdateWidget(covariant NovelDetailsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.novel.id != widget.novel.id || widget.novel.isFavorite) {
+      _isFavorite = widget.novel.isFavorite;
+    }
+  }
+
+  Future<void> _startFavorite() async {
+    final callback = widget.onFavorite;
+    if (callback == null || _isFavorite || _favoriteStarting) return;
+    setState(() => _favoriteStarting = true);
+    try {
+      final added = await callback();
+      if (mounted && added) setState(() => _isFavorite = true);
+    } finally {
+      if (mounted) setState(() => _favoriteStarting = false);
+    }
+  }
 
   @override
   void initState() {
@@ -267,9 +289,16 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
           if (widget.onFavorite != null)
             IconButton(
               key: const ValueKey('favorite-novel-button'),
-              tooltip: '加入收藏',
-              onPressed: widget.onFavorite,
-              icon: const Icon(Icons.favorite_border),
+              tooltip: _isFavorite ? '已收藏' : '加入收藏',
+              onPressed: _isFavorite || _favoriteStarting
+                  ? null
+                  : () => unawaited(_startFavorite()),
+              icon: Icon(
+                _isFavorite ? Icons.favorite : Icons.favorite_border,
+                key: ValueKey(
+                  _isFavorite ? 'favorite-icon-solid' : 'favorite-icon-hollow',
+                ),
+              ),
             ),
           IconButton(
             key: const ValueKey('download-novel-button'),

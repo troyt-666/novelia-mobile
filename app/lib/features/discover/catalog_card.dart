@@ -6,7 +6,7 @@ class CatalogNovelCard extends StatelessWidget {
   const CatalogNovelCard({
     required this.novel,
     required this.onOpen,
-    this.onTagSelected,
+    required this.onTagSelected,
     this.compact = false,
     this.progress,
     this.openKey,
@@ -18,7 +18,7 @@ class CatalogNovelCard extends StatelessWidget {
 
   final CatalogNovel novel;
   final VoidCallback onOpen;
-  final ValueChanged<String>? onTagSelected;
+  final ValueChanged<String> onTagSelected;
   final bool compact;
   final double? progress;
   final Key? openKey;
@@ -118,9 +118,7 @@ class CatalogNovelCard extends StatelessWidget {
                                 horizontal: 4,
                               ),
                               label: Text(tag),
-                              onPressed: onTagSelected == null
-                                  ? null
-                                  : () => onTagSelected!(tag),
+                              onPressed: () => onTagSelected(tag),
                             ),
                         ],
                       ),
