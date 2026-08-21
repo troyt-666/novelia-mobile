@@ -52,7 +52,7 @@ jobs:
         run: flutter --no-version-check test
 
   android:
-    name: Build Android APK
+    name: Build signed Android APK
     needs: checks
     runs-on: ubuntu-24.04
     steps:
@@ -70,6 +70,9 @@ jobs:
           cache: gradle
           cache-dependency-path: app/android/**/*.gradle*
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -80,18 +83,51 @@ jobs:
         working-directory: app
         run: flutter --no-version-check pub get
 
+      - name: Write Android release keystore
+        env:
+          JFZREADER_ANDROID_STORE_BASE64: ${{ secrets.JFZREADER_ANDROID_STORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${JFZREADER_ANDROID_STORE_BASE64}" ]]; then
+            echo "Missing GitHub secret JFZREADER_ANDROID_STORE_BASE64." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/jfzreader-release.jks"
+          printf '%s' "$JFZREADER_ANDROID_STORE_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+          echo "JFZREADER_ANDROID_STORE_FILE=$keystore" >> "$GITHUB_ENV"
+
       - name: Build release APK
         working-directory: app
-        run: flutter --no-version-check build apk --release
+        env:
+          JFZREADER_ANDROID_STORE_PASSWORD: ${{ secrets.JFZREADER_ANDROID_STORE_PASSWORD }}
+          JFZREADER_ANDROID_KEY_ALIAS: ${{ secrets.JFZREADER_ANDROID_KEY_ALIAS }}
+          JFZREADER_ANDROID_KEY_PASSWORD: ${{ secrets.JFZREADER_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            JFZREADER_ANDROID_STORE_FILE \
+            JFZREADER_ANDROID_STORE_PASSWORD \
+            JFZREADER_ANDROID_KEY_ALIAS \
+            JFZREADER_ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing Android signing input $name." >&2
+              exit 1
+            fi
+          done
+          flutter --no-version-check build apk --release
 
-      - name: Prepare APK asset
+      - name: Verify and prepare signed APK
         env:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           tag="${RELEASE_TAG//\//-}"
           apk="app/build/app/outputs/flutter-apk/app-release.apk"
-          test -s "$apk"
+          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          apksigner="$(ls -1 "$android_home"/build-tools/*/apksigner | sort | tail -n 1)"
+          test -x "$apksigner"
+          APKSIGNER="$apksigner" app/scripts/verify_android_release.sh "$apk"
           mkdir -p dist
           cp "$apk" "dist/JFZ-Reader-${tag}-android.apk"
 

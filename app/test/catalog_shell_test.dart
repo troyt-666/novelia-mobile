@@ -5,8 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/account/account_models.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/features/account/remote_novel_list_screen.dart';
+import 'package:jfzreader/features/account/account_screen.dart';
+import 'package:jfzreader/features/discover/catalog_card.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/features/discover/discover_screen.dart';
+import 'package:jfzreader/features/discover/rankings_screen.dart';
 import 'package:jfzreader/features/novel_details/novel_details_screen.dart';
 import 'package:jfzreader/features/shell/novelia_shell.dart';
 import 'package:jfzreader/features/shell/shell_view_models.dart';
@@ -30,6 +33,7 @@ void main() {
     RemoteFavoritesViewModel remoteFavorites =
         const RemoteFavoritesViewModel.unavailable(),
     FavoriteToFolderRequested? onFavoriteToFolderRequested,
+    AccountLogin? onAccountLogin,
     FavoriteFolderPageLoader? favoriteFolderLoader,
     RemoteNovelPageLoader? readingHistoryLoader,
     ValueChanged<CatalogNovel>? onOpenOriginalRequested,
@@ -54,6 +58,7 @@ void main() {
           accountSession: accountSession,
           remoteFavorites: remoteFavorites,
           onFavoriteToFolderRequested: onFavoriteToFolderRequested,
+          onAccountLogin: onAccountLogin,
           favoriteFolderLoader: favoriteFolderLoader,
           readingHistoryLoader: readingHistoryLoader,
           onOpenOriginalRequested: onOpenOriginalRequested,
@@ -315,6 +320,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('discover-filters-button')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filter-translation-有道')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('filter-translation-Sakura')),
       findsOneWidget,
@@ -1070,6 +1076,146 @@ void main() {
     );
     expect(requestedPages, [1, 2]);
   });
+
+  testWidgets('unavailable stored account does not open a replacement login', (
+    tester,
+  ) async {
+    final novel = fixtureCatalogNovels.first;
+    await pumpShell(
+      tester,
+      accountSession: AccountSessionSnapshot.unavailable(
+        ReaderAccountProfile(
+          username: 'alice',
+          role: 'member',
+          issuedAt: DateTime.utc(2026, 8, 1),
+          createdAt: DateTime.utc(2026, 8, 1),
+          expiresAt: DateTime.utc(2026, 9, 1),
+        ),
+        message: 'offline',
+      ),
+      onAccountLogin: ({required username, required password}) async {},
+      onFavoriteToFolderRequested: (_, _) async {},
+    );
+    await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('favorite-novel-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AccountScreen), findsNothing);
+    expect(find.textContaining('请到设置中重试或退出后重新登录'), findsOneWidget);
+  });
+
+  testWidgets('rankings keep filters and apply period in fixture mode', (
+    tester,
+  ) async {
+    await pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('open-rankings-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rankings-screen')), findsOneWidget);
+    Finder rankingCards() => find.descendant(
+      of: find.byKey(const ValueKey('rankings-screen')),
+      matching: find.byType(CatalogNovelCard),
+    );
+    final overallCount = rankingCards().evaluate().length;
+    expect(overallCount, greaterThan(1));
+
+    await tester.tap(find.byKey(const ValueKey('ranking-period-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('日榜').last);
+    await tester.pumpAndSettle();
+    expect(rankingCards().evaluate().length, lessThan(overallCount));
+
+    await tester.tap(find.byKey(const ValueKey('rankings-close-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('open-rankings-button')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('open-rankings-button')));
+    await tester.pumpAndSettle();
+    expect(rankingCards().evaluate().length, lessThan(overallCount));
+  });
+
+  testWidgets('remote rankings append pages instead of replacing them', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final queries = <RankingsQuery>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RankingsScreen(
+          novels: const [],
+          onOpenNovel: (_) {},
+          onTagSelected: (_) {},
+          loader: (query) async {
+            queries.add(query);
+            return RankingPageView(
+              novels: [fixtureCatalogNovels[query.pageNumber - 1]],
+              pageNumber: query.pageNumber,
+              totalPages: 2,
+              description: 'test rankings',
+              firstRank: query.pageNumber,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(queries.map((query) => query.pageNumber), [1, 2]);
+    expect(find.text(fixtureCatalogNovels[0].chineseTitle), findsOneWidget);
+    expect(find.text(fixtureCatalogNovels[1].chineseTitle), findsOneWidget);
+    expect(find.byKey(const ValueKey('rankings-previous-page')), findsNothing);
+  });
+
+  testWidgets(
+    'remote rankings expose supported sources and clear Kakuyomu state',
+    (tester) async {
+      final queries = <RankingsQuery>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RankingsScreen(
+            novels: [fixtureCatalogNovels[2]],
+            onOpenNovel: (_) {},
+            onTagSelected: (_) {},
+            loader: (query) async {
+              queries.add(query);
+              return RankingPageView(
+                novels: [fixtureCatalogNovels.first],
+                pageNumber: 1,
+                totalPages: 1,
+                description: 'test rankings',
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(queries.single.source, 'Syosetu');
+      await tester.tap(find.byKey(const ValueKey('ranking-source-filter')));
+      await tester.pumpAndSettle();
+      expect(find.text('Kakuyomu'), findsWidgets);
+      expect(find.text('Novelup'), findsNothing);
+      expect(find.text('全部来源'), findsNothing);
+      await tester.tap(find.text('Syosetu').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('ranking-state-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(NovelPublicationState.completed.label).last);
+      await tester.pumpAndSettle();
+      expect(queries.last.publicationState, NovelPublicationState.completed);
+
+      await tester.tap(find.byKey(const ValueKey('ranking-source-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kakuyomu').last);
+      await tester.pumpAndSettle();
+
+      expect(queries.last.source, 'Kakuyomu');
+      expect(queries.last.publicationState, isNull);
+      expect(find.byKey(const ValueKey('ranking-state-filter')), findsNothing);
+    },
+  );
 }
 
 CatalogNovel _outlineFrom(CatalogNovel hydrated) {

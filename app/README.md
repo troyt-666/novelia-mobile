@@ -53,8 +53,8 @@ flutter --no-version-check build apk --release
 flutter --no-version-check build ios --simulator --debug
 ```
 
-Android release builds no longer fall back to Flutter's debug certificate.
-Without private signing inputs the release APK is intentionally unsigned and
-must not be distributed. See
-[`docs/private-release-guide.md`](../docs/private-release-guide.md) for signing
-inputs, verification, and the ad hoc iOS export flow.
+GitHub Releases attach a signed Android APK, an unsigned iOS IPA for
+Sideloadly/AltStore, and an un-notarized macOS DMG. Local Android release
+builds without signing inputs stay unsigned. See
+[`docs/release-guide.md`](../docs/release-guide.md) for signing inputs,
+verification, and the optional ad hoc iOS export flow.

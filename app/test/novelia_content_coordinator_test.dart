@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
@@ -770,6 +772,113 @@ void main() {
         expect(thirdRefresh.refreshFailureCount, 1);
       },
     );
+
+    test(
+      'pause during fetch stops cooperatively and later resume continues',
+      () async {
+        final store = _MemoryStore();
+        store.saveIntent(
+          NovelDownloadIntent(
+            id: 'intent',
+            novelId: _key.stableId,
+            translationSource: TranslationSource.sakura,
+            createdAt: now,
+          ),
+        );
+        final blocked = Completer<NoveliaChapterPayload>();
+        final gateway = _FakeGateway(
+          catalogPage: const NoveliaPage(items: [], pageCount: 0),
+          details: _details(chapterIds: const ['c1', 'c2']),
+          chapters: {'c1': _payload('c1'), 'c2': _payload('c2')},
+          chapterBlock: blocked,
+        );
+        final coordinator = AsyncNoveliaDownloadCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+          offlineRepository: store,
+          clock: () => now,
+        );
+
+        final inFlight = coordinator.synchronizeIntent('intent');
+        await Future<void>.delayed(Duration.zero);
+        expect(gateway.chapterCalls, ['c1']);
+        store.pauseIntent('intent', now.add(const Duration(seconds: 1)));
+        blocked.complete(gateway.chapters['c1']!);
+        final pausedRun = await inFlight;
+
+        expect(
+          pausedRun.tasks.every(
+            (task) => task.state != DownloadTaskState.fetching,
+          ),
+          isTrue,
+        );
+        expect(
+          pausedRun.tasks.any((task) => task.state == DownloadTaskState.stored),
+          isFalse,
+        );
+
+        gateway.chapterBlock = null;
+        store.resumeIntent('intent', now.add(const Duration(seconds: 2)));
+        final resumed = await coordinator.synchronizeIntent('intent');
+        expect(
+          resumed.tasks.every((task) => task.state == DownloadTaskState.stored),
+          isTrue,
+        );
+      },
+    );
+
+    test('pause stops pending-translation refreshes cooperatively', () async {
+      final store = _MemoryStore();
+      store.saveIntent(
+        NovelDownloadIntent(
+          id: 'intent',
+          novelId: _key.stableId,
+          translationSource: TranslationSource.sakura,
+          createdAt: now,
+        ),
+      );
+      final gateway = _FakeGateway(
+        catalogPage: const NoveliaPage(items: [], pageCount: 0),
+        details: _details(chapterIds: const ['c1', 'c2']),
+        chapters: {
+          'c1': _payload('c1', sakura: const []),
+          'c2': _payload('c2', sakura: const []),
+        },
+      );
+      final coordinator = AsyncNoveliaDownloadCoordinator(
+        gateway: gateway,
+        contentRepository: store,
+        offlineRepository: store,
+        clock: () => now,
+      );
+      await coordinator.synchronizeIntent('intent');
+      expect(
+        store
+            .listCopies(kind: OfflineCopyKind.offlineDownload)
+            .every((copy) => copy.translationBytes == null),
+        isTrue,
+      );
+
+      gateway.chapterCalls.clear();
+      final blocked = Completer<NoveliaChapterPayload>();
+      gateway.chapterBlock = blocked;
+      final inFlight = coordinator.synchronizeIntent('intent');
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.chapterCalls, ['c1']);
+
+      store.pauseIntent('intent', now.add(const Duration(seconds: 1)));
+      blocked.complete(_payload('c1'));
+      final pausedRun = await inFlight;
+
+      expect(gateway.chapterCalls, ['c1']);
+      expect(pausedRun.refreshedCopyCount, 0);
+      expect(
+        store
+            .listCopies(kind: OfflineCopyKind.offlineDownload)
+            .every((copy) => copy.translationBytes == null),
+        isTrue,
+      );
+    });
   });
 }
 
@@ -886,6 +995,7 @@ class _FakeGateway implements NoveliaGateway {
     this.catalogFailure,
     this.detailFailure,
     this.chapterFailure,
+    this.chapterBlock,
   });
 
   NoveliaPage<NoveliaNovelOutline> catalogPage;
@@ -895,10 +1005,12 @@ class _FakeGateway implements NoveliaGateway {
   NoveliaGatewayException? catalogFailure;
   NoveliaGatewayException? detailFailure;
   NoveliaGatewayException? chapterFailure;
+  Completer<NoveliaChapterPayload>? chapterBlock;
 
   int catalogCalls = 0;
   int detailCalls = 0;
   final List<String> chapterCalls = [];
+  final List<(int, int?)> progressReports = [];
   NoveliaNovelKey? lastCommentKey;
   int? lastCommentPage;
 
@@ -929,15 +1041,25 @@ class _FakeGateway implements NoveliaGateway {
   @override
   Future<NoveliaChapterPayload> getChapter(
     NoveliaNovelKey key,
-    String chapterId,
-  ) async {
+    String chapterId, {
+    void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,
+  }) async {
     chapterCalls.add(chapterId);
     if (chapterFailure case final failure?) throw failure;
-    return chapters[chapterId] ??
+    if (chapterBlock case final blocked?) {
+      onReceiveProgress?.call(40, 80);
+      progressReports.add((40, 80));
+      return blocked.future;
+    }
+    final payload =
+        chapters[chapterId] ??
         (throw const NoveliaGatewayException(
           NoveliaGatewayFailureKind.notFound,
           'missing fixture chapter',
         ));
+    onReceiveProgress?.call(20, 20);
+    progressReports.add((20, 20));
+    return payload;
   }
 
   @override

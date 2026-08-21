@@ -23,6 +23,12 @@
 # Local signing and environment files
 **/*.keystore
 **/*.jks
+**/*.p12
+**/*.cer
+**/*.mobileprovision
+**/*.p8
+**/ExportOptions*.plist
+!**/ExportOptions*.plist.example
 **/.env
 **/.env.*
 !.env.example

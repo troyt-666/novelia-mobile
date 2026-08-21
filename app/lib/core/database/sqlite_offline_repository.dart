@@ -399,6 +399,23 @@ final class SqliteOfflineRepository
     return rows.isEmpty ? null : _copyFromRow(rows.single);
   }
 
+  bool _protectedCopyReferencesPayload(String payloadId) {
+    final rows = _database.select(
+      'SELECT 1 FROM offline_chapter_copies '
+      'WHERE copy_kind = ? AND payload_id = ? LIMIT 1;',
+      [OfflineCopyKind.offlineDownload.name, payloadId],
+    );
+    return rows.isNotEmpty;
+  }
+
+  void _deleteCacheCopiesForPayload(String payloadId) {
+    _database.execute(
+      'DELETE FROM offline_chapter_copies '
+      'WHERE copy_kind = ? AND payload_id = ?;',
+      [OfflineCopyKind.cacheCopy.name, payloadId],
+    );
+  }
+
   @override
   List<OfflineChapterCopy> listCopies({
     String? novelId,
@@ -716,6 +733,11 @@ final class SqliteOfflineRepository
               existing.chapterId != copy.chapterId ||
               existing.translationSource != copy.translationSource)) {
         throw StateError('A Cache Copy ID cannot change content identity.');
+      }
+      if (_protectedCopyReferencesPayload(payload.id)) {
+        _upsertChapterPayload(payload);
+        _deleteCacheCopiesForPayload(payload.id);
+        return;
       }
       final replacedPayloadIds = <String>{?existing?.payloadId};
       final duplicates = _database.select(

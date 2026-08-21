@@ -21,6 +21,14 @@ Flutter/Flutter.podspec
 Flutter/Generated.xcconfig
 Flutter/Local.xcconfig
 Flutter/ephemeral/
+
+# Signing materials stay outside Git. Keep committed *.example templates.
+*.p12
+*.cer
+*.mobileprovision
+*.p8
+ExportOptions*.plist
+!ExportOptions*.plist.example
 Flutter/app.flx
 Flutter/app.zip
 Flutter/flutter_assets/

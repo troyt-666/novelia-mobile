@@ -7,6 +7,7 @@ import '../../core/account/account_sync_models.dart';
 import 'http_novelia_gateway.dart';
 import 'novelia_account_gateway.dart';
 import 'novelia_gateway.dart';
+import 'novelia_request_policy.dart';
 
 class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
   HttpNoveliaAccountGateway({
@@ -227,10 +228,16 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
       final uri = query == null
           ? resolved
           : resolved.replace(queryParameters: query);
+      if (!isAllowedNoveliaRequestUri(uri)) {
+        throw const NoveliaGatewayException(
+          NoveliaGatewayFailureKind.invalidResponse,
+          'The service host is not allowed.',
+        );
+      }
       final request = await _client
           .openUrl(method, uri)
           .timeout(requestTimeout);
-      request.followRedirects = false;
+      pinNoveliaHttpRequest(request);
       request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       if (json != null) {

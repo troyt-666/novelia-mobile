@@ -73,20 +73,22 @@ class NoveliaContentCacheAdapter {
       );
     }
     final chineseTitle = payload.chineseTitle ?? metadata.chineseTitle;
-    final revision = noveliaContentChecksum({
-      'novelId': payload.key.stableId,
-      'chapterId': payload.chapterId,
-      'index': metadata.index,
-      'chineseTitle': chineseTitle,
-      'japaneseTitle': payload.japaneseTitle,
-      'previousChapterId': payload.previousChapterId,
-      'nextChapterId': payload.nextChapterId,
-      'publishedAtUs': metadata.publishedAt?.microsecondsSinceEpoch,
-      'japaneseBlocks': payload.originalParagraphs,
-      'youdaoBlocks': payload.youdaoParagraphs,
-      'gptBlocks': payload.gptParagraphs,
-      'sakuraBlocks': payload.sakuraParagraphs,
-    });
+    final revision = noveliaContentChecksum(
+      _chapterChecksumValue(
+        novelId: payload.key.stableId,
+        chapterId: payload.chapterId,
+        index: metadata.index,
+        chineseTitle: chineseTitle,
+        japaneseTitle: payload.japaneseTitle,
+        previousChapterId: payload.previousChapterId,
+        nextChapterId: payload.nextChapterId,
+        publishedAt: metadata.publishedAt,
+        japaneseBlocks: payload.originalParagraphs,
+        youdaoBlocks: payload.youdaoParagraphs,
+        gptBlocks: payload.gptParagraphs,
+        sakuraBlocks: payload.sakuraParagraphs,
+      ),
+    );
     return CachedChapterPayload(
       id: '${payload.key.stableId}::${payload.chapterId}::$revision',
       novelId: payload.key.stableId,
@@ -337,6 +339,7 @@ class NoveliaContentCacheAdapter {
   }
 
   NovelChapter restoreChapter(CachedChapterPayload payload) {
+    _verifyChapterChecksum(payload);
     final states = <TranslationSource, TranslationState>{
       for (final source in TranslationSource.values)
         source: _restoreTranslationState(payload.translationFor(source)),
@@ -394,6 +397,66 @@ class NoveliaContentCacheAdapter {
       ],
       fetchedAt: fetchedAt,
     );
+  }
+
+  static void _verifyChapterChecksum(CachedChapterPayload payload) {
+    if (!isNoveliaSha256Revision(payload.revision)) return;
+    final actual = noveliaContentChecksum(
+      _chapterChecksumValue(
+        novelId: payload.novelId,
+        chapterId: payload.chapterId,
+        index: payload.index,
+        chineseTitle: payload.chineseTitle,
+        japaneseTitle: payload.japaneseTitle,
+        previousChapterId: payload.previousChapterId,
+        nextChapterId: payload.nextChapterId,
+        publishedAt: payload.publishedAt,
+        japaneseBlocks: payload.japaneseBlocks,
+        youdaoBlocks:
+            payload.translationFor(TranslationSource.youdao)?.blocks ??
+            const [],
+        gptBlocks:
+            payload.translationFor(TranslationSource.gpt)?.blocks ?? const [],
+        sakuraBlocks:
+            payload.translationFor(TranslationSource.sakura)?.blocks ??
+            const [],
+      ),
+    );
+    if (actual != payload.revision) {
+      throw const NoveliaDomainMappingException(
+        'Cached chapter checksum does not match its stored revision.',
+      );
+    }
+  }
+
+  static Map<String, Object?> _chapterChecksumValue({
+    required String novelId,
+    required String chapterId,
+    required int index,
+    required String chineseTitle,
+    required String japaneseTitle,
+    required String? previousChapterId,
+    required String? nextChapterId,
+    required DateTime? publishedAt,
+    required List<String> japaneseBlocks,
+    required List<String> youdaoBlocks,
+    required List<String> gptBlocks,
+    required List<String> sakuraBlocks,
+  }) {
+    return {
+      'novelId': novelId,
+      'chapterId': chapterId,
+      'index': index,
+      'chineseTitle': chineseTitle,
+      'japaneseTitle': japaneseTitle,
+      'previousChapterId': previousChapterId,
+      'nextChapterId': nextChapterId,
+      'publishedAtUs': publishedAt?.microsecondsSinceEpoch,
+      'japaneseBlocks': japaneseBlocks,
+      'youdaoBlocks': youdaoBlocks,
+      'gptBlocks': gptBlocks,
+      'sakuraBlocks': sakuraBlocks,
+    };
   }
 
   static CachedTocChapter _cacheTocChapter(NovelChapter chapter) {

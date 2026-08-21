@@ -59,6 +59,11 @@ task identity and revision intact. Older or mismatched refreshes fail closed;
 the prior readable payload remains referenced until a valid replacement
 commits, and is garbage-collected only when no copy still references it.
 
+Complete Offline Downloads are snapshots of that stored revision. Reconciliation
+does not re-fetch complete chapter payloads until the reader removes the
+intent. A Novel Download still enqueues newly published chapters and refreshes
+Translation Pending copies.
+
 On startup or foreground reconciliation, active, paused, and retryable-failed
 tasks under an enabled intent are requeued in one transaction. The restart
 transition clears byte counters and partial transfer metadata because the

@@ -491,6 +491,20 @@ class InMemoryOfflineRepository
       copy: copy,
       expectedKind: OfflineCopyKind.cacheCopy,
     );
+    _validatePayloadIdentity(payload);
+    if (_protectedCopyReferencesPayload(payload.id)) {
+      _payloads[payload.id] = payload;
+      final redundantIds = [
+        for (final candidate in _copies.values)
+          if (candidate.kind == OfflineCopyKind.cacheCopy &&
+              candidate.payloadId == payload.id)
+            candidate.id,
+      ];
+      for (final id in redundantIds) {
+        _copies.remove(id);
+      }
+      return;
+    }
     final existing = _copies[copy.id];
     if (existing != null && existing.kind != OfflineCopyKind.cacheCopy) {
       throw StateError('A Cache Copy cannot replace a protected copy.');
@@ -501,7 +515,6 @@ class InMemoryOfflineRepository
             existing.translationSource != copy.translationSource)) {
       throw StateError('A Cache Copy ID cannot change content identity.');
     }
-    _validatePayloadIdentity(payload);
 
     final replacedPayloadIds = <String>{?existing?.payloadId};
     final duplicateIds = <String>[
@@ -708,6 +721,14 @@ class InMemoryOfflineRepository
         'Offline copy translation availability disagrees with its payload.',
       );
     }
+  }
+
+  bool _protectedCopyReferencesPayload(String payloadId) {
+    return _copies.values.any(
+      (copy) =>
+          copy.kind == OfflineCopyKind.offlineDownload &&
+          copy.payloadId == payloadId,
+    );
   }
 
   void _deletePayloadIfUnreferenced(String payloadId) {

@@ -20,8 +20,22 @@ class AccountSessionController extends ChangeNotifier {
   AccountSessionSnapshot _snapshot = const AccountSessionSnapshot.signedOut();
   StoredAccountSession? _session;
   Future<StoredAccountSession?>? _refreshInFlight;
+  var _epoch = 0;
+  Future<void> _mutationQueue = Future<void>.value();
 
   AccountSessionSnapshot get snapshot => _snapshot;
+
+  Future<T> _enqueueMutation<T>(Future<T> Function() action) {
+    final result = Completer<T>();
+    _mutationQueue = _mutationQueue.catchError((_) {}).then((_) async {
+      try {
+        result.complete(await action());
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    return result.future;
+  }
 
   Future<void> restore() async {
     _setSnapshot(const AccountSessionSnapshot.restoring());
@@ -72,11 +86,22 @@ class AccountSessionController extends ChangeNotifier {
     required String username,
     required String password,
   }) async {
+    final previous = _session;
     final session = await gateway.login(username: username, password: password);
     final profile = decodeNoveliaAccessToken(session.accessToken);
-    await store.write(session);
-    _session = session;
-    _setSnapshot(AccountSessionSnapshot.signedIn(profile));
+    await _enqueueMutation(() async {
+      _epoch += 1;
+      await store.write(session);
+      _session = session;
+      _setSnapshot(AccountSessionSnapshot.signedIn(profile));
+    });
+    if (previous == null) return;
+    try {
+      await gateway.logout(previous);
+    } on Object {
+      // The new local session is authoritative. Expiring the previous remote
+      // refresh cookie is best effort.
+    }
   }
 
   Future<String?> accessToken({bool forceRefresh = false}) async {
@@ -123,7 +148,10 @@ class AccountSessionController extends ChangeNotifier {
 
   Future<void> logout() async {
     final session = _session;
-    await _clearLocalSession();
+    await _enqueueMutation(() async {
+      _epoch += 1;
+      await _clearLocalSession();
+    });
     if (session == null) return;
     try {
       await gateway.logout(session);
@@ -148,14 +176,17 @@ class AccountSessionController extends ChangeNotifier {
   Future<StoredAccountSession?> _performRefresh(
     StoredAccountSession current,
   ) async {
+    final epoch = _epoch;
     final refreshed = await gateway.refresh(current);
-    if (!identical(_session, current)) return _session;
-    final profile = decodeNoveliaAccessToken(refreshed.accessToken);
-    await store.write(refreshed);
-    if (!identical(_session, current)) return _session;
-    _session = refreshed;
-    _setSnapshot(AccountSessionSnapshot.signedIn(profile));
-    return refreshed;
+    return _enqueueMutation(() async {
+      if (_epoch != epoch || !identical(_session, current)) return _session;
+      final profile = decodeNoveliaAccessToken(refreshed.accessToken);
+      await store.write(refreshed);
+      if (_epoch != epoch || !identical(_session, current)) return _session;
+      _session = refreshed;
+      _setSnapshot(AccountSessionSnapshot.signedIn(profile));
+      return refreshed;
+    });
   }
 
   Future<void> _clearLocalSession() async {

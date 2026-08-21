@@ -117,6 +117,29 @@ void main() {
         expect(controller.snapshot.status, AccountSessionStatus.signedOut);
       },
     );
+
+    test('logout wins a race with an in-flight refresh', () async {
+      final completer = Completer<StoredAccountSession>();
+      final stored = _session('alice', expiresIn: const Duration(seconds: 1));
+      final store = InMemoryAccountSessionStore(stored);
+      final gateway = _FakeAuthGateway(refreshFuture: completer.future);
+      final controller = AccountSessionController(
+        gateway: gateway,
+        store: store,
+      );
+      final restore = controller.restore();
+      await Future<void>.delayed(Duration.zero);
+
+      final logout = controller.logout();
+      completer.complete(
+        _session('alice', expiresIn: const Duration(hours: 1)),
+      );
+      await restore;
+      await logout;
+
+      expect(store.value, isNull);
+      expect(controller.snapshot.status, AccountSessionStatus.signedOut);
+    });
   });
 
   testWidgets('login form reports a rejected credential without leaving', (

@@ -273,8 +273,9 @@ class _StatefulNoveliaGateway implements NoveliaGateway {
   @override
   Future<NoveliaChapterPayload> getChapter(
     NoveliaNovelKey key,
-    String chapterId,
-  ) async {
+    String chapterId, {
+    void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,
+  }) async {
     _requireOnline();
     return switch (chapterId) {
       'c1' => _chapter(

@@ -22,10 +22,7 @@ void main() {
     testWidgets('legacy novels do not fabricate local library records', (
       tester,
     ) async {
-      await pumpScreen(
-        tester,
-        LibraryScreen(novels: fixtureCatalogNovels, onOpenNovel: (_) {}),
-      );
+      await pumpScreen(tester, LibraryScreen(onOpenNovel: (_) {}));
 
       expect(find.text('还没有阅读记录'), findsOneWidget);
       expect(find.text('远程收藏夹暂不可用'), findsOneWidget);

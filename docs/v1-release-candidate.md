@@ -2,8 +2,8 @@
 
 - Date: 2026-08-18
 - Version: `1.0.0 (1)`
-Status: software candidate and physical performance verified; private
-distribution signing inputs pending
+Status: software candidate and physical performance verified; GitHub
+Release signing is documented in `docs/release-guide.md`
 
 ## Verified
 
@@ -41,24 +41,23 @@ distribution signing inputs pending
   requests, deduplicates an overlapping boundary load, and stops prefetching
   after the first failure.
 - Search is a separate fourth destination and exposes the official six-source,
-  type, rating, GPT/Sakura, and update/click/relevance controls. Discover keeps
-  a switchable Recently Updated / Most Clicked feed.
+  type, rating, Youdao/GPT/Sakura, and update/click/relevance controls. Discover
+  keeps a switchable Recently Updated / Most Clicked feed.
 - Manual Offline Download creation is non-blocking after the protected intent
   is saved. A credential-free live short-story probe completed catalog, TOC,
   chapter fetch, and protected-copy commit with zero failures.
 
 ## Required before distribution
 
-- Supply the private Android release keystore, build the signed APK, and run
-  `scripts/verify_android_release.sh`.
-- If iOS is included in v1 distribution, supply the release-testing export
-  options and intended private distribution profile, then build the IPA.
-- Install each signed artifact over the previous private build and repeat the
+- Keep Android release keys in GitHub Actions secrets (or local
+  `key.properties`) and run `scripts/verify_android_release.sh` on the signed
+  APK. Do not commit the keystore.
+- The GitHub Release IPA stays unsigned for Sideloadly/AltStore. Ad Hoc export
+  remains optional and off CI.
+- Install each signed APK over the prior signed build and repeat the
   signed-in plus offline-resume smoke.
-- Record the final signed artifact sizes, SHA-256 hashes, and signing
-  certificate/profile identity in private release notes.
-- Upload binaries only to the access-controlled distribution channel; never to
-  the public source repository.
+- Record artifact sizes and SHA-256 hashes in the GitHub Release notes.
+- Never commit binaries, keystores, or Apple signing files to the source tree.
 
 ## Accepted v1 deferrals
 

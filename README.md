@@ -24,9 +24,15 @@ place, and continue reading when you are offline.
 - iOS
 - macOS
 
-The v1 release is version `1.0.0` (build `1`). When platform builds are
-published, they are available from the [Releases](https://github.com/troyt-666/novelia-mobile/releases)
-page.
+The v1 release is version `1.0.0` (build `1`). Published builds are on the
+[Releases](https://github.com/troyt-666/novelia-mobile/releases) page:
+
+- **Android** (`JFZ-Reader-<tag>-android.apk`) — signed installable APK.
+- **iOS** (`JFZ-Reader-<tag>-ios-unsigned.ipa`) — unsigned; re-sign with
+  Sideloadly, AltStore, or a similar tool. It will not install by opening the
+  file on a stock iPhone.
+- **macOS** (`JFZ-Reader-<tag>-macos.dmg`) — not notarized. If Gatekeeper
+  blocks it, right-click the app and choose Open.
 
 ## Offline reading
 

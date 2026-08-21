@@ -63,6 +63,7 @@ void main() {
     ReaderNovel? novel,
     ReadingPosition? initialPosition,
     ValueChanged<ReadingPosition>? onPositionChanged,
+    ValueChanged<ReadingPosition>? onExitPosition,
     ReaderBookmarkChanged? onBookmarkChanged,
     Set<String> initialBookmarkedBlockIds = const {},
     ReaderSettings initialSettings = const ReaderSettings(),
@@ -81,6 +82,7 @@ void main() {
           onThemeModeChanged: (_) {},
           initialPosition: initialPosition,
           onPositionChanged: onPositionChanged,
+          onExitPosition: onExitPosition,
           initialBookmarkedBlockIds: initialBookmarkedBlockIds,
           onBookmarkChanged: onBookmarkChanged,
           initialSettings: initialSettings,
@@ -196,6 +198,64 @@ void main() {
     expect((image.image as NetworkImage).url, imageUrl);
   });
 
+  testWidgets('captures and restores intra-block reading position', (
+    tester,
+  ) async {
+    final tall = NovelChapter(
+      id: 'tall-c1',
+      index: 1,
+      chineseTitle: '长段落',
+      japaneseTitle: '長い段落',
+      publishedAt: DateTime(2026, 8, 1),
+      blocks: [
+        AlignedBlock(
+          id: 'tall-b0',
+          ordinal: 0,
+          japanese: List.filled(40, '長い文章でスクロール位置を検証します。').join('\n'),
+          translations: {
+            for (final source in TranslationSource.values)
+              source: List.filled(40, '这是用于验证阅读位置的较长段落。').join('\n'),
+          },
+        ),
+      ],
+    );
+    final reported = <ReadingPosition>[];
+    await pumpReader(
+      tester,
+      novel: _windowNovel([tall]),
+      onPositionChanged: reported.add,
+      onExitPosition: reported.add,
+    );
+    final scrollable = _readerScrollable(tester);
+    expect(scrollable.position.maxScrollExtent, greaterThan(80));
+    scrollable.position.jumpTo(
+      (scrollable.position.maxScrollExtent * 0.45).clamp(
+        48,
+        scrollable.position.maxScrollExtent,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(reported, isNotEmpty);
+    expect(reported.last.blockId, 'tall-b0');
+    expect(reported.last.intraBlockOffset, greaterThan(0));
+
+    const restored = ReadingPosition(
+      chapterId: 'tall-c1',
+      blockId: 'tall-b0',
+      intraBlockOffset: 600,
+    );
+    await pumpReader(
+      tester,
+      novel: _windowNovel([tall]),
+      initialPosition: restored,
+    );
+    expect(_readerScrollable(tester).position.pixels, greaterThan(40));
+  });
+
   testWidgets('reading taps dismiss chrome and center taps reveal it', (
     tester,
   ) async {
@@ -272,6 +332,131 @@ void main() {
     );
     expect(find.byKey(const ValueKey('block-c3-0-chinese')), findsNothing);
     expect(find.byKey(const ValueKey('block-c3-0-japanese')), findsOneWidget);
+  });
+
+  testWidgets('pending translation refresh replaces the on-screen chapter', (
+    tester,
+  ) async {
+    const chapterId = 'pending-c1';
+    final pending = NovelChapter(
+      id: chapterId,
+      index: 1,
+      chineseTitle: '待译章节',
+      japaneseTitle: '未訳の章',
+      publishedAt: DateTime(2026, 8, 1),
+      translationStates: const {
+        TranslationSource.sakura: TranslationState.pending,
+      },
+      blocks: const [
+        AlignedBlock(
+          id: 'pending-c1-b0',
+          ordinal: 0,
+          japanese: '本文',
+          translations: {},
+        ),
+      ],
+    );
+    final complete = NovelChapter(
+      id: chapterId,
+      index: 1,
+      chineseTitle: '待译章节',
+      japaneseTitle: '未訳の章',
+      publishedAt: DateTime(2026, 8, 1),
+      translationStates: const {
+        TranslationSource.sakura: TranslationState.complete,
+      },
+      blocks: const [
+        AlignedBlock(
+          id: 'pending-c1-b0',
+          ordinal: 0,
+          japanese: '本文',
+          translations: {TranslationSource.sakura: '正文'},
+        ),
+      ],
+    );
+    final dataSource = ReaderChapterDataSource(
+      catalog: [ReaderChapterCatalogEntry.fromChapter(pending)],
+      loadAround: (_) => Future.error(StateError('not used')),
+      loadAdjacent: (_) => Future.value(
+        const ReaderChapterWindow(
+          chapters: [],
+          before: ReaderBoundaryStatus.endOfCatalog,
+          after: ReaderBoundaryStatus.endOfCatalog,
+        ),
+      ),
+    );
+
+    await pumpWindowReader(
+      tester,
+      novel: ReaderNovel(
+        id: 'pending-novel',
+        chineseTitle: '待译小说',
+        japaneseTitle: '未訳',
+        author: '作者',
+        chapters: [pending],
+      ),
+      dataSource: dataSource,
+    );
+
+    expect(
+      find.byKey(const ValueKey('block-pending-c1-b0-chinese')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('translation-state-pending-c1')),
+      findsOneWidget,
+    );
+
+    dataSource.notifyChapterUpdated(complete);
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('block-pending-c1-b0-chinese')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('translation-state-pending-c1')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('reader catalog groups chapters by section title', (
+    tester,
+  ) async {
+    final chapters = [_windowChapter(1), _windowChapter(2)];
+    final dataSource = ReaderChapterDataSource(
+      catalog: [
+        ReaderChapterCatalogEntry.fromChapter(chapters[0], sectionTitle: '上卷'),
+        ReaderChapterCatalogEntry.fromChapter(chapters[1], sectionTitle: '下卷'),
+      ],
+      loadAround: (_) => Future.error(StateError('not used')),
+      loadAdjacent: (_) => Future.value(
+        const ReaderChapterWindow(
+          chapters: [],
+          before: ReaderBoundaryStatus.endOfCatalog,
+          after: ReaderBoundaryStatus.endOfCatalog,
+        ),
+      ),
+    );
+
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel(chapters),
+      dataSource: dataSource,
+    );
+    await tester.tap(find.byKey(const ValueKey('catalog-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('上卷'), findsOneWidget);
+    expect(find.text('下卷'), findsOneWidget);
+    expect(
+      find.byKey(ValueKey('catalog-chapter-${chapters[0].id}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey('catalog-chapter-${chapters[1].id}')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('switching to an available source restores Chinese', (

@@ -187,6 +187,16 @@ void main() {
     );
 
     current = progressDownload(
+      secondState: DownloadTaskState.validating,
+      secondBytesReceived: 100,
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+
+    expect(progress().value, 1);
+    expect(find.text('1 / 2 章 · 100%'), findsOneWidget);
+
+    current = progressDownload(
       secondState: DownloadTaskState.stored,
       enabled: false,
     );

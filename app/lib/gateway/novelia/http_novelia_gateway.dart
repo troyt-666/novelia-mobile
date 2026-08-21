@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'novelia_gateway.dart';
+import 'novelia_request_policy.dart';
 
 class NoveliaJsonCodec {
   const NoveliaJsonCodec();
@@ -290,7 +291,7 @@ class HttpNoveliaGateway implements NoveliaGateway {
   Future<NoveliaPage<NoveliaNovelOutline>> listNovels(
     NoveliaCatalogQuery query,
   ) async {
-    final json = await _getJson('novel', query.toQueryParameters());
+    final json = await _getJson('novel', query: query.toQueryParameters());
     return codec.decodeNovelPage(json);
   }
 
@@ -300,7 +301,7 @@ class HttpNoveliaGateway implements NoveliaGateway {
   ) async {
     final json = await _getJson(
       'novel/rank/${_segment(query.providerId)}',
-      query.parameters,
+      query: query.parameters,
     );
     return codec.decodeNovelPage(json);
   }
@@ -316,10 +317,12 @@ class HttpNoveliaGateway implements NoveliaGateway {
   @override
   Future<NoveliaChapterPayload> getChapter(
     NoveliaNovelKey key,
-    String chapterId,
-  ) async {
+    String chapterId, {
+    void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,
+  }) async {
     final json = await _getJson(
       'novel/${_segment(key.providerId)}/${_segment(key.novelId)}/chapter/${_segment(chapterId)}',
+      onReceiveProgress: onReceiveProgress,
     );
     return codec.decodeChapter(key, chapterId, json);
   }
@@ -330,11 +333,14 @@ class HttpNoveliaGateway implements NoveliaGateway {
     int page = 0,
     int pageSize = 10,
   }) async {
-    final json = await _getJson('comment', {
-      'page': '$page',
-      'pageSize': '$pageSize',
-      'site': key.commentSite,
-    });
+    final json = await _getJson(
+      'comment',
+      query: {
+        'page': '$page',
+        'pageSize': '$pageSize',
+        'site': key.commentSite,
+      },
+    );
     return codec.decodeCommentPage(json);
   }
 
@@ -343,36 +349,39 @@ class HttpNoveliaGateway implements NoveliaGateway {
   }
 
   Future<Object?> _getJson(
-    String relativePath, [
+    String relativePath, {
     Map<String, String>? query,
-  ]) async {
+    void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,
+  }) async {
     final resolved = baseUri.resolve(relativePath);
     final uri = query == null
         ? resolved
         : resolved.replace(queryParameters: query);
     try {
-      final request = await _client.getUrl(uri).timeout(requestTimeout);
-      request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
-      final token = await accessTokenProvider?.call();
-      if (token != null && token.trim().isNotEmpty) {
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      }
-      final response = await request.close().timeout(requestTimeout);
-      final bytes = <int>[];
-      await for (final chunk in response.timeout(requestTimeout)) {
-        if (bytes.length + chunk.length > maximumResponseBytes) {
-          throw const NoveliaGatewayException(
-            NoveliaGatewayFailureKind.invalidResponse,
-            'The service response exceeded the configured size limit.',
+      var token = await accessTokenProvider?.call(forceRefresh: false);
+      var exchange = await _sendGet(
+        uri,
+        token: token,
+        onReceiveProgress: onReceiveProgress,
+      );
+      if (exchange.statusCode == 401 &&
+          token != null &&
+          token.trim().isNotEmpty &&
+          accessTokenProvider != null) {
+        final refreshed = await accessTokenProvider!(forceRefresh: true);
+        if (refreshed != null && refreshed.trim().isNotEmpty) {
+          exchange = await _sendGet(
+            uri,
+            token: refreshed,
+            onReceiveProgress: onReceiveProgress,
           );
         }
-        bytes.addAll(chunk);
       }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw _statusFailure(response.statusCode);
+      if (exchange.statusCode < 200 || exchange.statusCode >= 300) {
+        throw _statusFailure(exchange.statusCode);
       }
       try {
-        return jsonDecode(utf8.decode(bytes));
+        return jsonDecode(utf8.decode(exchange.bytes));
       } on FormatException {
         throw const NoveliaGatewayException(
           NoveliaGatewayFailureKind.invalidResponse,
@@ -402,6 +411,44 @@ class HttpNoveliaGateway implements NoveliaGateway {
         'The service request failed.',
       );
     }
+  }
+
+  Future<({int statusCode, List<int> bytes})> _sendGet(
+    Uri uri, {
+    String? token,
+    void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,
+  }) async {
+    if (!isAllowedNoveliaRequestUri(uri)) {
+      throw const NoveliaGatewayException(
+        NoveliaGatewayFailureKind.invalidResponse,
+        'The service host is not allowed.',
+      );
+    }
+    final request = await _client.getUrl(uri).timeout(requestTimeout);
+    pinNoveliaHttpRequest(request);
+    request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
+    if (token != null && token.trim().isNotEmpty) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    }
+    final response = await request.close().timeout(requestTimeout);
+    final contentLength = int.tryParse(
+      response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
+    );
+    final totalBytes = contentLength != null && contentLength >= 0
+        ? contentLength
+        : null;
+    final bytes = <int>[];
+    await for (final chunk in response.timeout(requestTimeout)) {
+      if (bytes.length + chunk.length > maximumResponseBytes) {
+        throw const NoveliaGatewayException(
+          NoveliaGatewayFailureKind.invalidResponse,
+          'The service response exceeded the configured size limit.',
+        );
+      }
+      bytes.addAll(chunk);
+      onReceiveProgress?.call(bytes.length, totalBytes);
+    }
+    return (statusCode: response.statusCode, bytes: bytes);
   }
 
   static NoveliaGatewayException _statusFailure(int statusCode) {

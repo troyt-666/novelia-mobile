@@ -9,6 +9,12 @@ String noveliaContentChecksum(Object? value) {
   return _sha256Hex(utf8.encode(jsonEncode(value)));
 }
 
+final _sha256RevisionPattern = RegExp(r'^[0-9a-f]{64}$');
+
+bool isNoveliaSha256Revision(String? revision) {
+  return revision != null && _sha256RevisionPattern.hasMatch(revision);
+}
+
 String _sha256Hex(List<int> input) {
   final bytes = List<int>.from(input);
   final bitLength = input.length * 8;

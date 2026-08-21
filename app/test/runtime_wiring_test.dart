@@ -89,17 +89,20 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('open-rankings-button')));
       await tester.pumpAndSettle();
       expect(find.text('服务排行第一'), findsWidgets);
-      expect(find.textContaining('服务原生排序'), findsOneWidget);
-      expect(coordinator.rankingQueries.single.providerId, 'syosetu');
-      expect(coordinator.rankingQueries.single.parameters['genre'], '恋爱：异世界');
-      expect(coordinator.rankingQueries.single.parameters['page'], '1');
-      await tester.tap(find.byKey(const ValueKey('rankings-next-page')));
-      await tester.pumpAndSettle();
       expect(find.text('服务排行第二'), findsWidgets);
-      expect(coordinator.rankingQueries.last.parameters['page'], '2');
-      Navigator.of(
-        tester.element(find.byKey(const ValueKey('rankings-screen'))),
-      ).pop();
+      expect(find.textContaining('服务原生排序'), findsOneWidget);
+      expect(coordinator.rankingQueries, isNotEmpty);
+      expect(coordinator.rankingQueries.first.providerId, 'syosetu');
+      expect(coordinator.rankingQueries.first.parameters['type'], '综合');
+      expect(
+        coordinator.rankingQueries.first.parameters.containsKey('genre'),
+        isFalse,
+      );
+      expect(
+        coordinator.rankingQueries.map((query) => query.parameters['page']),
+        containsAll(['1', '2']),
+      );
+      await tester.tap(find.byKey(const ValueKey('rankings-close-button')));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('nav-search')));

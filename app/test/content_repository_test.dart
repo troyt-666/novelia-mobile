@@ -4,6 +4,7 @@ import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/offline/offline_repository.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
@@ -258,6 +259,17 @@ void main() {
     });
 
     test(
+      'skips Cache Copy when a protected copy already holds the payload',
+      () {
+        final sqlite = SqliteOfflineRepository.openInMemory();
+        addTearDown(sqlite.close);
+        _expectSkippedCacheCopy(sqlite, persistDownload: true);
+
+        _expectSkippedCacheCopy(InMemoryOfflineRepository());
+      },
+    );
+
+    test(
       'payload, protected copy, and task completion are one transaction',
       () {
         final repository = SqliteOfflineRepository.openInMemory();
@@ -504,6 +516,52 @@ DownloadTask _storingTask(SqliteOfflineRepository repository, DateTime now) {
   task = task.beginStoring(now.add(const Duration(seconds: 3)));
   repository.saveTask(task);
   return task;
+}
+
+void _expectSkippedCacheCopy(
+  dynamic repository, {
+  bool persistDownload = false,
+}) {
+  final payload = _completePayload(DateTime.utc(2026, 8, 17, 12));
+  final cache = _copyFor(
+    payload,
+    id: 'cache-copy',
+    kind: OfflineCopyKind.cacheCopy,
+  );
+  final download = _copyFor(
+    payload,
+    id: 'download-copy',
+    kind: OfflineCopyKind.offlineDownload,
+  );
+  if (persistDownload) {
+    final sqlite = repository as SqliteOfflineRepository;
+    final task = _storingTask(sqlite, payload.fetchedAt);
+    sqlite.commitDownloadedChapter(
+      taskId: task.id,
+      payload: payload,
+      copy: download,
+      now: payload.fetchedAt.add(const Duration(seconds: 4)),
+    );
+  } else {
+    final memory = repository as InMemoryOfflineRepository;
+    memory.saveIntent(
+      NovelDownloadIntent(
+        id: 'intent',
+        novelId: 'novel',
+        translationSource: TranslationSource.sakura,
+        createdAt: payload.fetchedAt,
+      ),
+    );
+    memory.upsertChapterPayload(payload);
+    memory.saveCopy(download);
+  }
+  repository.cacheChapterPayload(payload: payload, copy: cache);
+  expect(repository.listCopies(kind: OfflineCopyKind.cacheCopy), isEmpty);
+  expect(repository.chapterPayloadById(payload.id), isNotNull);
+  expect(
+    repository.listCopies(kind: OfflineCopyKind.offlineDownload),
+    isNotEmpty,
+  );
 }
 
 OfflineChapterCopy _copyFor(

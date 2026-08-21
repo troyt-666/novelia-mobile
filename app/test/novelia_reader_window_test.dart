@@ -152,62 +152,123 @@ void main() {
     await Future<void>.delayed(Duration.zero);
   });
 
-  test(
-    'uses cached chapters and marks an offline missing neighbor unavailable',
-    () async {
-      final chapters = [
-        _metadata('c1', 1),
-        _metadata('c2', 2),
-        _metadata('c3', 3),
-      ];
-      final coordinator = _WindowCoordinator(
-        {
-          'c1': NoveliaContentResult.offline(cachedData: _loaded(chapters[0])),
-          'c2': NoveliaContentResult.available(_loaded(chapters[1])),
-          'c3': NoveliaContentResult.offline(failure: _networkFailure),
-        },
-        cachedResponses: {
-          'c1': _loaded(chapters[0]),
-          'c2': _loaded(chapters[1]),
-        },
-      );
-      final launch =
-          await NoveliaReaderWindowFactory(
-            contentCoordinator: coordinator,
-          ).create(
-            novel: _novel(chapters),
-            selectedChapter: chapters[1],
-            requestedPosition: null,
-            translationSource: TranslationSource.sakura,
-          );
+  test('uses cached chapters and retries a live neighbor failure', () async {
+    final chapters = [
+      _metadata('c1', 1),
+      _metadata('c2', 2),
+      _metadata('c3', 3),
+    ];
+    final coordinator = _WindowCoordinator(
+      {
+        'c1': NoveliaContentResult.offline(cachedData: _loaded(chapters[0])),
+        'c2': NoveliaContentResult.available(_loaded(chapters[1])),
+        'c3': NoveliaContentResult.offline(failure: _networkFailure),
+      },
+      cachedResponses: {'c1': _loaded(chapters[0]), 'c2': _loaded(chapters[1])},
+    );
+    final launch =
+        await NoveliaReaderWindowFactory(
+          contentCoordinator: coordinator,
+        ).create(
+          novel: _novel(chapters),
+          selectedChapter: chapters[1],
+          requestedPosition: null,
+          translationSource: TranslationSource.sakura,
+        );
 
-      expect(launch.novel.chapters.map((chapter) => chapter.id), ['c1', 'c2']);
-      final around = await launch.dataSource!.loadAround('c2');
-      expect(around.chapters.map((chapter) => chapter.id), ['c1', 'c2']);
-      expect(around.before, ReaderBoundaryStatus.endOfCatalog);
-      expect(around.after, ReaderBoundaryStatus.loadable);
+    expect(launch.novel.chapters.map((chapter) => chapter.id), ['c1', 'c2']);
+    final around = await launch.dataSource!.loadAround('c2');
+    expect(around.chapters.map((chapter) => chapter.id), ['c1', 'c2']);
+    expect(around.before, ReaderBoundaryStatus.endOfCatalog);
+    expect(around.after, ReaderBoundaryStatus.loadable);
 
-      final unavailable = await launch.dataSource!.loadAdjacent(
+    await expectLater(
+      launch.dataSource!.loadAdjacent(
         const ReaderAdjacentRequest(
           anchorChapterId: 'c2',
           direction: ReaderLoadDirection.after,
         ),
-      );
-      expect(unavailable.chapters, isEmpty);
-      expect(unavailable.after, ReaderBoundaryStatus.unavailable);
+      ),
+      throwsA(isA<NoveliaGatewayException>()),
+    );
 
-      final afterFailure = await launch.dataSource!.loadAround('c2');
-      expect(afterFailure.after, ReaderBoundaryStatus.unavailable);
+    final afterFailure = await launch.dataSource!.loadAround('c2');
+    expect(afterFailure.after, ReaderBoundaryStatus.loadable);
 
-      final noNeighbor = await launch.dataSource!.loadAdjacent(
-        const ReaderAdjacentRequest(
-          anchorChapterId: 'c1',
-          direction: ReaderLoadDirection.before,
-        ),
-      );
-      expect(noNeighbor.before, ReaderBoundaryStatus.endOfCatalog);
-    },
-  );
+    final noNeighbor = await launch.dataSource!.loadAdjacent(
+      const ReaderAdjacentRequest(
+        anchorChapterId: 'c1',
+        direction: ReaderLoadDirection.before,
+      ),
+    );
+    expect(noNeighbor.before, ReaderBoundaryStatus.endOfCatalog);
+  });
+
+  test('offline holes without a live failure stay unavailable', () async {
+    final chapters = [
+      _metadata('c1', 1),
+      _metadata('c2', 2),
+      _metadata('c3', 3),
+    ];
+    final coordinator = _WindowCoordinator({
+      'c1': NoveliaContentResult.available(_loaded(chapters[0])),
+      'c2': NoveliaContentResult.available(_loaded(chapters[1])),
+      'c3': NoveliaContentResult.offline(),
+    });
+    final launch =
+        await NoveliaReaderWindowFactory(
+          contentCoordinator: coordinator,
+        ).create(
+          novel: _novel(chapters),
+          selectedChapter: chapters[1],
+          requestedPosition: null,
+          translationSource: TranslationSource.sakura,
+        );
+
+    final unavailable = await launch.dataSource!.loadAdjacent(
+      const ReaderAdjacentRequest(
+        anchorChapterId: 'c2',
+        direction: ReaderLoadDirection.after,
+      ),
+    );
+    expect(unavailable.chapters, isEmpty);
+    expect(unavailable.after, ReaderBoundaryStatus.unavailable);
+  });
+
+  test('notifies when a pending on-screen chapter becomes complete', () async {
+    final metadata = _metadata('c1', 1);
+    final pending = _pendingLoaded(metadata);
+    final complete = _loaded(metadata);
+    final refresh = Completer<NoveliaContentResult<NovelChapter>>();
+    final coordinator = _WindowCoordinator(
+      const {},
+      cachedResponses: {'c1': pending},
+      pendingResponses: {'c1': refresh},
+    );
+    final launch =
+        await NoveliaReaderWindowFactory(contentCoordinator: coordinator)
+            .create(
+              novel: _novel([metadata]),
+              selectedChapter: metadata,
+              requestedPosition: null,
+              translationSource: TranslationSource.sakura,
+            )
+            .timeout(const Duration(seconds: 1));
+
+    expect(
+      launch.novel.chapters.single.translationState(TranslationSource.sakura),
+      TranslationState.pending,
+    );
+    final updates = <NovelChapter>[];
+    launch.dataSource!.addChapterUpdateListener(updates.add);
+
+    refresh.complete(NoveliaContentResult.available(complete));
+    await _waitUntil(() => updates.isNotEmpty);
+    expect(
+      updates.single.translationState(TranslationSource.sakura),
+      TranslationState.complete,
+    );
+  });
 }
 
 const _networkFailure = NoveliaGatewayException(
@@ -270,7 +331,31 @@ NovelChapter _loaded(NovelChapter metadata) {
         id: '${metadata.id}:0',
         ordinal: 0,
         japanese: '本文',
-        translations: const {TranslationSource.gpt: '正文'},
+        translations: const {
+          TranslationSource.gpt: '正文',
+          TranslationSource.sakura: '正文',
+        },
+      ),
+    ],
+  );
+}
+
+NovelChapter _pendingLoaded(NovelChapter metadata) {
+  return NovelChapter(
+    id: metadata.id,
+    index: metadata.index,
+    chineseTitle: metadata.chineseTitle,
+    japaneseTitle: metadata.japaneseTitle,
+    publishedAt: metadata.publishedAt,
+    translationStates: const {
+      TranslationSource.sakura: TranslationState.pending,
+    },
+    blocks: [
+      AlignedBlock(
+        id: '${metadata.id}:0',
+        ordinal: 0,
+        japanese: '本文',
+        translations: const {},
       ),
     ],
   );

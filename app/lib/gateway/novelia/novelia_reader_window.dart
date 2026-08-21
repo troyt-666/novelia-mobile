@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../core/model/reader_models.dart';
 import '../../features/discover/catalog_models.dart';
 import 'novelia_content_coordinator.dart';
+import 'novelia_gateway.dart';
 
 /// Creates a bounded initial reader window and its dynamic chapter data source.
 class NoveliaReaderWindowFactory {
@@ -289,8 +290,26 @@ class _NoveliaReaderWindowSession {
       _unavailable.remove(metadata.id);
       return loaded;
     }
+    if (_isRetryableChapterFailure(response)) {
+      throw response.failure ??
+          StateError('Chapter ${metadata.id} failed to load.');
+    }
     _unavailable.add(metadata.id);
     return null;
+  }
+
+  static bool _isRetryableChapterFailure(
+    NoveliaContentResult<NovelChapter> response,
+  ) {
+    if (response.data != null) return false;
+    if (response.availability == CatalogAvailability.authenticationRequired) {
+      return true;
+    }
+    final failure = response.failure;
+    if (failure == null) return false;
+    return failure.kind == NoveliaGatewayFailureKind.network ||
+        failure.kind == NoveliaGatewayFailureKind.timeout ||
+        failure.kind == NoveliaGatewayFailureKind.server;
   }
 
   void _scheduleForwardPrefetch(int anchorIndex) {
@@ -349,8 +368,16 @@ class _NoveliaReaderWindowSession {
           );
           final refreshed = response.data;
           if (refreshed != null && refreshed.id == metadata.id) {
+            final previous = _loaded[metadata.id];
             _loaded[metadata.id] = refreshed;
             _unavailable.remove(metadata.id);
+            if (_chapterTranslationChanged(
+              previous,
+              refreshed,
+              translationSource,
+            )) {
+              dataSource.notifyChapterUpdated(refreshed);
+            }
           }
         } on Object {
           // Cached content is already readable; revalidation is best effort.
@@ -359,6 +386,25 @@ class _NoveliaReaderWindowSession {
         }
       }),
     );
+  }
+
+  static bool _chapterTranslationChanged(
+    NovelChapter? previous,
+    NovelChapter next,
+    TranslationSource source,
+  ) {
+    if (previous == null) return true;
+    if (previous.translationState(source) != next.translationState(source)) {
+      return true;
+    }
+    if (previous.blocks.length != next.blocks.length) return true;
+    for (var index = 0; index < previous.blocks.length; index++) {
+      if (previous.blocks[index].translations[source] !=
+          next.blocks[index].translations[source]) {
+        return true;
+      }
+    }
+    return false;
   }
 
   ReaderBoundaryStatus _oppositeBoundary(

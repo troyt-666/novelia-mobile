@@ -5,6 +5,7 @@ import 'dart:io';
 
 import '../../core/account/account_models.dart';
 import 'novelia_auth_gateway.dart';
+import 'novelia_request_policy.dart';
 
 class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
   HttpNoveliaAuthGateway({
@@ -130,8 +131,14 @@ class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
         ? resolved
         : resolved.replace(queryParameters: query);
     try {
+      if (!isAllowedNoveliaRequestUri(uri)) {
+        throw const NoveliaAuthException(
+          NoveliaAuthFailureKind.invalidResponse,
+          'The authentication host is not allowed.',
+        );
+      }
       final request = await _client.postUrl(uri).timeout(requestTimeout);
-      request.followRedirects = false;
+      pinNoveliaHttpRequest(request);
       request.headers.set(HttpHeaders.acceptHeader, 'text/plain, */*');
       if (cookieHeader != null && cookieHeader.trim().isNotEmpty) {
         request.headers.set(HttpHeaders.cookieHeader, cookieHeader);

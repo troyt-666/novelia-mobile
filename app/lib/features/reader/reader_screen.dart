@@ -120,6 +120,26 @@ class _ReaderScreenState extends State<ReaderScreen>
         widget.initialPosition?.chapterId ??
         (_loadedChapters.isEmpty ? null : _loadedChapters.first.id);
     _lastPosition = _resolvedInitialPosition();
+    widget.chapterDataSource?.addChapterUpdateListener(_onChapterUpdated);
+  }
+
+  @override
+  void didUpdateWidget(ReaderScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.chapterDataSource == widget.chapterDataSource) return;
+    oldWidget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
+    widget.chapterDataSource?.addChapterUpdateListener(_onChapterUpdated);
+  }
+
+  void _onChapterUpdated(NovelChapter chapter) {
+    if (!mounted) return;
+    final index = _loadedChapters.indexWhere((item) => item.id == chapter.id);
+    if (index < 0) return;
+    if (identical(_loadedChapters[index], chapter)) return;
+    setState(() {
+      _loadedChapters[index] = chapter;
+      _rebuildStream();
+    });
   }
 
   List<ReaderChapterCatalogEntry> get _chapterCatalog {
@@ -262,6 +282,7 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   @override
   void dispose() {
+    widget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
     _windowGeneration += 1;
     _chromeDismissTimer?.cancel();
     if (!_restoring) {
@@ -324,7 +345,12 @@ class _ReaderScreenState extends State<ReaderScreen>
         }
       }
       if (stableId != null) {
-        await _jumpToStableId(stableId);
+        final restoreOffset =
+            widget.initialPosition != null &&
+                widget.initialPosition!.blockId == blockId
+            ? widget.initialPosition!.intraBlockOffset
+            : 0;
+        await _jumpToStableId(stableId, intraBlockOffset: restoreOffset);
         if (!mounted) return;
         final itemIndex = _itemIndices[stableId];
         if (itemIndex != null) {
@@ -338,6 +364,7 @@ class _ReaderScreenState extends State<ReaderScreen>
             _lastPosition = ReadingPosition(
               chapterId: item.chapter.id,
               blockId: block.id,
+              intraBlockOffset: restoreOffset,
             );
           }
         }
@@ -349,7 +376,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     });
   }
 
-  Future<void> _jumpToStableId(String stableId) async {
+  Future<void> _jumpToStableId(
+    String stableId, {
+    int intraBlockOffset = 0,
+  }) async {
     if (!mounted) return;
     final targetIndex = _itemIndices[stableId];
     if (targetIndex == null || !_scrollController.hasClients) return;
@@ -373,6 +403,21 @@ class _ReaderScreenState extends State<ReaderScreen>
         alignment: 0,
         duration: Duration.zero,
       );
+      if (intraBlockOffset > 0 &&
+          _scrollController.hasClients &&
+          targetContext.mounted) {
+        final box = targetContext.findRenderObject();
+        if (box is RenderBox && box.hasSize) {
+          final extra = box.size.height * intraBlockOffset / 1000.0;
+          final position = _scrollController.position;
+          _scrollController.jumpTo(
+            (position.pixels + extra).clamp(
+              position.minScrollExtent,
+              position.maxScrollExtent,
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -625,8 +670,8 @@ class _ReaderScreenState extends State<ReaderScreen>
           : _itemIndices[visibleAnchor.stableId];
       if (anchorIndex != null) {
         renderedAnchorIndex = anchorIndex;
-        // Build the retained semantic anchor first. A second bounded update
-        // reveals the lead-in while compensating its exact rendered extent.
+        // Reveal the prepended lead-in on a second frame so scroll
+        // compensation uses the exact added extent.
         _windowStart = anchorIndex;
         _windowEnd = (anchorIndex + oldWindowSpan).clamp(
           _windowStart,
@@ -778,12 +823,29 @@ class _ReaderScreenState extends State<ReaderScreen>
 
     final anchor = firstSubstantiallyVisible ?? nearestVisible;
     if (anchor == null) return null;
-    final changed = _anchorBlockId.value != anchor.block.id;
-    _anchorBlockId.value = anchor.block.id;
-    _lastPosition = ReadingPosition(
+    var intraBlockOffset = 0;
+    final anchorContext = _mountedContextFor(anchor.stableId);
+    final anchorBox = anchorContext?.findRenderObject();
+    if (anchorBox is RenderBox &&
+        anchorBox.hasSize &&
+        anchorBox.size.height > 0) {
+      final top = anchorBox.localToGlobal(Offset.zero).dy;
+      final pixelsIntoBlock = (viewportTop - top).clamp(
+        0.0,
+        anchorBox.size.height,
+      );
+      intraBlockOffset = (pixelsIntoBlock / anchorBox.size.height * 1000)
+          .round()
+          .clamp(0, 1000);
+    }
+    final position = ReadingPosition(
       chapterId: anchor.chapter.id,
       blockId: anchor.block.id,
+      intraBlockOffset: intraBlockOffset,
     );
+    final changed = _lastPosition != position;
+    _anchorBlockId.value = anchor.block.id;
+    _lastPosition = position;
     final chapterChanged = _activeChapterId != anchor.chapter.id;
     _activeChapterId = anchor.chapter.id;
     if (chapterChanged && updateUi && mounted) {
@@ -1122,8 +1184,11 @@ class _ReaderScreenState extends State<ReaderScreen>
                   _handleReaderScroll(notification);
                   if (!_restoring &&
                       !_preservingDynamicAnchor &&
-                      notification is ScrollEndNotification) {
-                    _captureAnchor();
+                      (notification is ScrollEndNotification ||
+                          notification is ScrollUpdateNotification)) {
+                    _captureAnchor(
+                      notify: notification is ScrollEndNotification,
+                    );
                   }
                   return false;
                 },
@@ -1184,6 +1249,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                               foreground: foreground,
                             ),
                             AlignedBlockItem() => _AlignedBlockView(
+                              key: ValueKey(item.stableId),
                               item: item,
                               settings: _settings,
                               foreground: foreground,
@@ -1645,6 +1711,7 @@ class _AlignedBlockView extends StatefulWidget {
     required this.foreground,
     required this.onMounted,
     required this.onUnmounted,
+    super.key,
   });
 
   final AlignedBlockItem item;
@@ -1761,7 +1828,7 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
   }
 }
 
-class _IllustrationBlockView extends StatelessWidget {
+class _IllustrationBlockView extends StatefulWidget {
   const _IllustrationBlockView({
     required this.block,
     required this.readingWidth,
@@ -1773,11 +1840,80 @@ class _IllustrationBlockView extends StatelessWidget {
   final Color foreground;
 
   @override
+  State<_IllustrationBlockView> createState() => _IllustrationBlockViewState();
+}
+
+class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
+  static final Map<String, double> _aspectByUrl = <String, double>{};
+  static const _placeholderAspectRatio = 3 / 4;
+
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+
+  AlignedBlock get _block => widget.block;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _listenForSize();
+  }
+
+  @override
+  void didUpdateWidget(_IllustrationBlockView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.block.illustrationUri != _block.illustrationUri) {
+      _listenForSize();
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopListening();
+    super.dispose();
+  }
+
+  void _listenForSize() {
+    _stopListening();
+    final uri = _block.illustrationUri;
+    if (uri == null) return;
+    final key = uri.toString();
+    if (_aspectByUrl.containsKey(key)) return;
+    final provider = NetworkImage(
+      key,
+      headers: uri.host.endsWith('.pximg.net')
+          ? const {'Referer': 'https://www.pixiv.net/'}
+          : null,
+    );
+    final stream = provider.resolve(createLocalImageConfiguration(context));
+    _listener = ImageStreamListener((info, _) {
+      final height = info.image.height;
+      if (height <= 0) return;
+      _aspectByUrl[key] = info.image.width / height;
+      if (mounted) setState(() {});
+    }, onError: (_, _) {});
+    _stream = stream;
+    stream.addListener(_listener!);
+  }
+
+  void _stopListening() {
+    final stream = _stream;
+    final listener = _listener;
+    if (stream != null && listener != null) {
+      stream.removeListener(listener);
+    }
+    _stream = null;
+    _listener = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final uri = block.illustrationUri;
+    final uri = _block.illustrationUri;
+    final aspect = uri == null
+        ? _placeholderAspectRatio
+        : _aspectByUrl[uri.toString()] ?? _placeholderAspectRatio;
     return Center(
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: readingWidth),
+        constraints: BoxConstraints(maxWidth: widget.readingWidth),
         child: Semantics(
           container: true,
           image: true,
@@ -1785,28 +1921,34 @@ class _IllustrationBlockView extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             child: uri == null
-                ? _IllustrationFailure(foreground: foreground)
+                ? _IllustrationFailure(
+                    blockId: _block.id,
+                    foreground: widget.foreground,
+                  )
                 : ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      uri.toString(),
-                      key: ValueKey('block-${block.id}-illustration'),
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                      headers: uri.host.endsWith('.pximg.net')
-                          ? const {'Referer': 'https://www.pixiv.net/'}
-                          : null,
-                      frameBuilder: (context, child, frame, synchronous) {
-                        if (synchronous || frame != null) return child;
-                        return const SizedBox(
-                          height: 180,
-                          child: Center(
+                    child: AspectRatio(
+                      aspectRatio: aspect,
+                      child: Image.network(
+                        uri.toString(),
+                        key: ValueKey('block-${_block.id}-illustration'),
+                        width: double.infinity,
+                        fit: BoxFit.contain,
+                        headers: uri.host.endsWith('.pximg.net')
+                            ? const {'Referer': 'https://www.pixiv.net/'}
+                            : null,
+                        frameBuilder: (context, child, frame, synchronous) {
+                          if (synchronous || frame != null) return child;
+                          return const Center(
                             child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) =>
-                          _IllustrationFailure(foreground: foreground),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) =>
+                            _IllustrationFailure(
+                              blockId: _block.id,
+                              foreground: widget.foreground,
+                            ),
+                      ),
                     ),
                   ),
           ),
@@ -1817,14 +1959,15 @@ class _IllustrationBlockView extends StatelessWidget {
 }
 
 class _IllustrationFailure extends StatelessWidget {
-  const _IllustrationFailure({required this.foreground});
+  const _IllustrationFailure({required this.blockId, required this.foreground});
 
+  final String blockId;
   final Color foreground;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      key: const ValueKey('illustration-load-failure'),
+      key: ValueKey('block-$blockId-illustration-failure'),
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 36),
       decoration: BoxDecoration(
@@ -2076,6 +2219,29 @@ class _ChapterCatalogSheet extends StatelessWidget {
   final String? activeChapterId;
   final Set<String> loadedChapterIds;
 
+  List<({String? title, ReaderChapterCatalogEntry? chapter})> get _rows {
+    final grouped = catalog.any(
+      (entry) => entry.sectionTitle != null && entry.sectionTitle!.isNotEmpty,
+    );
+    if (!grouped) {
+      return [for (final chapter in catalog) (title: null, chapter: chapter)];
+    }
+    final rows = <({String? title, ReaderChapterCatalogEntry? chapter})>[];
+    String? current;
+    for (final chapter in catalog) {
+      final title =
+          (chapter.sectionTitle == null || chapter.sectionTitle!.isEmpty)
+          ? '章节'
+          : chapter.sectionTitle!;
+      if (title != current) {
+        current = title;
+        rows.add((title: title, chapter: null));
+      }
+      rows.add((title: null, chapter: chapter));
+    }
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -2098,12 +2264,24 @@ class _ChapterCatalogSheet extends StatelessWidget {
           ),
           const Divider(height: 1),
           Expanded(
-            child: ListView.separated(
+            child: ListView.builder(
               key: const ValueKey('chapter-catalog-list'),
-              itemCount: catalog.length,
-              separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
+              itemCount: _rows.length,
               itemBuilder: (context, index) {
-                final chapter = catalog[index];
+                final row = _rows[index];
+                final chapter = row.chapter;
+                if (chapter == null) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+                    child: Text(
+                      row.title!,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  );
+                }
                 final active = chapter.id == activeChapterId;
                 final loaded = loadedChapterIds.contains(chapter.id);
                 return ListTile(

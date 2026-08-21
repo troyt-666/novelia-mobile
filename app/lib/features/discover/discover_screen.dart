@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/model/reader_models.dart';
 import 'catalog_card.dart';
 import 'catalog_models.dart';
+import 'rankings_screen.dart';
 
 enum DiscoverScreenMode { combined, discovery, search }
 
@@ -29,6 +31,7 @@ class DiscoverScreen extends StatefulWidget {
     this.recentSearches = const [],
     this.onSearchCommitted,
     this.onTagSelected,
+    this.rankingsLoader,
     this.mode = DiscoverScreenMode.combined,
     super.key,
   });
@@ -43,8 +46,7 @@ class DiscoverScreen extends StatefulWidget {
   final CatalogCriteria initialCriteria;
   final CatalogCriteriaRequested? onCriteriaRequested;
 
-  /// Legacy search-only boundary retained while composition roots migrate to
-  /// [onCriteriaRequested].
+  /// Search-only fallback when [onCriteriaRequested] is absent.
   final FutureOr<void> Function(String query)? onSearchRequested;
   final FutureOr<void> Function()? onLoadMoreRequested;
   final int? catalogTotalCount;
@@ -58,6 +60,7 @@ class DiscoverScreen extends StatefulWidget {
 
   /// Handles a tag selected from a discovery card.
   final ValueChanged<String>? onTagSelected;
+  final RankingsLoader? rankingsLoader;
   final DiscoverScreenMode mode;
 
   @override
@@ -79,6 +82,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   late CatalogSort _sort;
   bool _showFilters = false;
   CatalogSort _discoverySort = CatalogSort.recentlyUpdated;
+  var _showingRankings = false;
+  var _rankingsOpened = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -348,7 +353,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     final showSearch = widget.mode != DiscoverScreenMode.discovery;
     final continuedNovel = showDiscovery ? widget.continuedNovel : null;
 
-    return SafeArea(
+    final discover = SafeArea(
       bottom: false,
       child: CustomScrollView(
         key: const PageStorageKey('discover-scroll'),
@@ -386,7 +391,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   if (showDiscovery)
                     FilledButton.tonalIcon(
                       key: const ValueKey('open-rankings-button'),
-                      onPressed: widget.onOpenRankings,
+                      onPressed: () {
+                        widget.onOpenRankings();
+                        setState(() {
+                          _showingRankings = true;
+                          _rankingsOpened = true;
+                        });
+                      },
                       icon: const Icon(Icons.leaderboard_outlined),
                       label: const Text('排行'),
                     ),
@@ -688,6 +699,31 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         ],
       ),
     );
+    if (!showDiscovery) return discover;
+    return PopScope(
+      canPop: !_showingRankings,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _showingRankings) {
+          setState(() => _showingRankings = false);
+        }
+      },
+      child: IndexedStack(
+        index: _showingRankings ? 1 : 0,
+        children: [
+          discover,
+          if (_rankingsOpened)
+            RankingsScreen(
+              novels: widget.novels,
+              loader: widget.rankingsLoader,
+              onOpenNovel: widget.onOpenNovel,
+              onTagSelected: widget.onTagSelected ?? (_) {},
+              onClose: () => setState(() => _showingRankings = false),
+            )
+          else
+            const SizedBox.shrink(),
+        ],
+      ),
+    );
   }
 }
 
@@ -867,13 +903,13 @@ class _CatalogFilters extends StatelessWidget {
                   selected: selectedTranslationSource == null,
                   onSelected: (_) => onTranslationSelected(null),
                 ),
-                for (final source in const ['GPT', 'Sakura'])
+                for (final source in TranslationSource.values)
                   ChoiceChip(
-                    key: ValueKey('filter-translation-$source'),
-                    label: Text(source),
-                    selected: selectedTranslationSource == source,
+                    key: ValueKey('filter-translation-${source.label}'),
+                    label: Text(source.label),
+                    selected: selectedTranslationSource == source.label,
                     onSelected: (selected) =>
-                        onTranslationSelected(selected ? source : null),
+                        onTranslationSelected(selected ? source.label : null),
                   ),
               ],
             ),

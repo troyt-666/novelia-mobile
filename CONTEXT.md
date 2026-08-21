@@ -37,7 +37,7 @@ An automatically retained offline copy that is expendable and may be evicted.
 _Avoid_: download, saved book
 
 **Offline Download**:
-A reader-requested, protected offline copy containing the Japanese Original and the selected Translation Source, retained until deliberately removed and kept current as revisions appear. A single-chapter Offline Download remains fixed to that chapter; a Novel Download also acquires future chapters. Downloaded content survives removal of its source content from the service.
+A reader-requested, protected offline copy containing the Japanese Original and the selected Translation Source, retained until deliberately removed. Complete chapters are snapshots of the revision stored at download or at the last Translation Pending refresh; they are not revalidated while the intent remains. A single-chapter Offline Download remains fixed to that chapter; a Novel Download also acquires future chapters and rechecks Translation Pending chapters. Downloaded content survives removal of its source content from the service.
 _Avoid_: cache, saved book
 
 **Novel Download**:

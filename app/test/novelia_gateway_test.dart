@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -232,6 +233,132 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('rejects off-allowlist hosts before connecting', () async {
+    final gateway = HttpNoveliaGateway(
+      baseUri: Uri.parse('https://evil.example/api/'),
+      client: _HandshakeHttpClient(),
+    );
+
+    await expectLater(
+      gateway.listNovels(const NoveliaCatalogQuery()),
+      throwsA(
+        isA<NoveliaGatewayException>().having(
+          (error) => error.kind,
+          'kind',
+          NoveliaGatewayFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('retries an authenticated content GET once after 401', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final authorizations = <String?>[];
+    final serving = server.listen((request) async {
+      authorizations.add(
+        request.headers.value(HttpHeaders.authorizationHeader),
+      );
+      if (authorizations.length == 1) {
+        request.response.statusCode = HttpStatus.unauthorized;
+      } else {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'items': <Object>[], 'pageNumber': 1}),
+        );
+      }
+      await request.response.close();
+    });
+    addTearDown(serving.cancel);
+    final refreshes = <bool>[];
+    final gateway = HttpNoveliaGateway(
+      baseUri: Uri.parse(
+        'http://${server.address.address}:${server.port}/api/',
+      ),
+      accessTokenProvider: ({bool forceRefresh = false}) async {
+        refreshes.add(forceRefresh);
+        return forceRefresh ? 'token-new' : 'token-old';
+      },
+    );
+    addTearDown(gateway.close);
+
+    final page = await gateway.listNovels(const NoveliaCatalogQuery());
+    expect(page.items, isEmpty);
+    expect(refreshes, [false, true]);
+    expect(authorizations, ['Bearer token-old', 'Bearer token-new']);
+  });
+
+  test('does not retry anonymous content 401s', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var requests = 0;
+    final serving = server.listen((request) async {
+      requests += 1;
+      request.response.statusCode = HttpStatus.unauthorized;
+      await request.response.close();
+    });
+    addTearDown(serving.cancel);
+    final gateway = HttpNoveliaGateway(
+      baseUri: Uri.parse(
+        'http://${server.address.address}:${server.port}/api/',
+      ),
+    );
+    addTearDown(gateway.close);
+
+    await expectLater(
+      gateway.listNovels(const NoveliaCatalogQuery()),
+      throwsA(
+        isA<NoveliaGatewayException>().having(
+          (error) => error.kind,
+          'kind',
+          NoveliaGatewayFailureKind.authenticationRequired,
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
+
+  test('does not follow content HTTP redirects', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final paths = <String>[];
+    final serving = server.listen((request) async {
+      paths.add(request.uri.path);
+      if (request.uri.path.endsWith('/redirected')) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'items': <Object>[], 'pageNumber': 1}),
+        );
+      } else {
+        request.response.statusCode = HttpStatus.found;
+        request.response.headers.set(
+          HttpHeaders.locationHeader,
+          'http://${server.address.address}:${server.port}/api/redirected',
+        );
+      }
+      await request.response.close();
+    });
+    addTearDown(serving.cancel);
+    final gateway = HttpNoveliaGateway(
+      baseUri: Uri.parse(
+        'http://${server.address.address}:${server.port}/api/',
+      ),
+    );
+    addTearDown(gateway.close);
+
+    await expectLater(
+      gateway.listNovels(const NoveliaCatalogQuery()),
+      throwsA(
+        isA<NoveliaGatewayException>().having(
+          (error) => error.kind,
+          'kind',
+          NoveliaGatewayFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    expect(paths, everyElement(isNot(contains('redirected'))));
   });
 }
 

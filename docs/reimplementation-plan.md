@@ -421,10 +421,10 @@ rate-limited, and run only against an owned test account.
 - Scoped storage and system document picker; no all-files permission.
 - Keystore-backed secrets.
 - WorkManager-style persistent background queue.
-- Release-signed APK for private direct distribution, potentially through a
-  separate private GitHub Release. Do not implement APK self-updating.
-- An optional version check may open the private distribution/release page;
-  download and installation remain manual.
+- Release-signed APK through GitHub Releases. Do not implement APK
+  self-updating.
+- An optional version check may open the GitHub Release page; download and
+  installation remain manual.
 
 ### iOS
 
@@ -523,11 +523,10 @@ duplicate mutations, or lost local reading state.
 - Forum, Novel Comment posting/replies, saved articles, and document export.
 - Background scheduling, interrupted-download recovery, and cache controls.
 - Accessibility/privacy review, migration matrix, crash-log redaction, and
-  private-release notes and installation instructions.
-- Test release-signed APK and IPA artifacts through the intended private
-  distribution path.
+  release notes and installation instructions.
+- Test release-signed APK and sideload IPA artifacts through GitHub Releases.
 
-**Exit gate:** distribution permissions are documented and both private builds
+**Exit gate:** distribution permissions are documented and release artifacts
 pass privacy, accessibility, offline, migration, and failure-mode checks.
 
 ### Phase 5: customization

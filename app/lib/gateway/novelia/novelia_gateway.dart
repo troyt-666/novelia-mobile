@@ -304,8 +304,9 @@ abstract interface class NoveliaGateway {
 
   Future<NoveliaChapterPayload> getChapter(
     NoveliaNovelKey key,
-    String chapterId,
-  );
+    String chapterId, {
+    void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,
+  });
 
   Future<NoveliaPage<NoveliaComment>> listComments(
     NoveliaNovelKey key, {
@@ -314,4 +315,5 @@ abstract interface class NoveliaGateway {
   });
 }
 
-typedef NoveliaAccessTokenProvider = FutureOr<String?> Function();
+typedef NoveliaAccessTokenProvider =
+    FutureOr<String?> Function({bool forceRefresh});

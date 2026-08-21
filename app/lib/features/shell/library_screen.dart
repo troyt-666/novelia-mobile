@@ -8,7 +8,6 @@ class LibraryScreen extends StatelessWidget {
   const LibraryScreen({
     required this.onOpenNovel,
     this.onOpenPosition,
-    this.novels = const [],
     this.continuedReads = const [],
     this.protectedDownloads = const [],
     this.bookmarks = const [],
@@ -19,9 +18,6 @@ class LibraryScreen extends StatelessWidget {
     super.key,
   });
 
-  /// Temporarily retained so existing shell call sites remain compatible.
-  /// Displayed data comes only from the explicit view-model collections.
-  final List<CatalogNovel> novels;
   final ValueChanged<CatalogNovel> onOpenNovel;
   final void Function(CatalogNovel novel, ReadingPosition position)?
   onOpenPosition;

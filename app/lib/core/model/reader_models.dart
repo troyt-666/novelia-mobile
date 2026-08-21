@@ -256,6 +256,23 @@ class ReaderChapterDataSource {
   final List<ReaderChapterCatalogEntry> catalog;
   final ReaderLoadAround loadAround;
   final ReaderLoadAdjacent loadAdjacent;
+  final List<ValueChanged<NovelChapter>> _chapterUpdateListeners = [];
+
+  void addChapterUpdateListener(ValueChanged<NovelChapter> listener) {
+    _chapterUpdateListeners.add(listener);
+  }
+
+  void removeChapterUpdateListener(ValueChanged<NovelChapter> listener) {
+    _chapterUpdateListeners.remove(listener);
+  }
+
+  void notifyChapterUpdated(NovelChapter chapter) {
+    for (final listener in List<ValueChanged<NovelChapter>>.of(
+      _chapterUpdateListeners,
+    )) {
+      listener(chapter);
+    }
+  }
 }
 
 @immutable
@@ -269,6 +286,17 @@ class ReadingPosition {
   final String chapterId;
   final String blockId;
   final int intraBlockOffset;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ReadingPosition &&
+        other.chapterId == chapterId &&
+        other.blockId == blockId &&
+        other.intraBlockOffset == intraBlockOffset;
+  }
+
+  @override
+  int get hashCode => Object.hash(chapterId, blockId, intraBlockOffset);
 }
 
 sealed class ReaderStreamItem {

@@ -1,5 +1,7 @@
 # Copy this file to android/key.properties, which is ignored by Git.
-# Prefer the JFZREADER_ANDROID_* environment variables in automation.
+# Local builds read these fields. GitHub Actions uses repository secrets
+# JFZREADER_ANDROID_STORE_BASE64 and JFZREADER_ANDROID_{STORE_PASSWORD,
+# KEY_ALIAS, KEY_PASSWORD} instead of this file.
 storeFile=/absolute/private/path/jfzreader-release.jks
 storePassword=replace-interactively
 keyAlias=jfzreader

@@ -246,6 +246,36 @@ class _NoveliaShellState extends State<NoveliaShell> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<bool> _ensureSignedIn() async {
+    if (widget.accountSession.isSignedIn) return true;
+    if (widget.accountSession.status == AccountSessionStatus.restoring) {
+      _showFixtureAction('正在检查账号状态');
+      return false;
+    }
+    if (widget.accountSession.hasStoredAccount) {
+      widget.onLoginRequested?.call();
+      if (!mounted) return false;
+      if (widget.accountSession.isSignedIn) return true;
+      _showFixtureAction('账号服务暂不可用，请到设置中重试或退出后重新登录');
+      return false;
+    }
+    final login = widget.onAccountLogin;
+    if (login == null) {
+      widget.onLoginRequested?.call();
+      return false;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AccountScreen(
+          onLogin: login,
+          onHostedAccountHelp: widget.onHostedAccountHelp,
+        ),
+        settings: const RouteSettings(name: '/account/login'),
+      ),
+    );
+    return mounted && widget.accountSession.isSignedIn;
+  }
+
   Future<bool> _requestFavorite(CatalogNovel novel) async {
     if (widget.onFavoriteToFolderRequested == null &&
         widget.onFavoriteRequested != null) {
@@ -253,22 +283,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
       return true;
     }
     if (!widget.accountSession.isSignedIn) {
-      final login = widget.onAccountLogin;
-      if (login == null) {
-        widget.onLoginRequested?.call();
-        return false;
-      }
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => AccountScreen(
-            onLogin: login,
-            onHostedAccountHelp: widget.onHostedAccountHelp,
-          ),
-          settings: const RouteSettings(name: '/account/login'),
-        ),
-      );
+      final signedIn = await _ensureSignedIn();
       if (!mounted) return false;
-      if (widget.accountSession.isSignedIn) {
+      if (signedIn) {
         _showFixtureAction('登录成功，请再次点击收藏');
       }
       return false;
@@ -446,21 +463,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
     final loader = widget.readingHistoryLoader;
     if (loader == null) return;
     if (!widget.accountSession.isSignedIn) {
-      final login = widget.onAccountLogin;
-      if (login == null) {
-        widget.onLoginRequested?.call();
-        return;
-      }
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => AccountScreen(
-            onLogin: login,
-            onHostedAccountHelp: widget.onHostedAccountHelp,
-          ),
-          settings: const RouteSettings(name: '/account/login'),
-        ),
-      );
-      if (!mounted || !widget.accountSession.isSignedIn) return;
+      final signedIn = await _ensureSignedIn();
+      if (!mounted || !signedIn) return;
     }
     if (!mounted) return;
     await Navigator.of(context).push<void>(
@@ -704,19 +708,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
     );
   }
 
-  Future<void> _openRankings() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => RankingsScreen(
-          novels: widget.novels,
-          loader: widget.rankingsLoader,
-          onOpenNovel: _openNovel,
-          onTagSelected: _openTag,
-        ),
-        settings: const RouteSettings(name: '/rankings'),
-      ),
-    );
-  }
+  void _openRankings() {}
 
   @override
   Widget build(BuildContext context) {
@@ -752,6 +744,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
                 requestedPosition: continuedRead.position,
               ),
         mostClickedNovels: widget.mostClickedNovels,
+        rankingsLoader: widget.rankingsLoader,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
         onTagSelected: _openTag,
@@ -773,12 +766,12 @@ class _NoveliaShellState extends State<NoveliaShell> {
         catalogLoadMoreFailed: widget.catalogLoadMoreFailed,
         recentSearches: _recentSearches,
         onSearchCommitted: _rememberSearch,
+        rankingsLoader: widget.rankingsLoader,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
         onTagSelected: _openTag,
       ),
       LibraryScreen(
-        novels: widget.novels,
         continuedReads: widget.continuedReads,
         protectedDownloads: widget.protectedDownloads,
         bookmarks: widget.bookmarks,

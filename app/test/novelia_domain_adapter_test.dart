@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
 import 'package:jfzreader/gateway/novelia/novelia_domain_adapter.dart';
@@ -220,6 +221,84 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('restore fails closed when a SHA-256 revision does not match', () {
+    const cacheAdapter = NoveliaContentCacheAdapter();
+    final cached = cacheAdapter.cacheChapter(
+      NoveliaChapterPayload(
+        key: key,
+        chapterId: 'c1',
+        japaneseTitle: '第一話',
+        chineseTitle: '第一章',
+        novelJapaneseTitle: '作品',
+        novelChineseTitle: '作品',
+        previousChapterId: null,
+        nextChapterId: 'c2',
+        originalParagraphs: const ['一'],
+        baiduParagraphs: const [],
+        youdaoParagraphs: const ['甲'],
+        gptParagraphs: const [],
+        sakuraParagraphs: const [],
+      ),
+      metadata: NovelChapter(
+        id: 'c1',
+        index: 1,
+        chineseTitle: '第一章',
+        japaneseTitle: '第一話',
+        publishedAt: DateTime.utc(2026, 8, 17),
+        blocks: const [],
+      ),
+      fetchedAt: DateTime.utc(2026, 8, 17),
+    );
+
+    final tampered = CachedChapterPayload(
+      id: cached.id,
+      novelId: cached.novelId,
+      chapterId: cached.chapterId,
+      index: cached.index,
+      chineseTitle: cached.chineseTitle,
+      japaneseTitle: cached.japaneseTitle,
+      previousChapterId: cached.previousChapterId,
+      nextChapterId: cached.nextChapterId,
+      publishedAt: cached.publishedAt,
+      japaneseBlocks: const ['被篡改'],
+      translations: cached.translations,
+      fetchedAt: cached.fetchedAt,
+      revision: cached.revision,
+      etag: cached.etag,
+    );
+
+    expect(
+      () => cacheAdapter.restoreChapter(tampered),
+      throwsA(isA<NoveliaDomainMappingException>()),
+    );
+  });
+
+  test('restore skips checksum for short fixture revisions', () {
+    const cacheAdapter = NoveliaContentCacheAdapter();
+    final fixture = CachedChapterPayload(
+      id: 'payload-r1',
+      novelId: key.stableId,
+      chapterId: 'c1',
+      index: 1,
+      chineseTitle: '第一章',
+      japaneseTitle: '第一話',
+      previousChapterId: null,
+      nextChapterId: null,
+      publishedAt: DateTime.utc(2026, 8, 17),
+      japaneseBlocks: const ['一'],
+      translations: {
+        TranslationSource.youdao: CachedChapterTranslation(
+          availability: TranslationAvailability.complete,
+          blocks: const ['甲'],
+        ),
+      },
+      fetchedAt: DateTime.utc(2026, 8, 17),
+      revision: 'r1',
+    );
+
+    expect(cacheAdapter.restoreChapter(fixture).id, 'c1');
   });
 }
 

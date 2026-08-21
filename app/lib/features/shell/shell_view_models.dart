@@ -134,6 +134,9 @@ class LibraryProtectedDownload {
         completed += 1;
       } else if (chapter.taskState == DownloadTaskState.fetching) {
         completed += chapter.byteProgressFraction ?? 0;
+      } else if (chapter.taskState == DownloadTaskState.validating ||
+          chapter.taskState == DownloadTaskState.storing) {
+        completed += chapter.byteProgressFraction ?? 1;
       }
     }
     return (completed / chapters.length).clamp(0.0, 1.0);

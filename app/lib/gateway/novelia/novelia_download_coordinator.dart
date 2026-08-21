@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import '../../core/model/reader_models.dart';
 import '../../core/offline/content_models.dart';
 import '../../core/offline/content_repository.dart';
@@ -122,8 +120,10 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     );
     final refreshCandidates = _rotatingRefreshBatch(intentId);
 
+    final liveIntent = offlineRepository.intentById(intentId);
     if (hydration.availability != CatalogAvailability.available ||
-        !intent.enabled) {
+        liveIntent == null ||
+        !liveIntent.enabled) {
       return _runResult(
         intentId: intentId,
         availability: hydration.availability,
@@ -142,12 +142,16 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
         .where((task) => task.state == DownloadTaskState.queued)
         .toList(growable: false);
     for (final task in queuedTasks) {
+      final currentIntent = offlineRepository.intentById(intentId);
+      if (currentIntent == null || !currentIntent.enabled) break;
       await _processTask(task, metadataById[task.chapterId]);
     }
 
     var refreshedCopyCount = 0;
     var refreshFailureCount = 0;
     for (final candidate in refreshCandidates) {
+      final currentIntent = offlineRepository.intentById(intentId);
+      if (currentIntent == null || !currentIntent.enabled) break;
       final refreshed = await _refreshStoredCopy(
         candidate,
         metadataById[candidate.task.chapterId],
@@ -230,6 +234,8 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     NovelChapter? metadata,
   ) async {
     if (metadata == null) return false;
+    final intent = offlineRepository.intentById(candidate.task.intentId);
+    if (intent == null || !intent.enabled) return false;
     final key = domainAdapter.keyFromStableId(candidate.task.novelId);
     if (key == null) return false;
 
@@ -239,6 +245,8 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     } on NoveliaGatewayException {
       return false;
     }
+    final currentIntent = offlineRepository.intentById(candidate.task.intentId);
+    if (currentIntent == null || !currentIntent.enabled) return false;
     if (response.key != key || response.chapterId != candidate.task.chapterId) {
       return false;
     }
@@ -342,8 +350,10 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     DownloadTask initialTask,
     NovelChapter? metadata,
   ) async {
-    var task = initialTask.beginFetching(clock());
-    offlineRepository.saveTask(task);
+    var task = _reloadQueued(initialTask.id);
+    if (task == null) return;
+    if (!_trySaveTask(task.beginFetching(clock()))) return;
+    task = offlineRepository.taskById(task.id)!;
 
     if (metadata == null) {
       _saveFailure(
@@ -370,17 +380,29 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
       return;
     }
 
+    final taskId = task.id;
     NoveliaChapterPayload response;
     try {
-      response = await gateway.getChapter(key, task.chapterId);
+      response = await gateway.getChapter(
+        key,
+        task.chapterId,
+        onReceiveProgress: (received, total) {
+          _reportFetchProgress(taskId, received, total);
+        },
+      );
     } on NoveliaGatewayException catch (failure) {
-      _saveFailure(task, _downloadFailure(failure));
+      final current = _reloadFetching(taskId);
+      if (current == null) return;
+      _saveFailure(current, _downloadFailure(failure));
       return;
     }
 
+    task = _reloadFetching(taskId);
+    if (task == null) return;
+
     if (response.key != key || response.chapterId != task.chapterId) {
-      task = task.beginValidation(clock());
-      offlineRepository.saveTask(task);
+      if (!_trySaveTask(task.beginValidation(clock()))) return;
+      task = offlineRepository.taskById(task.id)!;
       _saveFailure(
         task,
         const DownloadFailure(
@@ -400,8 +422,8 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
         fetchedAt: clock(),
       );
     } on NoveliaDomainMappingException catch (failure) {
-      task = task.beginValidation(clock());
-      offlineRepository.saveTask(task);
+      if (!_trySaveTask(task.beginValidation(clock()))) return;
+      task = offlineRepository.taskById(task.id)!;
       _saveFailure(
         task,
         DownloadFailure(
@@ -414,19 +436,8 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     }
 
     final selected = payload.translationFor(task.translationSource)!;
-    final fetchedBytes =
-        _utf8Length(payload.japaneseBlocks) +
-        (selected.availability == TranslationAvailability.complete
-            ? _utf8Length(selected.blocks)
-            : 0);
-    task = task.reportFetchProgress(
-      clock(),
-      bytesReceived: fetchedBytes,
-      totalBytes: fetchedBytes,
-    );
-    offlineRepository.saveTask(task);
-    task = task.beginValidation(clock());
-    offlineRepository.saveTask(task);
+    if (!_trySaveTask(task.beginValidation(clock()))) return;
+    task = offlineRepository.taskById(task.id)!;
 
     if (selected.availability == TranslationAvailability.invalid) {
       _saveFailure(
@@ -443,8 +454,8 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
 
     // Pending is valid offline data: the protected copy contains the exact
     // Japanese blocks and a null translation byte count.
-    task = task.beginStoring(clock());
-    offlineRepository.saveTask(task);
+    if (!_trySaveTask(task.beginStoring(clock()))) return;
+    task = offlineRepository.taskById(task.id)!;
     final storedAt = clock();
     final copy = cacheAdapter.downloadedCopy(
       payload,
@@ -476,6 +487,54 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
           ),
         );
       }
+    }
+  }
+
+  DownloadTask? _reloadQueued(String taskId) {
+    final task = offlineRepository.taskById(taskId);
+    if (task == null || task.state != DownloadTaskState.queued) return null;
+    final intent = offlineRepository.intentById(task.intentId);
+    if (intent == null || !intent.enabled) return null;
+    return task;
+  }
+
+  DownloadTask? _reloadFetching(String taskId) {
+    final task = offlineRepository.taskById(taskId);
+    if (task == null || task.state != DownloadTaskState.fetching) return null;
+    final intent = offlineRepository.intentById(task.intentId);
+    if (intent == null || !intent.enabled) return null;
+    return task;
+  }
+
+  void _reportFetchProgress(String taskId, int bytesReceived, int? totalBytes) {
+    final task = _reloadFetching(taskId);
+    if (task == null) return;
+    if (bytesReceived < task.bytesReceived) return;
+    if (totalBytes == null && task.totalBytes == null) {
+      if (bytesReceived - task.bytesReceived < 4096) return;
+    } else if (bytesReceived - task.bytesReceived < 4096 &&
+        (totalBytes == null || bytesReceived < totalBytes)) {
+      return;
+    }
+    try {
+      offlineRepository.saveTask(
+        task.reportFetchProgress(
+          clock(),
+          bytesReceived: bytesReceived,
+          totalBytes: totalBytes,
+        ),
+      );
+    } on Object {
+      // Pause, remove, or a concurrent writer owns the next revision.
+    }
+  }
+
+  bool _trySaveTask(DownloadTask task) {
+    try {
+      offlineRepository.saveTask(task);
+      return true;
+    } on StateError {
+      return false;
     }
   }
 
@@ -539,7 +598,11 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
   }
 
   void _saveFailure(DownloadTask task, DownloadFailure failure) {
-    offlineRepository.saveTask(task.fail(clock(), failure));
+    try {
+      _trySaveTask(task.fail(clock(), failure));
+    } on StateError {
+      // Pause, remove, or another writer already left this task.
+    }
   }
 
   NoveliaDownloadRun _runResult({
@@ -602,13 +665,6 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     return failure.kind == NoveliaGatewayFailureKind.network ||
         failure.kind == NoveliaGatewayFailureKind.timeout ||
         failure.kind == NoveliaGatewayFailureKind.server;
-  }
-
-  static int _utf8Length(Iterable<String> blocks) {
-    return blocks.fold<int>(
-      0,
-      (total, block) => total + utf8.encode(block).length,
-    );
   }
 }
 

@@ -136,6 +136,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   late List<CatalogNovel> _recentlyUpdatedNovels;
   late CatalogAvailability _catalogAvailability;
   final Set<String> _activeDownloadSyncs = <String>{};
+  final Set<String> _pendingDownloadSyncs = <String>{};
   var _catalogLoadGeneration = 0;
   var _catalogPageIndex = -1;
   var _catalogTotalPages = 0;
@@ -151,6 +152,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
   var _favoriteFolderGeneration = 0;
   var _historyFlushActive = false;
+  var _historyOutboxOwnerInitialized = false;
+  String? _historyOutboxOwner;
   final Map<String, String> _lastHistoryChapterByNovel = {};
 
   SqliteOfflineRepository get _repository => widget.repository;
@@ -232,16 +235,13 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   void _accountSessionChanged() {
     if (!mounted) return;
     final session = widget.accountSessionController?.snapshot;
+    _syncHistoryOutboxOwner(session);
     if (session?.isSignedIn == true) {
       unawaited(_refreshFavoriteFolders());
       unawaited(_flushRemoteHistory());
     } else {
       _favoriteFolderGeneration += 1;
       _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
-      if (session?.status == AccountSessionStatus.signedOut) {
-        _repository.clearRemoteHistoryOutbox();
-        _lastHistoryChapterByNovel.clear();
-      }
     }
     if (widget.contentCoordinator != null &&
         _catalogCriteria.contentLevel != CatalogContentLevel.general) {
@@ -371,9 +371,35 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<void> _logoutAccount() async {
+    _clearHistoryOutbox();
+    _historyOutboxOwner = null;
+    _historyOutboxOwnerInitialized = true;
+    await widget.accountSessionController?.logout();
+  }
+
+  void _syncHistoryOutboxOwner(AccountSessionSnapshot? session) {
+    if (session == null) return;
+    if (session.status == AccountSessionStatus.restoring &&
+        session.profile == null) {
+      return;
+    }
+    final username = session.profile?.username;
+    if (!_historyOutboxOwnerInitialized) {
+      _historyOutboxOwner = username;
+      _historyOutboxOwnerInitialized = true;
+      if (session.status == AccountSessionStatus.signedOut) {
+        _clearHistoryOutbox();
+      }
+      return;
+    }
+    if (username == _historyOutboxOwner) return;
+    _clearHistoryOutbox();
+    _historyOutboxOwner = username;
+  }
+
+  void _clearHistoryOutbox() {
     _repository.clearRemoteHistoryOutbox();
     _lastHistoryChapterByNovel.clear();
-    await widget.accountSessionController?.logout();
   }
 
   void _queueRemoteHistory(
@@ -410,10 +436,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     }
     _historyFlushActive = true;
     try {
-      for (final entry in _repository.listRemoteHistoryOutbox()) {
-        if (widget.accountSessionController?.snapshot.isSignedIn != true) {
-          break;
-        }
+      while (widget.accountSessionController?.snapshot.isSignedIn == true) {
+        final entries = _repository.listRemoteHistoryOutbox();
+        if (entries.isEmpty) break;
+        final entry = entries.first;
         try {
           await gateway.updateReadHistory(
             providerId: entry.providerId,
@@ -722,37 +748,91 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         criteria.sort == CatalogSort.recentlyUpdated;
   }
 
-  Future<RankingPageView> _loadDefaultRankings(int pageNumber) async {
+  Future<RankingPageView> _loadRankings(RankingsQuery query) async {
     final coordinator = widget.contentCoordinator;
     if (coordinator == null) {
       throw StateError('No ranking loader is configured.');
     }
+    final providerId = _rankingProviderId(query.source);
+    final range = _rankingRange(query.period);
+    final kakuyomu = providerId == 'kakuyomu';
     final result = await coordinator.loadRankings(
-      NoveliaRankingQuery.syosetu(
-        type: '流派',
-        genre: '恋爱：异世界',
-        range: '总计',
-        status: '全部',
-        page: pageNumber,
-      ),
+      kakuyomu
+          ? NoveliaRankingQuery.kakuyomu(
+              genre: query.genre ?? '综合',
+              range: range,
+              status: _rankingStatus(query.publicationState, kakuyomu: true),
+            )
+          : NoveliaRankingQuery.syosetu(
+              type: query.genre == null ? '综合' : '流派',
+              genre: query.genre,
+              range: range,
+              status: _rankingStatus(query.publicationState, kakuyomu: false),
+              page: query.pageNumber,
+            ),
     );
     final slice = result.data;
     if (slice == null) {
       throw result.failure ?? StateError('Rankings are unavailable.');
     }
-    if (pageNumber == 1 && slice.novels.isNotEmpty) {
+    if (query.pageNumber == 1 && slice.novels.isNotEmpty) {
       _defaultRankingPageSize = slice.novels.length;
     }
     final pageSize = _defaultRankingPageSize > 0
         ? _defaultRankingPageSize
         : slice.novels.length;
+    final sourceLabel = kakuyomu ? 'Kakuyomu' : 'Syosetu';
+    final genreLabel = query.genre ?? (kakuyomu ? '综合' : '综合');
     return RankingPageView(
       novels: slice.novels,
-      pageNumber: slice.pageIndex + 1,
-      totalPages: slice.totalPages,
-      description: 'Syosetu · 恋爱：异世界 · 总计 · 服务原生排序',
-      firstRank: pageSize == 0 ? 1 : ((pageNumber - 1) * pageSize) + 1,
+      pageNumber: kakuyomu ? query.pageNumber : slice.pageIndex + 1,
+      totalPages: kakuyomu
+          ? 1
+          : slice.totalPages == 0
+          ? 1
+          : slice.totalPages,
+      description:
+          '$sourceLabel · $genreLabel · ${query.period.label} · 服务原生排序',
+      firstRank: pageSize == 0 ? 1 : ((query.pageNumber - 1) * pageSize) + 1,
     );
+  }
+
+  static String _rankingProviderId(String? source) {
+    final normalized = (source ?? 'syosetu').toLowerCase();
+    return switch (normalized) {
+      'syosetu' => 'syosetu',
+      'kakuyomu' => 'kakuyomu',
+      _ => throw ArgumentError.value(
+        source,
+        'source',
+        'Unsupported ranking provider.',
+      ),
+    };
+  }
+
+  static String _rankingRange(RankingPeriod period) {
+    return switch (period) {
+      RankingPeriod.overall => '总计',
+      RankingPeriod.yearly => '每年',
+      RankingPeriod.monthly => '每月',
+      RankingPeriod.weekly => '每周',
+      RankingPeriod.daily => '每日',
+    };
+  }
+
+  static String _rankingStatus(
+    NovelPublicationState? state, {
+    required bool kakuyomu,
+  }) {
+    // Kakuyomu's `status` parameter describes work length, not publication
+    // completion. The UI therefore omits its publication-state filter.
+    if (kakuyomu) return '全部';
+    return switch (state) {
+      null || NovelPublicationState.unknown => '全部',
+      NovelPublicationState.shortStory => '短篇',
+      NovelPublicationState.ongoing => '连载',
+      NovelPublicationState.completed => '完结',
+    };
   }
 
   Future<CatalogNovel> _loadNovelDetails(CatalogNovel outline) async {
@@ -864,19 +944,29 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     bool retryFailures = false,
   }) async {
     final coordinator = widget.downloadCoordinator;
-    if (coordinator == null || !_activeDownloadSyncs.add(intentId)) return null;
+    if (coordinator == null) return null;
+    if (!_activeDownloadSyncs.add(intentId)) {
+      _pendingDownloadSyncs.add(intentId);
+      return null;
+    }
+    _pendingDownloadSyncs.remove(intentId);
+    NoveliaDownloadRun? run;
     try {
       if (retryFailures) {
         final now = DateTime.now().toUtc();
         _repository.requeueInterruptedTasks(intentId: intentId, now: now);
       }
-      return await coordinator.synchronizeIntent(intentId);
+      run = await coordinator.synchronizeIntent(intentId);
     } on Object {
-      return null;
+      run = null;
     } finally {
       _activeDownloadSyncs.remove(intentId);
       if (mounted) setState(() {});
     }
+    if (mounted && _pendingDownloadSyncs.remove(intentId)) {
+      unawaited(_synchronizeIntent(intentId, retryFailures: true));
+    }
+    return run;
   }
 
   void _setThemeMode(ThemeMode mode) {
@@ -1477,7 +1567,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         recentlyUpdatedNovels: _recentlyUpdatedNovels,
         rankingsLoader: widget.contentCoordinator == null
             ? null
-            : _loadDefaultRankings,
+            : _loadRankings,
         novelDetailsLoader: widget.contentCoordinator == null
             ? null
             : _loadNovelDetails,
