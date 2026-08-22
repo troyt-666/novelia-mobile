@@ -42,6 +42,29 @@ Classic users can add the
 once; Sideloadly users install each new IPA over the existing app with the same
 Apple ID and bundle identifier.
 
+## Install with AltStore Classic
+
+The JFZ Reader source is for
+[AltStore Classic](https://altstore.io/), which re-signs the unsigned IPA with
+your Apple ID. It is not an AltStore PAL marketplace source.
+
+1. Install AltStore Classic and AltServer by following AltStore's setup for
+   your computer and iPhone or iPad.
+2. Open AltStore's **Sources** screen (**Browse → Sources** in some versions)
+   and tap **+**.
+3. Paste this source URL:
+
+   ```text
+   https://troyt-666.github.io/novelia-mobile/altstore-source.json
+   ```
+
+4. Open the JFZ Reader listing and tap **Install**.
+
+New releases appear in AltStore as updates. Use the same Apple ID so AltStore
+can install over the existing app. Apps signed with a free Apple developer
+account normally need AltStore to refresh them through AltServer within seven
+days; adding this source does not remove Apple's signing and refresh limits.
+
 ## Offline reading
 
 JFZ Reader restores cached content and reading position locally, so a novel
