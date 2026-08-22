@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -90,7 +91,8 @@ class _ReaderScreenState extends State<ReaderScreen>
   late Map<String, int> _itemIndices;
   final Map<String, GlobalKey> _itemKeys = {};
   final Map<String, BuildContext> _mountedItemContexts = {};
-  final _scrollController = ScrollController();
+  final _verticalScrollController = ScrollController();
+  final _pageController = PageController();
   final _viewportKey = GlobalKey(debugLabel: 'reader-viewport');
   final _anchorBlockId = RestorableStringN(null);
   late final RestorableInt _modeIndex;
@@ -139,7 +141,13 @@ class _ReaderScreenState extends State<ReaderScreen>
   Timer? _chromeDismissTimer;
   bool _turningPage = false;
   bool _selectionActive = false;
+  final Map<String, int> _horizontalPageByStableId = {};
   late ReaderOrientationController _orientationController;
+
+  ScrollController get _activeScrollController =>
+      _settings.layoutMode == ReaderLayoutMode.pages
+      ? _pageController
+      : _verticalScrollController;
 
   @override
   String? get restorationId => 'reader:${widget.novel.id}';
@@ -390,7 +398,8 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
     }
     WidgetsBinding.instance.removeObserver(this);
-    _scrollController.dispose();
+    _verticalScrollController.dispose();
+    _pageController.dispose();
     _anchorBlockId.dispose();
     _modeIndex.dispose();
     _sourceIndex.dispose();
@@ -488,7 +497,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }) async {
     if (!mounted) return;
     final targetIndex = _itemIndices[stableId];
-    if (targetIndex == null || !_scrollController.hasClients) return;
+    if (targetIndex == null || !_activeScrollController.hasClients) return;
 
     var targetContext = _mountedContextFor(stableId);
     if (targetContext == null) {
@@ -502,6 +511,17 @@ class _ReaderScreenState extends State<ReaderScreen>
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
       targetContext = _mountedContextFor(stableId);
+      if (targetContext == null &&
+          _settings.layoutMode == ReaderLayoutMode.pages &&
+          _pageController.hasClients) {
+        final page = _horizontalPageByStableId[stableId];
+        if (page != null) {
+          _pageController.jumpToPage(page);
+          await WidgetsBinding.instance.endOfFrame;
+          if (!mounted) return;
+          targetContext = _mountedContextFor(stableId);
+        }
+      }
     }
     if (targetContext != null && targetContext.mounted) {
       await Scrollable.ensureVisible(
@@ -510,13 +530,14 @@ class _ReaderScreenState extends State<ReaderScreen>
         duration: Duration.zero,
       );
       if (intraBlockOffset > 0 &&
-          _scrollController.hasClients &&
+          _settings.layoutMode == ReaderLayoutMode.scroll &&
+          _verticalScrollController.hasClients &&
           targetContext.mounted) {
         final box = targetContext.findRenderObject();
         if (box is RenderBox && box.hasSize) {
           final extra = box.size.height * intraBlockOffset / 1000.0;
-          final position = _scrollController.position;
-          _scrollController.jumpTo(
+          final position = _verticalScrollController.position;
+          _verticalScrollController.jumpTo(
             (position.pixels + extra).clamp(
               position.minScrollExtent,
               position.maxScrollExtent,
@@ -544,12 +565,13 @@ class _ReaderScreenState extends State<ReaderScreen>
   void _extendWindowBackward() {
     if (_adjustingWindow ||
         _windowStart == 0 ||
-        !_scrollController.hasClients) {
+        !_activeScrollController.hasClients) {
       return;
     }
     _adjustingWindow = true;
-    final oldMaxExtent = _scrollController.position.maxScrollExtent;
-    final oldPixels = _scrollController.position.pixels;
+    final controller = _activeScrollController;
+    final oldMaxExtent = controller.position.maxScrollExtent;
+    final oldPixels = controller.position.pixels;
     setState(() {
       _windowStart = (_windowStart - _windowExpansionItems).clamp(
         0,
@@ -557,14 +579,13 @@ class _ReaderScreenState extends State<ReaderScreen>
       );
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      final addedExtent =
-          _scrollController.position.maxScrollExtent - oldMaxExtent;
+      if (!mounted || !controller.hasClients) return;
+      final addedExtent = controller.position.maxScrollExtent - oldMaxExtent;
       final target = (oldPixels + addedExtent).clamp(
-        _scrollController.position.minScrollExtent,
-        _scrollController.position.maxScrollExtent,
+        controller.position.minScrollExtent,
+        controller.position.maxScrollExtent,
       );
-      _scrollController.jumpTo(target);
+      controller.jumpTo(target);
       _adjustingWindow = false;
     });
   }
@@ -794,9 +815,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     });
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
-    if (renderedAnchorIndex != null && _scrollController.hasClients) {
-      final oldMaxExtent = _scrollController.position.maxScrollExtent;
-      final oldPixels = _scrollController.position.pixels;
+    final controller = _activeScrollController;
+    if (renderedAnchorIndex != null && controller.hasClients) {
+      final oldMaxExtent = controller.position.maxScrollExtent;
+      final oldPixels = controller.position.pixels;
       setState(() {
         _windowStart = (renderedAnchorIndex! - _windowLeadInItems).clamp(
           0,
@@ -804,26 +826,25 @@ class _ReaderScreenState extends State<ReaderScreen>
         );
       });
       await WidgetsBinding.instance.endOfFrame;
-      if (!mounted || !_scrollController.hasClients) return;
-      final addedExtent =
-          _scrollController.position.maxScrollExtent - oldMaxExtent;
-      final position = _scrollController.position;
-      _scrollController.jumpTo(
+      if (!mounted || !controller.hasClients) return;
+      final addedExtent = controller.position.maxScrollExtent - oldMaxExtent;
+      final position = controller.position;
+      controller.jumpTo(
         (oldPixels + addedExtent).clamp(
           position.minScrollExtent,
           position.maxScrollExtent,
         ),
       );
       await WidgetsBinding.instance.endOfFrame;
-      if (!mounted || !_scrollController.hasClients) return;
+      if (!mounted || !controller.hasClients) return;
     }
-    if (visibleAnchor != null && _scrollController.hasClients) {
+    if (visibleAnchor != null && controller.hasClients) {
       var itemContext = _mountedContextFor(visibleAnchor.stableId);
       if (itemContext == null) {
         await _jumpToStableId(visibleAnchor.stableId);
-        if (!mounted || !_scrollController.hasClients) return;
+        if (!mounted || !controller.hasClients) return;
         await WidgetsBinding.instance.endOfFrame;
-        if (!mounted || !_scrollController.hasClients) return;
+        if (!mounted || !controller.hasClients) return;
         itemContext = _mountedContextFor(visibleAnchor.stableId);
       }
       if (itemContext != null && itemContext.mounted) {
@@ -832,9 +853,9 @@ class _ReaderScreenState extends State<ReaderScreen>
           alignment: 0,
           duration: Duration.zero,
         );
-        if (!mounted || !_scrollController.hasClients) return;
+        if (!mounted || !controller.hasClients) return;
         await WidgetsBinding.instance.endOfFrame;
-        if (!mounted || !_scrollController.hasClients) return;
+        if (!mounted || !controller.hasClients) return;
       }
       final viewportContext = _viewportKey.currentContext;
       final itemBox = itemContext?.findRenderObject();
@@ -843,12 +864,14 @@ class _ReaderScreenState extends State<ReaderScreen>
           itemBox.hasSize &&
           viewportBox is RenderBox &&
           viewportBox.hasSize) {
-        final newOffset =
-            itemBox.localToGlobal(Offset.zero).dy -
-            viewportBox.localToGlobal(Offset.zero).dy;
+        final itemOrigin = itemBox.localToGlobal(Offset.zero);
+        final viewportOrigin = viewportBox.localToGlobal(Offset.zero);
+        final newOffset = _settings.layoutMode == ReaderLayoutMode.pages
+            ? itemOrigin.dx - viewportOrigin.dx
+            : itemOrigin.dy - viewportOrigin.dy;
         final correction = newOffset - visibleAnchor.viewportOffset;
-        final position = _scrollController.position;
-        _scrollController.jumpTo(
+        final position = controller.position;
+        controller.jumpTo(
           (position.pixels + correction).clamp(
             position.minScrollExtent,
             position.maxScrollExtent,
@@ -876,11 +899,13 @@ class _ReaderScreenState extends State<ReaderScreen>
         !itemBox.hasSize) {
       return null;
     }
+    final itemOrigin = itemBox.localToGlobal(Offset.zero);
+    final viewportOrigin = viewportBox.localToGlobal(Offset.zero);
     return _VisibleReaderAnchor(
       stableId: anchor.stableId,
-      viewportOffset:
-          itemBox.localToGlobal(Offset.zero).dy -
-          viewportBox.localToGlobal(Offset.zero).dy,
+      viewportOffset: _settings.layoutMode == ReaderLayoutMode.pages
+          ? itemOrigin.dx - viewportOrigin.dx
+          : itemOrigin.dy - viewportOrigin.dy,
     );
   }
 
@@ -890,11 +915,16 @@ class _ReaderScreenState extends State<ReaderScreen>
     final viewportBox = viewportContext.findRenderObject();
     if (viewportBox is! RenderBox || !viewportBox.hasSize) return null;
 
-    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
-    final viewportBottom = viewportTop + viewportBox.size.height;
+    final horizontal = _settings.layoutMode == ReaderLayoutMode.pages;
+    final viewportOrigin = viewportBox.localToGlobal(Offset.zero);
+    final viewportStart = horizontal ? viewportOrigin.dx : viewportOrigin.dy;
+    final viewportExtent = horizontal
+        ? viewportBox.size.width
+        : viewportBox.size.height;
+    final viewportEnd = viewportStart + viewportExtent;
     AlignedBlockItem? firstSubstantiallyVisible;
     AlignedBlockItem? nearestVisible;
-    var nearestTop = double.infinity;
+    var nearestLeadingEdge = double.infinity;
 
     final mountedItems = <(int, AlignedBlockItem)>[];
     for (final blockId in _mountedBlockIds) {
@@ -908,21 +938,25 @@ class _ReaderScreenState extends State<ReaderScreen>
       final itemContext = _mountedContextFor(item.stableId);
       final renderObject = itemContext?.findRenderObject();
       if (renderObject is! RenderBox || !renderObject.hasSize) continue;
-      final top = renderObject.localToGlobal(Offset.zero).dy;
-      final bottom = top + renderObject.size.height;
-      final visibleHeight =
-          (bottom.clamp(viewportTop, viewportBottom) -
-                  top.clamp(viewportTop, viewportBottom))
-              .clamp(0.0, renderObject.size.height);
-      if (visibleHeight <= 0) continue;
+      final itemOrigin = renderObject.localToGlobal(Offset.zero);
+      final itemStart = horizontal ? itemOrigin.dx : itemOrigin.dy;
+      final itemExtent = horizontal
+          ? renderObject.size.width
+          : renderObject.size.height;
+      final itemEnd = itemStart + itemExtent;
+      final visibleExtent =
+          (itemEnd.clamp(viewportStart, viewportEnd) -
+                  itemStart.clamp(viewportStart, viewportEnd))
+              .clamp(0.0, itemExtent);
+      if (visibleExtent <= 0) continue;
 
-      final distanceFromTop = (top - viewportTop).abs();
-      if (distanceFromTop < nearestTop) {
-        nearestTop = distanceFromTop;
+      final distanceFromLeadingEdge = (itemStart - viewportStart).abs();
+      if (distanceFromLeadingEdge < nearestLeadingEdge) {
+        nearestLeadingEdge = distanceFromLeadingEdge;
         nearestVisible = item;
       }
       if (firstSubstantiallyVisible == null &&
-          visibleHeight >= renderObject.size.height * 0.35) {
+          visibleExtent >= itemExtent * 0.35) {
         firstSubstantiallyVisible = item;
       }
     }
@@ -932,11 +966,12 @@ class _ReaderScreenState extends State<ReaderScreen>
     var intraBlockOffset = 0;
     final anchorContext = _mountedContextFor(anchor.stableId);
     final anchorBox = anchorContext?.findRenderObject();
-    if (anchorBox is RenderBox &&
+    if (!horizontal &&
+        anchorBox is RenderBox &&
         anchorBox.hasSize &&
         anchorBox.size.height > 0) {
       final top = anchorBox.localToGlobal(Offset.zero).dy;
-      final pixelsIntoBlock = (viewportTop - top).clamp(
+      final pixelsIntoBlock = (viewportStart - top).clamp(
         0.0,
         anchorBox.size.height,
       );
@@ -1026,24 +1061,10 @@ class _ReaderScreenState extends State<ReaderScreen>
         _tapStartedAt == null) {
       return;
     }
-    final delta = event.position - _tapOrigin!;
-    final travel = delta.distance;
+    final travel = (event.position - _tapOrigin!).distance;
     final elapsed = DateTime.now().difference(_tapStartedAt!);
-    final isPageSwipe =
-        _settings.layoutMode == ReaderLayoutMode.pages &&
-        elapsed < const Duration(milliseconds: 700) &&
-        delta.dx.abs() >= 56 &&
-        delta.dx.abs() > delta.dy.abs() * 1.2;
     final isTap = travel < 12 && elapsed < const Duration(milliseconds: 450);
     _clearTapCandidate();
-    if (isPageSwipe) {
-      unawaited(
-        _turnPage(
-          delta.dx < 0 ? ReaderLoadDirection.after : ReaderLoadDirection.before,
-        ),
-      );
-      return;
-    }
     if (isTap) {
       _handleReadingTap(event.position);
     }
@@ -1072,27 +1093,23 @@ class _ReaderScreenState extends State<ReaderScreen>
       _showChrome();
       return;
     }
-    if (_settings.layoutMode == ReaderLayoutMode.pages) {
-      unawaited(
-        _turnPage(
-          point.dx < size.width * 0.25
-              ? ReaderLoadDirection.before
-              : ReaderLoadDirection.after,
-        ),
-      );
-    }
+    unawaited(
+      _turnPage(
+        point.dx < size.width * 0.25
+            ? ReaderLoadDirection.before
+            : ReaderLoadDirection.after,
+      ),
+    );
   }
 
   Future<void> _turnPage(ReaderLoadDirection direction) async {
-    if (_turningPage ||
-        _restoring ||
-        !_scrollController.hasClients ||
-        _settings.layoutMode != ReaderLayoutMode.pages) {
+    if (_turningPage || _restoring || !_activeScrollController.hasClients) {
       return;
     }
     _turningPage = true;
     try {
-      var position = _scrollController.position;
+      final controller = _activeScrollController;
+      var position = controller.position;
       final forward = direction == ReaderLoadDirection.after;
       final atAvailableEdge = forward
           ? position.extentAfter <= 1
@@ -1102,26 +1119,43 @@ class _ReaderScreenState extends State<ReaderScreen>
         await _requestAdjacent(direction);
         if (!mounted) return;
         await WidgetsBinding.instance.endOfFrame;
-        if (!mounted || !_scrollController.hasClients) return;
-        position = _scrollController.position;
+        if (!mounted || !controller.hasClients) return;
+        position = controller.position;
       }
 
-      final overlap = (position.viewportDimension * 0.08).clamp(40.0, 72.0);
-      final step = (position.viewportDimension - overlap).clamp(
-        120.0,
-        position.viewportDimension,
-      );
-      final target = (position.pixels + (forward ? step : -step)).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      );
-      if ((target - position.pixels).abs() < 0.5) return;
       _hideChrome();
-      await _scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-      );
+      if (_settings.layoutMode == ReaderLayoutMode.pages) {
+        final currentPage = _pageController.page?.round() ?? 0;
+        final lastPage = position.viewportDimension <= 0
+            ? 0
+            : (position.maxScrollExtent / position.viewportDimension).round();
+        final targetPage = (currentPage + (forward ? 1 : -1)).clamp(
+          0,
+          lastPage,
+        );
+        if (targetPage == currentPage) return;
+        await _pageController.animateToPage(
+          targetPage,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        final overlap = (position.viewportDimension * 0.08).clamp(40.0, 72.0);
+        final step = (position.viewportDimension - overlap).clamp(
+          120.0,
+          position.viewportDimension,
+        );
+        final target = (position.pixels + (forward ? step : -step)).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+        if ((target - position.pixels).abs() < 0.5) return;
+        await _verticalScrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+        );
+      }
       if (mounted) _captureAnchor(notify: true);
     } finally {
       _turningPage = false;
@@ -1380,6 +1414,316 @@ class _ReaderScreenState extends State<ReaderScreen>
     widget.onBookmarkChanged?.call(position, bookmarked);
   }
 
+  int get _readerItemCount =>
+      _windowEnd -
+      _windowStart +
+      (_windowStart == 0 ? 1 : 0) +
+      (_windowEnd == _items.length ? 1 : 0);
+
+  int? _streamIndexForReaderItem(int index) {
+    final showBeforeBoundary = _windowStart == 0;
+    if (showBeforeBoundary && index == 0) return null;
+    final streamIndex = index - (showBeforeBoundary ? 1 : 0);
+    if (streamIndex >= _windowEnd - _windowStart) return null;
+    return _windowStart + streamIndex;
+  }
+
+  String? _stableIdForReaderItem(int index) {
+    final streamIndex = _streamIndexForReaderItem(index);
+    return streamIndex == null ? null : _items[streamIndex].stableId;
+  }
+
+  Widget _buildReaderItem(BuildContext context, int index, Color foreground) {
+    final showBeforeBoundary = _windowStart == 0;
+    if (showBeforeBoundary && index == 0) {
+      return _ReaderAvailabilityBoundary(
+        direction: ReaderLoadDirection.before,
+        status: _beforeBoundary,
+        loading: _beforeLoading,
+        error: _beforeLoadError,
+        onRetry: () => unawaited(_requestAdjacent(ReaderLoadDirection.before)),
+      );
+    }
+    final streamIndex = index - (showBeforeBoundary ? 1 : 0);
+    if (streamIndex >= _windowEnd - _windowStart) {
+      return _ReaderAvailabilityBoundary(
+        direction: ReaderLoadDirection.after,
+        status: _afterBoundary,
+        loading: _afterLoading,
+        error: _afterLoadError,
+        onRetry: () => unawaited(_requestAdjacent(ReaderLoadDirection.after)),
+      );
+    }
+    final item = _items[_windowStart + streamIndex];
+    return switch (item) {
+      ChapterBoundaryItem() => _ChapterBoundary(
+        item: item,
+        itemKey: _itemKeys[item.stableId]!,
+        settings: _settings,
+        foreground: foreground,
+      ),
+      AlignedBlockItem() => _AlignedBlockView(
+        key: ValueKey(item.stableId),
+        item: item,
+        settings: _settings,
+        foreground: foreground,
+        bookmarked: _bookmarks.contains(item.block.id),
+        onMounted: (itemContext) {
+          _mountedBlockIds.add(item.block.id);
+          _registerMountedItem(item.stableId, itemContext);
+        },
+        onUnmounted: (itemContext) {
+          _mountedBlockIds.remove(item.block.id);
+          _unregisterMountedItem(item.stableId, itemContext);
+        },
+      ),
+    };
+  }
+
+  double _measureTextHeight(
+    BuildContext context,
+    String text,
+    TextStyle style,
+    double width, {
+    Locale? locale,
+  }) {
+    if (text.isEmpty) return 0;
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: locale,
+    )..layout(maxWidth: math.max(1, width));
+    return painter.height;
+  }
+
+  double _estimateReaderItemHeight(
+    BuildContext context,
+    int index,
+    double viewportWidth,
+  ) {
+    final streamIndex = _streamIndexForReaderItem(index);
+    if (streamIndex == null) return 76;
+    final item = _items[streamIndex];
+    if (item is ChapterBoundaryItem) {
+      final titleWidth = math.max(
+        1.0,
+        math.min(viewportWidth, _settings.readingWidth) -
+            _settings.pageMargin * 2,
+      );
+      final family = _settings.fontFamily == ReaderFontFamily.systemSerif
+          ? 'serif'
+          : null;
+      return 128 +
+          _measureTextHeight(
+            context,
+            item.chapter.chineseTitle,
+            TextStyle(
+              fontSize: 27,
+              height: 1.3,
+              fontWeight: FontWeight.w700,
+              fontFamily: family,
+            ),
+            titleWidth,
+            locale: const Locale('zh', 'CN'),
+          ) +
+          _measureTextHeight(
+            context,
+            item.chapter.japaneseTitle,
+            const TextStyle(fontSize: 15, height: 1.4),
+            titleWidth,
+            locale: const Locale('ja', 'JP'),
+          ) +
+          (item.chapter.translationState(_settings.translationSource) ==
+                  TranslationState.complete
+              ? 0
+              : 82);
+    }
+    if (item is! AlignedBlockItem) return 0;
+    final block = item.block;
+    final availableWidth = math.min(viewportWidth, _settings.readingWidth);
+    if (block.kind == AlignedBlockKind.illustration) {
+      return math.max(180.0, (availableWidth - 32) / 0.75 + 32);
+    }
+    final translationState = item.chapter.translationState(
+      _settings.translationSource,
+    );
+    final translation = translationState == TranslationState.complete
+        ? block.translationFor(_settings.translationSource)
+        : null;
+    final showJapanese =
+        translation == null ||
+        _settings.readingMode == ReadingMode.chineseJapanese;
+    final dialogue = block.kind == AlignedBlockKind.dialogue;
+    final horizontalPadding = _settings.pageMargin * 2 + (dialogue ? 16 : 0);
+    final textWidth = math.max(1.0, availableWidth - horizontalPadding);
+    final parallel =
+        translation != null &&
+        showJapanese &&
+        (_settings.columnLayout == ReaderColumnLayout.twoColumns ||
+            _settings.columnLayout == ReaderColumnLayout.automatic &&
+                viewportWidth >= 1000);
+    final bodyWeight = _settings.bodyBold ? FontWeight.w600 : FontWeight.w400;
+    final family = _settings.fontFamily == ReaderFontFamily.systemSerif
+        ? 'serif'
+        : null;
+    final columnWidth = parallel
+        ? math.max(1.0, (textWidth - 28) / 2)
+        : textWidth;
+    final chineseHeight = translation == null
+        ? 0.0
+        : _measureTextHeight(
+            context,
+            translation,
+            TextStyle(
+              fontSize: _settings.chineseFontSize,
+              height: _settings.lineHeight,
+              fontWeight: bodyWeight,
+              fontFamily: family,
+              letterSpacing: 0.15,
+            ),
+            columnWidth,
+            locale: const Locale('zh', 'CN'),
+          );
+    final japaneseHeight = !showJapanese
+        ? 0.0
+        : _measureTextHeight(
+            context,
+            block.japanese,
+            TextStyle(
+              fontSize: translation == null
+                  ? _settings.chineseFontSize * 0.92
+                  : _settings.japaneseFontSize,
+              height: _settings.lineHeight,
+              fontWeight: bodyWeight,
+              fontFamily: family,
+            ),
+            columnWidth,
+            locale: const Locale('ja', 'JP'),
+          );
+    final textHeight = parallel
+        ? math.max(chineseHeight, japaneseHeight)
+        : chineseHeight +
+              japaneseHeight +
+              (chineseHeight > 0 && japaneseHeight > 0
+                  ? _settings.chineseFontSize * 0.42
+                  : 0);
+    return 9 + textHeight + _settings.paragraphSpacing + 4;
+  }
+
+  List<_ReaderHorizontalPage> _composeHorizontalPages(
+    BuildContext context,
+    double viewportWidth,
+    double availableHeight,
+  ) {
+    final pages = <_ReaderHorizontalPage>[];
+    var indices = <int>[];
+    var estimatedHeight = 0.0;
+    _horizontalPageByStableId.clear();
+
+    void finishPage() {
+      if (indices.isEmpty) return;
+      final pageIndex = pages.length;
+      for (final index in indices) {
+        final stableId = _stableIdForReaderItem(index);
+        if (stableId != null) _horizontalPageByStableId[stableId] = pageIndex;
+      }
+      pages.add(
+        _ReaderHorizontalPage(
+          readerItemIndices: indices,
+          estimatedHeight: estimatedHeight,
+        ),
+      );
+      indices = <int>[];
+      estimatedHeight = 0;
+    }
+
+    for (var index = 0; index < _readerItemCount; index++) {
+      final itemHeight = _estimateReaderItemHeight(
+        context,
+        index,
+        viewportWidth,
+      );
+      if (indices.isNotEmpty &&
+          estimatedHeight + itemHeight > availableHeight) {
+        finishPage();
+      }
+      indices.add(index);
+      estimatedHeight += itemHeight;
+    }
+    finishPage();
+    if (pages.isEmpty) {
+      pages.add(
+        const _ReaderHorizontalPage(readerItemIndices: [], estimatedHeight: 0),
+      );
+    }
+    return pages;
+  }
+
+  Widget _buildVerticalReader(Color foreground) {
+    return ListView.builder(
+      controller: _verticalScrollController,
+      physics: const ClampingScrollPhysics(),
+      scrollCacheExtent: const ScrollCacheExtent.viewport(2),
+      addAutomaticKeepAlives: false,
+      addSemanticIndexes: false,
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top + 88,
+        bottom: MediaQuery.paddingOf(context).bottom + 164,
+      ),
+      itemCount: _readerItemCount,
+      itemBuilder: (context, index) =>
+          _buildReaderItem(context, index, foreground),
+    );
+  }
+
+  Widget _buildHorizontalReader(Color foreground) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mediaPadding = MediaQuery.paddingOf(context);
+        final topPadding = mediaPadding.top + 88;
+        final bottomPadding = mediaPadding.bottom + 164;
+        final availableHeight = math.max(
+          120.0,
+          constraints.maxHeight - topPadding - bottomPadding,
+        );
+        final pages = _composeHorizontalPages(
+          context,
+          constraints.maxWidth,
+          availableHeight,
+        );
+        return PageView.builder(
+          key: const ValueKey('reader-horizontal-pages'),
+          controller: _pageController,
+          scrollDirection: Axis.horizontal,
+          physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
+          allowImplicitScrolling: true,
+          itemCount: pages.length,
+          itemBuilder: (context, pageIndex) {
+            final page = pages[pageIndex];
+            return Padding(
+              padding: EdgeInsets.only(top: topPadding, bottom: bottomPadding),
+              child: SingleChildScrollView(
+                key: ValueKey('reader-horizontal-page-$pageIndex'),
+                primary: false,
+                physics: page.estimatedHeight > availableHeight
+                    ? const ClampingScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final index in page.readerItemIndices)
+                      _buildReaderItem(context, index, foreground),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1430,12 +1774,9 @@ class _ReaderScreenState extends State<ReaderScreen>
               label: _settings.layoutMode == ReaderLayoutMode.pages
                   ? '分页阅读区域'
                   : '滚动阅读区域',
-              onIncrease: _settings.layoutMode == ReaderLayoutMode.pages
-                  ? () => unawaited(_turnPage(ReaderLoadDirection.after))
-                  : null,
-              onDecrease: _settings.layoutMode == ReaderLayoutMode.pages
-                  ? () => unawaited(_turnPage(ReaderLoadDirection.before))
-                  : null,
+              onIncrease: () => unawaited(_turnPage(ReaderLoadDirection.after)),
+              onDecrease: () =>
+                  unawaited(_turnPage(ReaderLoadDirection.before)),
               child: Listener(
                 key: const ValueKey('reader-center-tap-area'),
                 behavior: HitTestBehavior.translucent,
@@ -1444,6 +1785,13 @@ class _ReaderScreenState extends State<ReaderScreen>
                 onPointerCancel: _handlePointerCancel,
                 child: NotificationListener<ScrollNotification>(
                   onNotification: (notification) {
+                    final expectedAxis =
+                        _settings.layoutMode == ReaderLayoutMode.pages
+                        ? Axis.horizontal
+                        : Axis.vertical;
+                    if (notification.metrics.axis != expectedAxis) {
+                      return false;
+                    }
                     _handleScrollMetrics(notification.metrics);
                     _handleReaderScroll(notification);
                     if (!_restoring &&
@@ -1465,90 +1813,9 @@ class _ReaderScreenState extends State<ReaderScreen>
                         key: _viewportKey,
                         child: RepaintBoundary(
                           key: const ValueKey('reader-scroll-repaint-boundary'),
-                          child: ListView.builder(
-                            controller: _scrollController,
-                            physics:
-                                _settings.layoutMode == ReaderLayoutMode.pages
-                                ? const NeverScrollableScrollPhysics()
-                                : const ClampingScrollPhysics(),
-                            scrollCacheExtent: const ScrollCacheExtent.viewport(
-                              2,
-                            ),
-                            addAutomaticKeepAlives: false,
-                            addSemanticIndexes: false,
-                            padding: EdgeInsets.only(
-                              top: MediaQuery.paddingOf(context).top + 88,
-                              bottom:
-                                  MediaQuery.paddingOf(context).bottom + 164,
-                            ),
-                            itemCount:
-                                _windowEnd -
-                                _windowStart +
-                                (_windowStart == 0 ? 1 : 0) +
-                                (_windowEnd == _items.length ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              final showBeforeBoundary = _windowStart == 0;
-                              final streamLength = _windowEnd - _windowStart;
-                              if (showBeforeBoundary && index == 0) {
-                                return _ReaderAvailabilityBoundary(
-                                  direction: ReaderLoadDirection.before,
-                                  status: _beforeBoundary,
-                                  loading: _beforeLoading,
-                                  error: _beforeLoadError,
-                                  onRetry: () => unawaited(
-                                    _requestAdjacent(
-                                      ReaderLoadDirection.before,
-                                    ),
-                                  ),
-                                );
-                              }
-                              final streamIndex =
-                                  index - (showBeforeBoundary ? 1 : 0);
-                              if (streamIndex >= streamLength) {
-                                return _ReaderAvailabilityBoundary(
-                                  direction: ReaderLoadDirection.after,
-                                  status: _afterBoundary,
-                                  loading: _afterLoading,
-                                  error: _afterLoadError,
-                                  onRetry: () => unawaited(
-                                    _requestAdjacent(ReaderLoadDirection.after),
-                                  ),
-                                );
-                              }
-                              final item = _items[_windowStart + streamIndex];
-                              return switch (item) {
-                                ChapterBoundaryItem() => _ChapterBoundary(
-                                  item: item,
-                                  itemKey: _itemKeys[item.stableId]!,
-                                  settings: _settings,
-                                  foreground: foreground,
-                                ),
-                                AlignedBlockItem() => _AlignedBlockView(
-                                  key: ValueKey(item.stableId),
-                                  item: item,
-                                  settings: _settings,
-                                  foreground: foreground,
-                                  bookmarked: _bookmarks.contains(
-                                    item.block.id,
-                                  ),
-                                  onMounted: (itemContext) {
-                                    _mountedBlockIds.add(item.block.id);
-                                    _registerMountedItem(
-                                      item.stableId,
-                                      itemContext,
-                                    );
-                                  },
-                                  onUnmounted: (itemContext) {
-                                    _mountedBlockIds.remove(item.block.id);
-                                    _unregisterMountedItem(
-                                      item.stableId,
-                                      itemContext,
-                                    );
-                                  },
-                                ),
-                              };
-                            },
-                          ),
+                          child: _settings.layoutMode == ReaderLayoutMode.pages
+                              ? _buildHorizontalReader(foreground)
+                              : _buildVerticalReader(foreground),
                         ),
                       ),
                     ),
@@ -1606,6 +1873,16 @@ class _ReaderScreenState extends State<ReaderScreen>
       ),
     );
   }
+}
+
+class _ReaderHorizontalPage {
+  const _ReaderHorizontalPage({
+    required this.readerItemIndices,
+    required this.estimatedHeight,
+  });
+
+  final List<int> readerItemIndices;
+  final double estimatedHeight;
 }
 
 class _VisibleReaderAnchor {

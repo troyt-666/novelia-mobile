@@ -328,7 +328,7 @@ void main() {
     expect(chrome().opacity, 1);
   });
 
-  testWidgets('paged mode turns screenfuls with side taps and swipes', (
+  testWidgets('paged mode scrolls horizontally and snaps taps and drags', (
     tester,
   ) async {
     await pumpReader(
@@ -336,6 +336,12 @@ void main() {
       initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
     );
     final position = _readerScrollable(tester).position;
+    final pageView = tester.widget<PageView>(
+      find.byKey(const ValueKey('reader-horizontal-pages')),
+    );
+    expect(pageView.scrollDirection, Axis.horizontal);
+    expect(pageView.physics, isA<PageScrollPhysics>());
+    expect(position.axis, Axis.horizontal);
     expect(position.maxScrollExtent, greaterThan(300));
 
     await tester.tapAt(const Offset(410, 466));
@@ -345,33 +351,47 @@ void main() {
     await tester.tapAt(const Offset(410, 466));
     await tester.pumpAndSettle();
     final afterTap = position.pixels;
-    expect(afterTap, greaterThan(300));
+    expect(afterTap, closeTo(430, 1));
 
     await tester.drag(
       find.byKey(const ValueKey('reader-stream')),
-      const Offset(220, 0),
+      const Offset(300, 0),
     );
     await tester.pumpAndSettle();
-    expect(position.pixels, lessThan(afterTap));
+    expect(position.pixels, closeTo(0, 1));
 
     await tester.drag(
       find.byKey(const ValueKey('reader-stream')),
-      const Offset(-220, 0),
+      const Offset(-300, 0),
     );
     await tester.pumpAndSettle();
-    expect(position.pixels, greaterThan(300));
+    expect(position.pixels, closeTo(afterTap, 1));
   });
 
-  testWidgets('scroll mode ignores page-edge taps', (tester) async {
+  testWidgets('scroll mode supports free vertical drag and overlapping taps', (
+    tester,
+  ) async {
     await pumpReader(tester);
     final position = _readerScrollable(tester).position;
+    expect(position.axis, Axis.vertical);
 
     await tester.tapAt(const Offset(410, 466));
     await tester.pump(const Duration(milliseconds: 220));
     await tester.tapAt(const Offset(410, 466));
     await tester.pumpAndSettle();
+    final afterTap = position.pixels;
+    expect(afterTap, closeTo(position.viewportDimension - 72, 1));
 
-    expect(position.pixels, 0);
+    await tester.tapAt(const Offset(20, 466));
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(0, 1));
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(0, -180),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(0));
   });
 
   testWidgets('layout setting persists through the reader callback', (
@@ -388,9 +408,10 @@ void main() {
 
     expect(changes.single.layoutMode, ReaderLayoutMode.pages);
     expect(
-      _readerScrollable(tester).widget.physics,
-      isA<NeverScrollableScrollPhysics>(),
+      find.byKey(const ValueKey('reader-horizontal-pages')),
+      findsOneWidget,
     );
+    expect(_readerScrollable(tester).position.axis, Axis.horizontal);
   });
 
   testWidgets('reader chrome reports semantic progress and changes chapters', (
