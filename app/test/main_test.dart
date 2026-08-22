@@ -81,6 +81,7 @@ void main() {
     ValueChanged<ReadingPosition>? onExitPosition,
     ReaderBookmarkChanged? onBookmarkChanged,
     Set<String> initialBookmarkedBlockIds = const {},
+    List<ReadingPosition> initialBookmarks = const [],
     ReaderSettings initialSettings = const ReaderSettings(),
     ValueChanged<ReaderSettings>? onSettingsChanged,
     ReaderOrientationController? orientationController,
@@ -101,6 +102,7 @@ void main() {
           onPositionChanged: onPositionChanged,
           onExitPosition: onExitPosition,
           initialBookmarkedBlockIds: initialBookmarkedBlockIds,
+          initialBookmarks: initialBookmarks,
           onBookmarkChanged: onBookmarkChanged,
           initialSettings: initialSettings,
           onSettingsChanged: onSettingsChanged,
@@ -774,6 +776,68 @@ void main() {
     expect(changes.map((change) => change.$2), [true, false]);
     expect(changes.first.$1.chapterId, 'chapter-1');
     expect(changes.first.$1.blockId, 'c1-0');
+  });
+
+  testWidgets('bookmarks show markers and navigate inside the reader', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialBookmarks: const [
+        ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-0'),
+        ReadingPosition(chapterId: 'chapter-2', blockId: 'c2-1'),
+      ],
+    );
+
+    expect(
+      find.byKey(const ValueKey('block-c1-0-bookmark-marker')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('catalog-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-navigation-bookmarks')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reader-bookmarks-list')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-bookmark-c2-1')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reader-bookmark-c2-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('block-c2-1-chinese')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('block-c2-1-bookmark-marker')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('第 2 / 4 章'), findsOneWidget);
+  });
+
+  testWidgets('bookmark list removes a saved position in place', (
+    tester,
+  ) async {
+    final changes = <(ReadingPosition, bool)>[];
+    await pumpReader(
+      tester,
+      initialBookmarks: const [
+        ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-0'),
+      ],
+      onBookmarkChanged: (position, bookmarked) {
+        changes.add((position, bookmarked));
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('catalog-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-navigation-bookmarks')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('remove-reader-bookmark-c1-0')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('reader-bookmarks-empty')),
+      findsOneWidget,
+    );
+    expect(changes.single.$1.blockId, 'c1-0');
+    expect(changes.single.$2, isFalse);
   });
 
   testWidgets('reader settings can initialize from and write to local state', (

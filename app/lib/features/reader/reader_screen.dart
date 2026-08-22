@@ -47,6 +47,7 @@ class ReaderScreen extends StatefulWidget {
     this.onPositionChanged,
     this.onExitPosition,
     this.initialBookmarkedBlockIds = const {},
+    this.initialBookmarks = const [],
     this.onBookmarkChanged,
     this.initialSettings = const ReaderSettings(),
     this.onSettingsChanged,
@@ -62,6 +63,7 @@ class ReaderScreen extends StatefulWidget {
   final ValueChanged<ReadingPosition>? onPositionChanged;
   final ValueChanged<ReadingPosition>? onExitPosition;
   final Set<String> initialBookmarkedBlockIds;
+  final List<ReadingPosition> initialBookmarks;
   final ReaderBookmarkChanged? onBookmarkChanged;
   final ReaderSettings initialSettings;
   final ValueChanged<ReaderSettings>? onSettingsChanged;
@@ -106,6 +108,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   late final RestorableInt _columnLayoutIndex;
   late final RestorableInt _orientationIndex;
   final Set<String> _bookmarks = {};
+  final Map<String, ReadingPosition> _bookmarkPositions = {};
   final Set<String> _mountedBlockIds = {};
 
   late ReaderSettings _settings;
@@ -170,6 +173,20 @@ class _ReaderScreenState extends State<ReaderScreen>
     _afterBoundary = initialBoundaries.$2;
     _windowEnd = _items.length.clamp(0, _initialWindowItems);
     _bookmarks.addAll(widget.initialBookmarkedBlockIds);
+    for (final position in widget.initialBookmarks) {
+      _bookmarks.add(position.blockId);
+      _bookmarkPositions[position.blockId] = position;
+    }
+    for (final chapter in _loadedChapters) {
+      for (final block in chapter.blocks) {
+        if (_bookmarks.contains(block.id)) {
+          _bookmarkPositions.putIfAbsent(
+            block.id,
+            () => ReadingPosition(chapterId: chapter.id, blockId: block.id),
+          );
+        }
+      }
+    }
     _activeChapterId =
         widget.initialPosition?.chapterId ??
         (_loadedChapters.isEmpty ? null : _loadedChapters.first.id);
@@ -1145,7 +1162,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Future<void> _showCatalog() async {
-    final chapter = await showModalBottomSheet<ReaderChapterCatalogEntry>(
+    final target = await showModalBottomSheet<_ReaderNavigationTarget>(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
@@ -1157,19 +1174,26 @@ class _ReaderScreenState extends State<ReaderScreen>
             .where((chapter) => chapter.blocks.isNotEmpty)
             .map((chapter) => chapter.id)
             .toSet(),
+        loadedChapters: _loadedChapters,
+        bookmarks: _bookmarkPositions.values.toList(growable: false),
+        settings: _settings,
+        onBookmarkRemoved: (position) => _setBookmark(position, false),
       ),
     );
-    if (chapter == null || !mounted) return;
-    await _openCatalogEntry(chapter);
+    if (target == null || !mounted) return;
+    await _openCatalogEntry(target.chapter, position: target.position);
   }
 
-  Future<void> _openCatalogEntry(ReaderChapterCatalogEntry entry) async {
+  Future<void> _openCatalogEntry(
+    ReaderChapterCatalogEntry entry, {
+    ReadingPosition? position,
+  }) async {
     if (_catalogLoading) return;
     final loadedChapter = _loadedChapters
         .where((chapter) => chapter.id == entry.id && chapter.blocks.isNotEmpty)
         .firstOrNull;
     if (loadedChapter != null) {
-      await _jumpToLoadedChapter(loadedChapter);
+      await _jumpToLoadedPosition(loadedChapter, position);
       return;
     }
     final dataSource = widget.chapterDataSource;
@@ -1224,7 +1248,7 @@ class _ReaderScreenState extends State<ReaderScreen>
           .first;
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
-      await _jumpToLoadedChapter(selected);
+      await _jumpToLoadedPosition(selected, position);
     } catch (error) {
       if (!mounted || requestGeneration != _windowGeneration) return;
       setState(() {
@@ -1235,19 +1259,37 @@ class _ReaderScreenState extends State<ReaderScreen>
     }
   }
 
-  Future<void> _jumpToLoadedChapter(NovelChapter chapter) async {
+  Future<void> _jumpToLoadedPosition(
+    NovelChapter chapter,
+    ReadingPosition? requested,
+  ) async {
     setState(() => _restoring = true);
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
-    await _jumpToStableId('chapter:${chapter.id}');
+    final requestedBlock = requested?.chapterId == chapter.id
+        ? chapter.blocks
+              .where((block) => block.id == requested!.blockId)
+              .firstOrNull
+        : null;
+    await _jumpToStableId(
+      requestedBlock == null
+          ? 'chapter:${chapter.id}'
+          : 'block:${requestedBlock.id}',
+      intraBlockOffset: requestedBlock == null
+          ? 0
+          : requested!.intraBlockOffset,
+    );
     if (!mounted) return;
-    final firstBlock = chapter.blocks.isEmpty ? null : chapter.blocks.first;
-    if (firstBlock != null) {
-      _anchorBlockId.value = firstBlock.id;
+    final targetBlock = requestedBlock ?? chapter.blocks.firstOrNull;
+    if (targetBlock != null) {
+      _anchorBlockId.value = targetBlock.id;
       _activeChapterId = chapter.id;
       _lastPosition = ReadingPosition(
         chapterId: chapter.id,
-        blockId: firstBlock.id,
+        blockId: targetBlock.id,
+        intraBlockOffset: requestedBlock == null
+            ? 0
+            : requested!.intraBlockOffset,
       );
       widget.onPositionChanged?.call(_lastPosition!);
     }
@@ -1314,11 +1356,17 @@ class _ReaderScreenState extends State<ReaderScreen>
       blockId: anchor.block.id,
     );
     final bookmarked = !_bookmarks.contains(anchor.block.id);
+    _setBookmark(position, bookmarked);
+  }
+
+  void _setBookmark(ReadingPosition position, bool bookmarked) {
     setState(() {
       if (bookmarked) {
-        _bookmarks.add(anchor.block.id);
+        _bookmarks.add(position.blockId);
+        _bookmarkPositions[position.blockId] = position;
       } else {
-        _bookmarks.remove(anchor.block.id);
+        _bookmarks.remove(position.blockId);
+        _bookmarkPositions.remove(position.blockId);
       }
     });
     widget.onBookmarkChanged?.call(position, bookmarked);
@@ -1466,6 +1514,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                                 item: item,
                                 settings: _settings,
                                 foreground: foreground,
+                                bookmarked: _bookmarks.contains(item.block.id),
                                 onMounted: (itemContext) {
                                   _mountedBlockIds.add(item.block.id);
                                   _registerMountedItem(
@@ -1942,6 +1991,7 @@ class _AlignedBlockView extends StatefulWidget {
     required this.item,
     required this.settings,
     required this.foreground,
+    required this.bookmarked,
     required this.onMounted,
     required this.onUnmounted,
     super.key,
@@ -1950,6 +2000,7 @@ class _AlignedBlockView extends StatefulWidget {
   final AlignedBlockItem item;
   final ReaderSettings settings;
   final Color foreground;
+  final bool bookmarked;
   final ValueChanged<BuildContext> onMounted;
   final ValueChanged<BuildContext> onUnmounted;
 
@@ -1998,6 +2049,7 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
         widget.settings.readingMode == ReadingMode.chineseJapanese;
     final isDialogue = widget.item.block.kind == AlignedBlockKind.dialogue;
     final semanticLabel = [
+      if (widget.bookmarked) '已加入书签',
       if (translation != null) '中文：$translation',
       if (showJapanese) '日文：${widget.item.block.japanese}',
     ].join('\n');
@@ -2058,36 +2110,53 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
           container: true,
           excludeSemantics: true,
           label: semanticLabel,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              widget.settings.pageMargin + (isDialogue ? 10 : 0),
-              9,
-              widget.settings.pageMargin + (isDialogue ? 6 : 0),
-              widget.settings.paragraphSpacing,
-            ),
-            child: parallelColumns
-                ? Row(
-                    key: ValueKey(
-                      'block-${widget.item.block.id}-parallel-columns',
-                    ),
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: chineseText),
-                      const SizedBox(width: 28),
-                      Expanded(child: japaneseText),
-                    ],
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ?chineseText,
-                      if (chineseText != null && japaneseText != null)
-                        SizedBox(
-                          height: widget.settings.chineseFontSize * 0.42,
+          child: Stack(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  widget.settings.pageMargin + (isDialogue ? 10 : 0),
+                  9,
+                  widget.settings.pageMargin + (isDialogue ? 6 : 0),
+                  widget.settings.paragraphSpacing,
+                ),
+                child: parallelColumns
+                    ? Row(
+                        key: ValueKey(
+                          'block-${widget.item.block.id}-parallel-columns',
                         ),
-                      ?japaneseText,
-                    ],
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: chineseText),
+                          const SizedBox(width: 28),
+                          Expanded(child: japaneseText),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ?chineseText,
+                          if (chineseText != null && japaneseText != null)
+                            SizedBox(
+                              height: widget.settings.chineseFontSize * 0.42,
+                            ),
+                          ?japaneseText,
+                        ],
+                      ),
+              ),
+              if (widget.bookmarked)
+                Positioned(
+                  key: ValueKey(
+                    'block-${widget.item.block.id}-bookmark-marker',
                   ),
+                  top: 8,
+                  right: (widget.settings.pageMargin * 0.25).clamp(4.0, 12.0),
+                  child: Icon(
+                    Icons.bookmark_rounded,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -2694,27 +2763,57 @@ class _ChromeAction extends StatelessWidget {
   }
 }
 
-class _ChapterCatalogSheet extends StatelessWidget {
+class _ReaderNavigationTarget {
+  const _ReaderNavigationTarget({required this.chapter, this.position});
+
+  final ReaderChapterCatalogEntry chapter;
+  final ReadingPosition? position;
+}
+
+class _ChapterCatalogSheet extends StatefulWidget {
   const _ChapterCatalogSheet({
     required this.catalog,
     required this.activeChapterId,
     required this.loadedChapterIds,
+    required this.loadedChapters,
+    required this.bookmarks,
+    required this.settings,
+    required this.onBookmarkRemoved,
   });
 
   final List<ReaderChapterCatalogEntry> catalog;
   final String? activeChapterId;
   final Set<String> loadedChapterIds;
+  final List<NovelChapter> loadedChapters;
+  final List<ReadingPosition> bookmarks;
+  final ReaderSettings settings;
+  final ValueChanged<ReadingPosition> onBookmarkRemoved;
+
+  @override
+  State<_ChapterCatalogSheet> createState() => _ChapterCatalogSheetState();
+}
+
+class _ChapterCatalogSheetState extends State<_ChapterCatalogSheet> {
+  late final List<ReadingPosition> _bookmarks;
+
+  @override
+  void initState() {
+    super.initState();
+    _bookmarks = List.of(widget.bookmarks);
+  }
 
   List<({String? title, ReaderChapterCatalogEntry? chapter})> get _rows {
-    final grouped = catalog.any(
+    final grouped = widget.catalog.any(
       (entry) => entry.sectionTitle != null && entry.sectionTitle!.isNotEmpty,
     );
     if (!grouped) {
-      return [for (final chapter in catalog) (title: null, chapter: chapter)];
+      return [
+        for (final chapter in widget.catalog) (title: null, chapter: chapter),
+      ];
     }
     final rows = <({String? title, ReaderChapterCatalogEntry? chapter})>[];
     String? current;
-    for (final chapter in catalog) {
+    for (final chapter in widget.catalog) {
       final title =
           (chapter.sectionTitle == null || chapter.sectionTitle!.isEmpty)
           ? '章节'
@@ -2728,71 +2827,189 @@ class _ChapterCatalogSheet extends StatelessWidget {
     return rows;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.76,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    '章节目录',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                Text('${catalog.length} 章'),
-              ],
+  List<
+    ({
+      ReadingPosition position,
+      ReaderChapterCatalogEntry chapter,
+      String excerpt,
+    })
+  >
+  get _bookmarkRows {
+    final chaptersById = {
+      for (final chapter in widget.loadedChapters) chapter.id: chapter,
+    };
+    final catalogById = {
+      for (final chapter in widget.catalog) chapter.id: chapter,
+    };
+    return [
+      for (final position in _bookmarks)
+        if (catalogById[position.chapterId] case final catalogChapter?)
+          (
+            position: position,
+            chapter: catalogChapter,
+            excerpt: _bookmarkExcerpt(
+              chaptersById[position.chapterId],
+              position,
             ),
           ),
-          const Divider(height: 1),
-          Expanded(
-            child: ListView.builder(
-              key: const ValueKey('chapter-catalog-list'),
-              itemCount: _rows.length,
-              itemBuilder: (context, index) {
-                final row = _rows[index];
-                final chapter = row.chapter;
-                if (chapter == null) {
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+    ];
+  }
+
+  String _bookmarkExcerpt(NovelChapter? chapter, ReadingPosition position) {
+    final block = chapter?.blocks
+        .where((block) => block.id == position.blockId)
+        .firstOrNull;
+    if (block == null) return '打开后加载已保存段落';
+    final translation =
+        chapter!.translationState(widget.settings.translationSource) ==
+            TranslationState.complete
+        ? block.translationFor(widget.settings.translationSource)
+        : null;
+    final text = (translation ?? block.japanese).replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    return text.length <= 72 ? text : '${text.substring(0, 72)}…';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.76,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Row(
+                children: [
+                  const Expanded(
                     child: Text(
-                      row.title!,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
+                      '阅读导航',
+                      style: TextStyle(
+                        fontSize: 20,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  );
-                }
-                final active = chapter.id == activeChapterId;
-                final loaded = loadedChapterIds.contains(chapter.id);
-                return ListTile(
-                  key: ValueKey('catalog-chapter-${chapter.id}'),
-                  selected: active,
-                  leading: CircleAvatar(child: Text('${chapter.index}')),
-                  title: Text(chapter.chineseTitle),
-                  subtitle: Text(
-                    chapter.japaneseTitle,
-                    locale: const Locale('ja', 'JP'),
                   ),
-                  trailing: active
-                      ? const Icon(Icons.menu_book_rounded)
-                      : Icon(
-                          loaded
-                              ? Icons.check_circle_outline_rounded
-                              : Icons.cloud_download_outlined,
-                          semanticLabel: loaded ? '正文已加载' : '点击后加载正文',
-                        ),
-                  onTap: () => Navigator.pop(context, chapter),
-                );
-              },
+                  Text('${widget.catalog.length} 章 · ${_bookmarks.length} 书签'),
+                ],
+              ),
             ),
-          ),
-        ],
+            const TabBar(
+              tabs: [
+                Tab(key: ValueKey('reader-navigation-chapters'), text: '目录'),
+                Tab(key: ValueKey('reader-navigation-bookmarks'), text: '书签'),
+              ],
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  ListView.builder(
+                    key: const ValueKey('chapter-catalog-list'),
+                    itemCount: _rows.length,
+                    itemBuilder: (context, index) {
+                      final row = _rows[index];
+                      final chapter = row.chapter;
+                      if (chapter == null) {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+                          child: Text(
+                            row.title!,
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        );
+                      }
+                      final active = chapter.id == widget.activeChapterId;
+                      final loaded = widget.loadedChapterIds.contains(
+                        chapter.id,
+                      );
+                      return ListTile(
+                        key: ValueKey('catalog-chapter-${chapter.id}'),
+                        selected: active,
+                        leading: CircleAvatar(child: Text('${chapter.index}')),
+                        title: Text(chapter.chineseTitle),
+                        subtitle: Text(
+                          chapter.japaneseTitle,
+                          locale: const Locale('ja', 'JP'),
+                        ),
+                        trailing: active
+                            ? const Icon(Icons.menu_book_rounded)
+                            : Icon(
+                                loaded
+                                    ? Icons.check_circle_outline_rounded
+                                    : Icons.cloud_download_outlined,
+                                semanticLabel: loaded ? '正文已加载' : '点击后加载正文',
+                              ),
+                        onTap: () => Navigator.pop(
+                          context,
+                          _ReaderNavigationTarget(chapter: chapter),
+                        ),
+                      );
+                    },
+                  ),
+                  _bookmarkRows.isEmpty
+                      ? const Center(
+                          child: Text(
+                            '还没有书签',
+                            key: ValueKey('reader-bookmarks-empty'),
+                          ),
+                        )
+                      : ListView.builder(
+                          key: const ValueKey('reader-bookmarks-list'),
+                          itemCount: _bookmarkRows.length,
+                          itemBuilder: (context, index) {
+                            final bookmark = _bookmarkRows[index];
+                            return ListTile(
+                              key: ValueKey(
+                                'reader-bookmark-${bookmark.position.blockId}',
+                              ),
+                              leading: const Icon(Icons.bookmark_rounded),
+                              title: Text(bookmark.chapter.chineseTitle),
+                              subtitle: Text(
+                                bookmark.excerpt,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: IconButton(
+                                key: ValueKey(
+                                  'remove-reader-bookmark-'
+                                  '${bookmark.position.blockId}',
+                                ),
+                                tooltip: '删除书签',
+                                onPressed: () {
+                                  setState(() {
+                                    _bookmarks.removeWhere(
+                                      (position) =>
+                                          position.blockId ==
+                                          bookmark.position.blockId,
+                                    );
+                                  });
+                                  widget.onBookmarkRemoved(bookmark.position);
+                                },
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                              onTap: () => Navigator.pop(
+                                context,
+                                _ReaderNavigationTarget(
+                                  chapter: bookmark.chapter,
+                                  position: bookmark.position,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

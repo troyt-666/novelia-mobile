@@ -1629,14 +1629,17 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           // repository here can override an explicit chapter tap with an older
           // saved position from a different chapter.
           final initialPosition = data.initialPosition;
-          final bookmarkedBlocks = _repository
-              .listBookmarks(novelId: novel.id)
+          final savedBookmarks = _repository.listBookmarks(novelId: novel.id);
+          final bookmarkedBlocks = savedBookmarks
               .map((bookmark) => bookmark.position.blockId)
               .toSet();
           return ReaderScreen(
             novel: novel,
             initialPosition: initialPosition,
             initialBookmarkedBlockIds: bookmarkedBlocks,
+            initialBookmarks: savedBookmarks
+                .map((bookmark) => bookmark.position)
+                .toList(growable: false),
             initialSettings: _readerSettings,
             themeMode: _themeMode,
             onThemeModeChanged: _setThemeMode,
