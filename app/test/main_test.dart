@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/features/reader/reader_screen.dart';
@@ -167,6 +168,7 @@ void main() {
     expect(find.byKey(const ValueKey('block-c1-0-chinese')), findsOneWidget);
     expect(find.byKey(const ValueKey('block-c1-0-japanese')), findsOneWidget);
     expect(find.byType(SelectableText), findsNothing);
+    expect(find.byKey(const ValueKey('reader-selection-area')), findsOneWidget);
 
     final chineseTop = tester
         .getTopLeft(find.byKey(const ValueKey('block-c1-0-chinese')))
@@ -175,6 +177,33 @@ void main() {
         .getTopLeft(find.byKey(const ValueKey('block-c1-0-japanese')))
         .dy;
     expect(chineseTop, lessThan(japaneseTop));
+  });
+
+  testWidgets('native selection keeps adaptive actions and blocks page turns', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    final selection = tester.widget<SelectionArea>(
+      find.byKey(const ValueKey('reader-selection-area')),
+    );
+    expect(selection.selectionControls, isNull);
+    expect(selection.contextMenuBuilder, isNotNull);
+    expect(find.byType(SelectableText), findsNothing);
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    selection.onSelectionChanged!(const SelectedContent(plainText: '最后一班列车'));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(_readerScrollable(tester).position.pixels, 0);
+
+    selection.onSelectionChanged!(null);
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(_readerScrollable(tester).position.pixels, greaterThan(300));
   });
 
   testWidgets('renders normalized illustration blocks as images, not URLs', (

@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent, ScrollDirection;
+import 'package:flutter/rendering.dart'
+    show ScrollCacheExtent, ScrollDirection, SelectedContent;
 import 'package:flutter/services.dart';
 
 import '../../core/model/reader_models.dart';
@@ -137,6 +138,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   DateTime? _tapStartedAt;
   Timer? _chromeDismissTimer;
   bool _turningPage = false;
+  bool _selectionActive = false;
   late ReaderOrientationController _orientationController;
 
   @override
@@ -1005,6 +1007,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    if (_selectionActive) return;
     if (_tapPointer != null) return;
     _tapPointer = event.pointer;
     _tapOrigin = event.position;
@@ -1050,6 +1053,11 @@ class _ReaderScreenState extends State<ReaderScreen>
     _tapPointer = null;
     _tapOrigin = null;
     _tapStartedAt = null;
+  }
+
+  void _handleSelectionChanged(SelectedContent? content) {
+    _selectionActive = content?.plainText.isNotEmpty ?? false;
+    if (_selectionActive) _clearTapCandidate();
   }
 
   void _handleReadingTap(Offset point) {
@@ -1448,90 +1456,99 @@ class _ReaderScreenState extends State<ReaderScreen>
                     }
                     return false;
                   },
-                  child: KeyedSubtree(
-                    key: const ValueKey('reader-stream'),
-                    child: SizedBox.expand(
-                      key: _viewportKey,
-                      child: RepaintBoundary(
-                        key: const ValueKey('reader-scroll-repaint-boundary'),
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          physics:
-                              _settings.layoutMode == ReaderLayoutMode.pages
-                              ? const NeverScrollableScrollPhysics()
-                              : const ClampingScrollPhysics(),
-                          scrollCacheExtent: const ScrollCacheExtent.viewport(
-                            2,
-                          ),
-                          addAutomaticKeepAlives: false,
-                          addSemanticIndexes: false,
-                          padding: EdgeInsets.only(
-                            top: MediaQuery.paddingOf(context).top + 88,
-                            bottom: MediaQuery.paddingOf(context).bottom + 164,
-                          ),
-                          itemCount:
-                              _windowEnd -
-                              _windowStart +
-                              (_windowStart == 0 ? 1 : 0) +
-                              (_windowEnd == _items.length ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            final showBeforeBoundary = _windowStart == 0;
-                            final streamLength = _windowEnd - _windowStart;
-                            if (showBeforeBoundary && index == 0) {
-                              return _ReaderAvailabilityBoundary(
-                                direction: ReaderLoadDirection.before,
-                                status: _beforeBoundary,
-                                loading: _beforeLoading,
-                                error: _beforeLoadError,
-                                onRetry: () => unawaited(
-                                  _requestAdjacent(ReaderLoadDirection.before),
+                  child: SelectionArea(
+                    key: const ValueKey('reader-selection-area'),
+                    onSelectionChanged: _handleSelectionChanged,
+                    child: KeyedSubtree(
+                      key: const ValueKey('reader-stream'),
+                      child: SizedBox.expand(
+                        key: _viewportKey,
+                        child: RepaintBoundary(
+                          key: const ValueKey('reader-scroll-repaint-boundary'),
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            physics:
+                                _settings.layoutMode == ReaderLayoutMode.pages
+                                ? const NeverScrollableScrollPhysics()
+                                : const ClampingScrollPhysics(),
+                            scrollCacheExtent: const ScrollCacheExtent.viewport(
+                              2,
+                            ),
+                            addAutomaticKeepAlives: false,
+                            addSemanticIndexes: false,
+                            padding: EdgeInsets.only(
+                              top: MediaQuery.paddingOf(context).top + 88,
+                              bottom:
+                                  MediaQuery.paddingOf(context).bottom + 164,
+                            ),
+                            itemCount:
+                                _windowEnd -
+                                _windowStart +
+                                (_windowStart == 0 ? 1 : 0) +
+                                (_windowEnd == _items.length ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              final showBeforeBoundary = _windowStart == 0;
+                              final streamLength = _windowEnd - _windowStart;
+                              if (showBeforeBoundary && index == 0) {
+                                return _ReaderAvailabilityBoundary(
+                                  direction: ReaderLoadDirection.before,
+                                  status: _beforeBoundary,
+                                  loading: _beforeLoading,
+                                  error: _beforeLoadError,
+                                  onRetry: () => unawaited(
+                                    _requestAdjacent(
+                                      ReaderLoadDirection.before,
+                                    ),
+                                  ),
+                                );
+                              }
+                              final streamIndex =
+                                  index - (showBeforeBoundary ? 1 : 0);
+                              if (streamIndex >= streamLength) {
+                                return _ReaderAvailabilityBoundary(
+                                  direction: ReaderLoadDirection.after,
+                                  status: _afterBoundary,
+                                  loading: _afterLoading,
+                                  error: _afterLoadError,
+                                  onRetry: () => unawaited(
+                                    _requestAdjacent(ReaderLoadDirection.after),
+                                  ),
+                                );
+                              }
+                              final item = _items[_windowStart + streamIndex];
+                              return switch (item) {
+                                ChapterBoundaryItem() => _ChapterBoundary(
+                                  item: item,
+                                  itemKey: _itemKeys[item.stableId]!,
+                                  settings: _settings,
+                                  foreground: foreground,
                                 ),
-                              );
-                            }
-                            final streamIndex =
-                                index - (showBeforeBoundary ? 1 : 0);
-                            if (streamIndex >= streamLength) {
-                              return _ReaderAvailabilityBoundary(
-                                direction: ReaderLoadDirection.after,
-                                status: _afterBoundary,
-                                loading: _afterLoading,
-                                error: _afterLoadError,
-                                onRetry: () => unawaited(
-                                  _requestAdjacent(ReaderLoadDirection.after),
+                                AlignedBlockItem() => _AlignedBlockView(
+                                  key: ValueKey(item.stableId),
+                                  item: item,
+                                  settings: _settings,
+                                  foreground: foreground,
+                                  bookmarked: _bookmarks.contains(
+                                    item.block.id,
+                                  ),
+                                  onMounted: (itemContext) {
+                                    _mountedBlockIds.add(item.block.id);
+                                    _registerMountedItem(
+                                      item.stableId,
+                                      itemContext,
+                                    );
+                                  },
+                                  onUnmounted: (itemContext) {
+                                    _mountedBlockIds.remove(item.block.id);
+                                    _unregisterMountedItem(
+                                      item.stableId,
+                                      itemContext,
+                                    );
+                                  },
                                 ),
-                              );
-                            }
-                            final item = _items[_windowStart + streamIndex];
-                            return switch (item) {
-                              ChapterBoundaryItem() => _ChapterBoundary(
-                                item: item,
-                                itemKey: _itemKeys[item.stableId]!,
-                                settings: _settings,
-                                foreground: foreground,
-                              ),
-                              AlignedBlockItem() => _AlignedBlockView(
-                                key: ValueKey(item.stableId),
-                                item: item,
-                                settings: _settings,
-                                foreground: foreground,
-                                bookmarked: _bookmarks.contains(item.block.id),
-                                onMounted: (itemContext) {
-                                  _mountedBlockIds.add(item.block.id);
-                                  _registerMountedItem(
-                                    item.stableId,
-                                    itemContext,
-                                  );
-                                },
-                                onUnmounted: (itemContext) {
-                                  _mountedBlockIds.remove(item.block.id);
-                                  _unregisterMountedItem(
-                                    item.stableId,
-                                    itemContext,
-                                  );
-                                },
-                              ),
-                            };
-                          },
+                              };
+                            },
+                          ),
                         ),
                       ),
                     ),
