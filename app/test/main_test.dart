@@ -279,6 +279,71 @@ void main() {
     expect(chrome().opacity, 1);
   });
 
+  testWidgets('paged mode turns screenfuls with side taps and swipes', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    final position = _readerScrollable(tester).position;
+    expect(position.maxScrollExtent, greaterThan(300));
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(position.pixels, 0);
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    final afterTap = position.pixels;
+    expect(afterTap, greaterThan(300));
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(220, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, lessThan(afterTap));
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(-220, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(300));
+  });
+
+  testWidgets('scroll mode ignores page-edge taps', (tester) async {
+    await pumpReader(tester);
+    final position = _readerScrollable(tester).position;
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+
+    expect(position.pixels, 0);
+  });
+
+  testWidgets('layout setting persists through the reader callback', (
+    tester,
+  ) async {
+    final changes = <ReaderSettings>[];
+    await pumpReader(tester, onSettingsChanged: changes.add);
+
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('翻页'));
+    await tester.tap(find.byKey(const ValueKey('settings-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changes.single.layoutMode, ReaderLayoutMode.pages);
+    expect(
+      _readerScrollable(tester).widget.physics,
+      isA<NeverScrollableScrollPhysics>(),
+    );
+  });
+
   testWidgets('scrolling and inactivity dismiss reader chrome', (tester) async {
     await pumpReader(tester);
 

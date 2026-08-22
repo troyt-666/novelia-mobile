@@ -60,6 +60,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   final _anchorBlockId = RestorableStringN(null);
   late final RestorableInt _modeIndex;
   late final RestorableInt _sourceIndex;
+  late final RestorableInt _layoutIndex;
   late final RestorableDouble _chineseFontSize;
   late final RestorableDouble _japaneseFontSize;
   late final RestorableDouble _lineHeight;
@@ -93,6 +94,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   Offset? _tapOrigin;
   DateTime? _tapStartedAt;
   Timer? _chromeDismissTimer;
+  bool _turningPage = false;
 
   @override
   String? get restorationId => 'reader:${widget.novel.id}';
@@ -104,6 +106,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     _settings = widget.initialSettings;
     _modeIndex = RestorableInt(_settings.readingMode.index);
     _sourceIndex = RestorableInt(_settings.translationSource.index);
+    _layoutIndex = RestorableInt(_settings.layoutMode.index);
     _chineseFontSize = RestorableDouble(_settings.chineseFontSize);
     _japaneseFontSize = RestorableDouble(_settings.japaneseFontSize);
     _lineHeight = RestorableDouble(_settings.lineHeight);
@@ -246,6 +249,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     registerForRestoration(_anchorBlockId, 'anchor-block-id');
     registerForRestoration(_modeIndex, 'reading-mode');
     registerForRestoration(_sourceIndex, 'translation-source');
+    registerForRestoration(_layoutIndex, 'layout-mode');
     registerForRestoration(_chineseFontSize, 'chinese-font-size');
     registerForRestoration(_japaneseFontSize, 'japanese-font-size');
     registerForRestoration(_lineHeight, 'line-height');
@@ -253,9 +257,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     registerForRestoration(_readingWidth, 'reading-width');
 
     _anchorBlockId.value ??= widget.initialPosition?.blockId;
-    _settings = ReaderSettings(
+    _settings = _settings.copyWith(
       readingMode: ReadingMode.values[_modeIndex.value],
       translationSource: TranslationSource.values[_sourceIndex.value],
+      layoutMode: ReaderLayoutMode.values[_layoutIndex.value],
       chineseFontSize: _chineseFontSize.value,
       japaneseFontSize: _japaneseFontSize.value,
       lineHeight: _lineHeight.value,
@@ -296,6 +301,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     _anchorBlockId.dispose();
     _modeIndex.dispose();
     _sourceIndex.dispose();
+    _layoutIndex.dispose();
     _chineseFontSize.dispose();
     _japaneseFontSize.dispose();
     _lineHeight.dispose();
@@ -867,6 +873,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _restoring = true;
       _modeIndex.value = settings.readingMode.index;
       _sourceIndex.value = settings.translationSource.index;
+      _layoutIndex.value = settings.layoutMode.index;
       _chineseFontSize.value = settings.chineseFontSize;
       _japaneseFontSize.value = settings.japaneseFontSize;
       _lineHeight.value = settings.lineHeight;
@@ -905,10 +912,24 @@ class _ReaderScreenState extends State<ReaderScreen>
         _tapStartedAt == null) {
       return;
     }
-    final travel = (event.position - _tapOrigin!).distance;
+    final delta = event.position - _tapOrigin!;
+    final travel = delta.distance;
     final elapsed = DateTime.now().difference(_tapStartedAt!);
+    final isPageSwipe =
+        _settings.layoutMode == ReaderLayoutMode.pages &&
+        elapsed < const Duration(milliseconds: 700) &&
+        delta.dx.abs() >= 56 &&
+        delta.dx.abs() > delta.dy.abs() * 1.2;
     final isTap = travel < 12 && elapsed < const Duration(milliseconds: 450);
     _clearTapCandidate();
+    if (isPageSwipe) {
+      unawaited(
+        _turnPage(
+          delta.dx < 0 ? ReaderLoadDirection.after : ReaderLoadDirection.before,
+        ),
+      );
+      return;
+    }
     if (isTap) {
       _handleReadingTap(event.position);
     }
@@ -928,10 +949,63 @@ class _ReaderScreenState extends State<ReaderScreen>
     final size = MediaQuery.sizeOf(context);
     final inHorizontalCenter =
         point.dx >= size.width * 0.25 && point.dx <= size.width * 0.75;
-    final inVerticalCenter =
-        point.dy >= size.height * 0.30 && point.dy <= size.height * 0.70;
-    if (inHorizontalCenter && inVerticalCenter) {
+    if (inHorizontalCenter) {
       _showChrome();
+      return;
+    }
+    if (_settings.layoutMode == ReaderLayoutMode.pages) {
+      unawaited(
+        _turnPage(
+          point.dx < size.width * 0.25
+              ? ReaderLoadDirection.before
+              : ReaderLoadDirection.after,
+        ),
+      );
+    }
+  }
+
+  Future<void> _turnPage(ReaderLoadDirection direction) async {
+    if (_turningPage ||
+        _restoring ||
+        !_scrollController.hasClients ||
+        _settings.layoutMode != ReaderLayoutMode.pages) {
+      return;
+    }
+    _turningPage = true;
+    try {
+      var position = _scrollController.position;
+      final forward = direction == ReaderLoadDirection.after;
+      final atAvailableEdge = forward
+          ? position.extentAfter <= 1
+          : position.extentBefore <= 1;
+      final boundary = forward ? _afterBoundary : _beforeBoundary;
+      if (atAvailableEdge && boundary == ReaderBoundaryStatus.loadable) {
+        await _requestAdjacent(direction);
+        if (!mounted) return;
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted || !_scrollController.hasClients) return;
+        position = _scrollController.position;
+      }
+
+      final overlap = (position.viewportDimension * 0.08).clamp(40.0, 72.0);
+      final step = (position.viewportDimension - overlap).clamp(
+        120.0,
+        position.viewportDimension,
+      );
+      final target = (position.pixels + (forward ? step : -step)).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if ((target - position.pixels).abs() < 0.5) return;
+      _hideChrome();
+      await _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+      if (mounted) _captureAnchor(notify: true);
+    } finally {
+      _turningPage = false;
     }
   }
 
@@ -1172,104 +1246,120 @@ class _ReaderScreenState extends State<ReaderScreen>
       body: Stack(
         children: [
           Positioned.fill(
-            child: Listener(
-              key: const ValueKey('reader-center-tap-area'),
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: _handlePointerDown,
-              onPointerUp: _handlePointerUp,
-              onPointerCancel: _handlePointerCancel,
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  _handleScrollMetrics(notification.metrics);
-                  _handleReaderScroll(notification);
-                  if (!_restoring &&
-                      !_preservingDynamicAnchor &&
-                      (notification is ScrollEndNotification ||
-                          notification is ScrollUpdateNotification)) {
-                    _captureAnchor(
-                      notify: notification is ScrollEndNotification,
-                    );
-                  }
-                  return false;
-                },
-                child: KeyedSubtree(
-                  key: const ValueKey('reader-stream'),
-                  child: SizedBox.expand(
-                    key: _viewportKey,
-                    child: RepaintBoundary(
-                      key: const ValueKey('reader-scroll-repaint-boundary'),
-                      child: ListView.builder(
-                        controller: _scrollController,
-                        physics: const ClampingScrollPhysics(),
-                        scrollCacheExtent: const ScrollCacheExtent.viewport(2),
-                        addAutomaticKeepAlives: false,
-                        addSemanticIndexes: false,
-                        padding: EdgeInsets.only(
-                          top: MediaQuery.paddingOf(context).top + 88,
-                          bottom: MediaQuery.paddingOf(context).bottom + 112,
+            child: Semantics(
+              label: _settings.layoutMode == ReaderLayoutMode.pages
+                  ? '分页阅读区域'
+                  : '滚动阅读区域',
+              onIncrease: _settings.layoutMode == ReaderLayoutMode.pages
+                  ? () => unawaited(_turnPage(ReaderLoadDirection.after))
+                  : null,
+              onDecrease: _settings.layoutMode == ReaderLayoutMode.pages
+                  ? () => unawaited(_turnPage(ReaderLoadDirection.before))
+                  : null,
+              child: Listener(
+                key: const ValueKey('reader-center-tap-area'),
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: _handlePointerDown,
+                onPointerUp: _handlePointerUp,
+                onPointerCancel: _handlePointerCancel,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    _handleScrollMetrics(notification.metrics);
+                    _handleReaderScroll(notification);
+                    if (!_restoring &&
+                        !_preservingDynamicAnchor &&
+                        (notification is ScrollEndNotification ||
+                            notification is ScrollUpdateNotification)) {
+                      _captureAnchor(
+                        notify: notification is ScrollEndNotification,
+                      );
+                    }
+                    return false;
+                  },
+                  child: KeyedSubtree(
+                    key: const ValueKey('reader-stream'),
+                    child: SizedBox.expand(
+                      key: _viewportKey,
+                      child: RepaintBoundary(
+                        key: const ValueKey('reader-scroll-repaint-boundary'),
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          physics:
+                              _settings.layoutMode == ReaderLayoutMode.pages
+                              ? const NeverScrollableScrollPhysics()
+                              : const ClampingScrollPhysics(),
+                          scrollCacheExtent: const ScrollCacheExtent.viewport(
+                            2,
+                          ),
+                          addAutomaticKeepAlives: false,
+                          addSemanticIndexes: false,
+                          padding: EdgeInsets.only(
+                            top: MediaQuery.paddingOf(context).top + 88,
+                            bottom: MediaQuery.paddingOf(context).bottom + 112,
+                          ),
+                          itemCount:
+                              _windowEnd -
+                              _windowStart +
+                              (_windowStart == 0 ? 1 : 0) +
+                              (_windowEnd == _items.length ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            final showBeforeBoundary = _windowStart == 0;
+                            final streamLength = _windowEnd - _windowStart;
+                            if (showBeforeBoundary && index == 0) {
+                              return _ReaderAvailabilityBoundary(
+                                direction: ReaderLoadDirection.before,
+                                status: _beforeBoundary,
+                                loading: _beforeLoading,
+                                error: _beforeLoadError,
+                                onRetry: () => unawaited(
+                                  _requestAdjacent(ReaderLoadDirection.before),
+                                ),
+                              );
+                            }
+                            final streamIndex =
+                                index - (showBeforeBoundary ? 1 : 0);
+                            if (streamIndex >= streamLength) {
+                              return _ReaderAvailabilityBoundary(
+                                direction: ReaderLoadDirection.after,
+                                status: _afterBoundary,
+                                loading: _afterLoading,
+                                error: _afterLoadError,
+                                onRetry: () => unawaited(
+                                  _requestAdjacent(ReaderLoadDirection.after),
+                                ),
+                              );
+                            }
+                            final item = _items[_windowStart + streamIndex];
+                            return switch (item) {
+                              ChapterBoundaryItem() => _ChapterBoundary(
+                                item: item,
+                                itemKey: _itemKeys[item.stableId]!,
+                                settings: _settings,
+                                foreground: foreground,
+                              ),
+                              AlignedBlockItem() => _AlignedBlockView(
+                                key: ValueKey(item.stableId),
+                                item: item,
+                                settings: _settings,
+                                foreground: foreground,
+                                onMounted: (itemContext) {
+                                  _mountedBlockIds.add(item.block.id);
+                                  _registerMountedItem(
+                                    item.stableId,
+                                    itemContext,
+                                  );
+                                },
+                                onUnmounted: (itemContext) {
+                                  _mountedBlockIds.remove(item.block.id);
+                                  _unregisterMountedItem(
+                                    item.stableId,
+                                    itemContext,
+                                  );
+                                },
+                              ),
+                            };
+                          },
                         ),
-                        itemCount:
-                            _windowEnd -
-                            _windowStart +
-                            (_windowStart == 0 ? 1 : 0) +
-                            (_windowEnd == _items.length ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          final showBeforeBoundary = _windowStart == 0;
-                          final streamLength = _windowEnd - _windowStart;
-                          if (showBeforeBoundary && index == 0) {
-                            return _ReaderAvailabilityBoundary(
-                              direction: ReaderLoadDirection.before,
-                              status: _beforeBoundary,
-                              loading: _beforeLoading,
-                              error: _beforeLoadError,
-                              onRetry: () => unawaited(
-                                _requestAdjacent(ReaderLoadDirection.before),
-                              ),
-                            );
-                          }
-                          final streamIndex =
-                              index - (showBeforeBoundary ? 1 : 0);
-                          if (streamIndex >= streamLength) {
-                            return _ReaderAvailabilityBoundary(
-                              direction: ReaderLoadDirection.after,
-                              status: _afterBoundary,
-                              loading: _afterLoading,
-                              error: _afterLoadError,
-                              onRetry: () => unawaited(
-                                _requestAdjacent(ReaderLoadDirection.after),
-                              ),
-                            );
-                          }
-                          final item = _items[_windowStart + streamIndex];
-                          return switch (item) {
-                            ChapterBoundaryItem() => _ChapterBoundary(
-                              item: item,
-                              itemKey: _itemKeys[item.stableId]!,
-                              settings: _settings,
-                              foreground: foreground,
-                            ),
-                            AlignedBlockItem() => _AlignedBlockView(
-                              key: ValueKey(item.stableId),
-                              item: item,
-                              settings: _settings,
-                              foreground: foreground,
-                              onMounted: (itemContext) {
-                                _mountedBlockIds.add(item.block.id);
-                                _registerMountedItem(
-                                  item.stableId,
-                                  itemContext,
-                                );
-                              },
-                              onUnmounted: (itemContext) {
-                                _mountedBlockIds.remove(item.block.id);
-                                _unregisterMountedItem(
-                                  item.stableId,
-                                  itemContext,
-                                );
-                              },
-                            ),
-                          };
-                        },
                       ),
                     ),
                   ),
@@ -2417,6 +2507,30 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   onSelectionChanged: (selection) {
                     setState(() {
                       _draft = _draft.copyWith(readingMode: selection.single);
+                    });
+                  },
+                ),
+                const SizedBox(height: 22),
+                _SectionLabel('布局'),
+                const SizedBox(height: 10),
+                SegmentedButton<ReaderLayoutMode>(
+                  key: const ValueKey('settings-layout-mode'),
+                  segments: const [
+                    ButtonSegment(
+                      value: ReaderLayoutMode.scroll,
+                      icon: Icon(Icons.swap_vert_rounded),
+                      label: Text('滚动'),
+                    ),
+                    ButtonSegment(
+                      value: ReaderLayoutMode.pages,
+                      icon: Icon(Icons.menu_book_rounded),
+                      label: Text('翻页'),
+                    ),
+                  ],
+                  selected: {_draft.layoutMode},
+                  onSelectionChanged: (selection) {
+                    setState(() {
+                      _draft = _draft.copyWith(layoutMode: selection.single);
                     });
                   },
                 ),
