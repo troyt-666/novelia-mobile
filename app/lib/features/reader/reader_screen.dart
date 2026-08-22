@@ -144,6 +144,10 @@ class _ReaderScreenState extends State<ReaderScreen>
   bool _turningPage = false;
   bool _selectionActive = false;
   final Map<String, int> _horizontalPageByStableId = {};
+  final Map<String, List<_ReaderHorizontalLocation>>
+  _horizontalLocationsByStableId = {};
+  List<_ReaderHorizontalPage> _horizontalPages = const [];
+  int _metricsRelayoutGeneration = 0;
   late ReaderOrientationController _orientationController;
 
   ScrollController get _activeScrollController =>
@@ -388,6 +392,22 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   @override
+  void didChangeMetrics() {
+    if (!mounted || _restoring) return;
+    final anchor = _captureAnchor(notify: false, updateUi: false);
+    final position = anchor == null ? null : _lastPosition;
+    if (position == null) return;
+    final generation = ++_metricsRelayoutGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || generation != _metricsRelayoutGeneration) return;
+      await _jumpToStableId(
+        'block:${position.blockId}',
+        intraBlockOffset: position.intraBlockOffset,
+      );
+    });
+  }
+
+  @override
   void dispose() {
     widget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
     unawaited(_orientationController.reset());
@@ -515,6 +535,15 @@ class _ReaderScreenState extends State<ReaderScreen>
     final targetIndex = _itemIndices[stableId];
     if (targetIndex == null || !_activeScrollController.hasClients) return;
 
+    if (_settings.layoutMode == ReaderLayoutMode.pages) {
+      final page = _horizontalPageForStableId(stableId, intraBlockOffset);
+      if (page != null && _pageController.hasClients) {
+        _pageController.jumpToPage(page);
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      return;
+    }
+
     var targetContext = _mountedContextFor(stableId);
     if (targetContext == null) {
       setState(() {
@@ -527,17 +556,6 @@ class _ReaderScreenState extends State<ReaderScreen>
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
       targetContext = _mountedContextFor(stableId);
-      if (targetContext == null &&
-          _settings.layoutMode == ReaderLayoutMode.pages &&
-          _pageController.hasClients) {
-        final page = _horizontalPageByStableId[stableId];
-        if (page != null) {
-          _pageController.jumpToPage(page);
-          await WidgetsBinding.instance.endOfFrame;
-          if (!mounted) return;
-          targetContext = _mountedContextFor(stableId);
-        }
-      }
     }
     if (targetContext != null && targetContext.mounted) {
       await Scrollable.ensureVisible(
@@ -562,6 +580,19 @@ class _ReaderScreenState extends State<ReaderScreen>
         }
       }
     }
+  }
+
+  int? _horizontalPageForStableId(String stableId, int intraBlockOffset) {
+    final locations = _horizontalLocationsByStableId[stableId];
+    if (locations == null || locations.isEmpty) {
+      return _horizontalPageByStableId[stableId];
+    }
+    var selected = locations.first;
+    for (final location in locations.skip(1)) {
+      if (location.intraBlockOffset > intraBlockOffset) break;
+      selected = location;
+    }
+    return selected.pageIndex;
   }
 
   void _extendWindowForward() {
@@ -857,7 +888,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (visibleAnchor != null && controller.hasClients) {
       var itemContext = _mountedContextFor(visibleAnchor.stableId);
       if (itemContext == null) {
-        await _jumpToStableId(visibleAnchor.stableId);
+        await _jumpToStableId(
+          visibleAnchor.stableId,
+          intraBlockOffset: visibleAnchor.intraBlockOffset,
+        );
         if (!mounted || !controller.hasClients) return;
         await WidgetsBinding.instance.endOfFrame;
         if (!mounted || !controller.hasClients) return;
@@ -902,6 +936,13 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   _VisibleReaderAnchor? _captureVisibleAnchor() {
     final anchor = _captureAnchor(notify: false, updateUi: false);
+    if (_settings.layoutMode == ReaderLayoutMode.pages && anchor != null) {
+      return _VisibleReaderAnchor(
+        stableId: anchor.stableId,
+        intraBlockOffset: _lastPosition?.intraBlockOffset ?? 0,
+        viewportOffset: 0,
+      );
+    }
     final viewportContext = _viewportKey.currentContext;
     final itemContext = anchor == null
         ? null
@@ -919,6 +960,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final viewportOrigin = viewportBox.localToGlobal(Offset.zero);
     return _VisibleReaderAnchor(
       stableId: anchor.stableId,
+      intraBlockOffset: _lastPosition?.intraBlockOffset ?? 0,
       viewportOffset: _settings.layoutMode == ReaderLayoutMode.pages
           ? itemOrigin.dx - viewportOrigin.dx
           : itemOrigin.dy - viewportOrigin.dy,
@@ -926,6 +968,9 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   AlignedBlockItem? _captureAnchor({bool notify = true, bool updateUi = true}) {
+    if (_settings.layoutMode == ReaderLayoutMode.pages) {
+      return _captureHorizontalAnchor(notify: notify, updateUi: updateUi);
+    }
     final viewportContext = _viewportKey.currentContext;
     if (viewportContext == null) return null;
     final viewportBox = viewportContext.findRenderObject();
@@ -1014,6 +1059,33 @@ class _ReaderScreenState extends State<ReaderScreen>
     return anchor;
   }
 
+  AlignedBlockItem? _captureHorizontalAnchor({
+    required bool notify,
+    required bool updateUi,
+  }) {
+    if (_horizontalPages.isEmpty || !_pageController.hasClients) return null;
+    final pageIndex = (_pageController.page?.round() ?? 0).clamp(
+      0,
+      _horizontalPages.length - 1,
+    );
+    final page = _horizontalPages[pageIndex];
+    final anchor = page.anchor;
+    if (anchor == null) return null;
+    final position = ReadingPosition(
+      chapterId: anchor.chapter.id,
+      blockId: anchor.block.id,
+      intraBlockOffset: page.anchorIntraBlockOffset,
+    );
+    final changed = _lastPosition != position;
+    _anchorBlockId.value = anchor.block.id;
+    _lastPosition = position;
+    final chapterChanged = _activeChapterId != anchor.chapter.id;
+    _activeChapterId = anchor.chapter.id;
+    if (chapterChanged && updateUi && mounted) setState(() {});
+    if (notify && changed) widget.onPositionChanged?.call(position);
+    return anchor;
+  }
+
   Future<void> _applySettings(
     ReaderSettings settings, {
     ThemeMode? themeMode,
@@ -1051,7 +1123,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     if (anchor != null) {
-      await _jumpToStableId(anchor.stableId);
+      await _jumpToStableId(
+        anchor.stableId,
+        intraBlockOffset: _lastPosition?.intraBlockOffset ?? 0,
+      );
       if (!mounted) return;
     }
     setState(() => _restoring = false);
@@ -1576,9 +1651,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final parallel =
         translation != null &&
         showJapanese &&
-        (_settings.columnLayout == ReaderColumnLayout.twoColumns ||
-            _settings.columnLayout == ReaderColumnLayout.automatic &&
-                viewportWidth >= 1000);
+        _usesParallelColumns(_settings, viewportWidth);
     final bodyWeight = _settings.bodyBold ? FontWeight.w600 : FontWeight.w400;
     final family = _settings.fontFamily == ReaderFontFamily.systemSerif
         ? 'serif'
@@ -1633,25 +1706,58 @@ class _ReaderScreenState extends State<ReaderScreen>
     double availableHeight,
   ) {
     final pages = <_ReaderHorizontalPage>[];
-    var indices = <int>[];
+    var entries = <_ReaderHorizontalEntry>[];
     var estimatedHeight = 0.0;
     _horizontalPageByStableId.clear();
+    _horizontalLocationsByStableId.clear();
 
     void finishPage() {
-      if (indices.isEmpty) return;
+      if (entries.isEmpty) return;
       final pageIndex = pages.length;
-      for (final index in indices) {
-        final stableId = _stableIdForReaderItem(index);
-        if (stableId != null) _horizontalPageByStableId[stableId] = pageIndex;
+      AlignedBlockItem? anchor;
+      var anchorIntraBlockOffset = 0;
+      for (final entry in entries) {
+        final stableId = _stableIdForReaderItem(entry.readerItemIndex);
+        if (stableId == null) continue;
+        _horizontalPageByStableId.putIfAbsent(stableId, () => pageIndex);
+        final location = _ReaderHorizontalLocation(
+          pageIndex: pageIndex,
+          intraBlockOffset: entry.fragment?.intraBlockOffset ?? 0,
+        );
+        _horizontalLocationsByStableId
+            .putIfAbsent(stableId, () => [])
+            .add(location);
+        if (anchor != null) continue;
+        final streamIndex = _streamIndexForReaderItem(entry.readerItemIndex);
+        if (streamIndex == null) continue;
+        final item = _items[streamIndex];
+        if (item is AlignedBlockItem) {
+          anchor = item;
+          anchorIntraBlockOffset = location.intraBlockOffset;
+        } else if (item is ChapterBoundaryItem) {
+          final firstBlock = item.chapter.blocks.firstOrNull;
+          if (firstBlock != null) {
+            anchor = AlignedBlockItem(chapter: item.chapter, block: firstBlock);
+          }
+        }
       }
       pages.add(
         _ReaderHorizontalPage(
-          readerItemIndices: indices,
-          estimatedHeight: estimatedHeight,
+          entries: entries,
+          anchor: anchor,
+          anchorIntraBlockOffset: anchorIntraBlockOffset,
         ),
       );
-      indices = <int>[];
+      entries = <_ReaderHorizontalEntry>[];
       estimatedHeight = 0;
+    }
+
+    void addEntry(_ReaderHorizontalEntry entry, double height) {
+      if (entries.isNotEmpty && estimatedHeight + height > availableHeight) {
+        finishPage();
+      }
+      entries.add(entry);
+      estimatedHeight += height;
     }
 
     for (var index = 0; index < _readerItemCount; index++) {
@@ -1660,21 +1766,277 @@ class _ReaderScreenState extends State<ReaderScreen>
         index,
         viewportWidth,
       );
-      if (indices.isNotEmpty &&
-          estimatedHeight + itemHeight > availableHeight) {
+      final streamIndex = _streamIndexForReaderItem(index);
+      final item = streamIndex == null ? null : _items[streamIndex];
+      if (item is AlignedBlockItem &&
+          item.block.kind != AlignedBlockKind.illustration &&
+          itemHeight > availableHeight) {
         finishPage();
+        for (final entry in _fragmentHorizontalBlock(
+          context,
+          index,
+          item,
+          viewportWidth,
+          availableHeight,
+        )) {
+          addEntry(entry, entry.fragment!.estimatedHeight);
+        }
+        continue;
       }
-      indices.add(index);
-      estimatedHeight += itemHeight;
+      if (itemHeight > availableHeight) {
+        finishPage();
+        addEntry(
+          _ReaderHorizontalEntry(readerItemIndex: index, scaleToFit: true),
+          availableHeight,
+        );
+        finishPage();
+        continue;
+      }
+      addEntry(_ReaderHorizontalEntry(readerItemIndex: index), itemHeight);
     }
     finishPage();
     if (pages.isEmpty) {
       pages.add(
-        const _ReaderHorizontalPage(readerItemIndices: [], estimatedHeight: 0),
+        const _ReaderHorizontalPage(
+          entries: [],
+          anchor: null,
+          anchorIntraBlockOffset: 0,
+        ),
       );
     }
+    _horizontalPages = pages;
     return pages;
   }
+
+  List<_ReaderHorizontalEntry> _fragmentHorizontalBlock(
+    BuildContext context,
+    int readerItemIndex,
+    AlignedBlockItem item,
+    double viewportWidth,
+    double availableHeight,
+  ) {
+    final translationState = item.chapter.translationState(
+      _settings.translationSource,
+    );
+    final translation = translationState == TranslationState.complete
+        ? item.block.translationFor(_settings.translationSource)
+        : null;
+    final showJapanese =
+        translation == null ||
+        _settings.readingMode == ReadingMode.chineseJapanese;
+    final dialogue = item.block.kind == AlignedBlockKind.dialogue;
+    final availableWidth = math.min(viewportWidth, _settings.readingWidth);
+    final textWidth = math.max(
+      1.0,
+      availableWidth - _settings.pageMargin * 2 - (dialogue ? 16.0 : 0.0),
+    );
+    final parallel =
+        translation != null &&
+        showJapanese &&
+        _usesParallelColumns(_settings, viewportWidth);
+    final columnWidth = parallel
+        ? math.max(1.0, (textWidth - 28) / 2)
+        : textWidth;
+    final bodyWeight = _settings.bodyBold ? FontWeight.w600 : FontWeight.w400;
+    final family = _settings.fontFamily == ReaderFontFamily.systemSerif
+        ? 'serif'
+        : null;
+    final chineseStyle = TextStyle(
+      fontSize: _settings.chineseFontSize,
+      height: _settings.lineHeight,
+      fontWeight: bodyWeight,
+      fontFamily: family,
+      letterSpacing: 0.15,
+    );
+    final japaneseStyle = TextStyle(
+      fontSize: translation == null
+          ? _settings.chineseFontSize * 0.92
+          : _settings.japaneseFontSize,
+      height: _settings.lineHeight,
+      fontWeight: bodyWeight,
+      fontFamily: family,
+    );
+    final maxTextHeight = math.max(
+      1.0,
+      availableHeight - 9 - _settings.paragraphSpacing,
+    );
+    final totalLength =
+        (translation?.length ?? 0) +
+        (showJapanese ? item.block.japanese.length : 0);
+    final fragments = <_ReaderHorizontalEntry>[];
+    var consumed = 0;
+
+    void addFragment({String? chinese, String? japanese}) {
+      final chineseHeight = chinese == null
+          ? 0.0
+          : _measureTextHeight(
+              context,
+              chinese,
+              chineseStyle,
+              columnWidth,
+              locale: const Locale('zh', 'CN'),
+            );
+      final japaneseHeight = japanese == null
+          ? 0.0
+          : _measureTextHeight(
+              context,
+              japanese,
+              japaneseStyle,
+              columnWidth,
+              locale: const Locale('ja', 'JP'),
+            );
+      final contentHeight = parallel
+          ? math.max(chineseHeight, japaneseHeight)
+          : chineseHeight + japaneseHeight;
+      fragments.add(
+        _ReaderHorizontalEntry(
+          readerItemIndex: readerItemIndex,
+          fragment: _ReaderTextFragment(
+            index: fragments.length,
+            chinese: chinese,
+            japanese: japanese,
+            intraBlockOffset: totalLength == 0
+                ? 0
+                : (consumed / totalLength * 1000).round().clamp(0, 1000),
+            estimatedHeight: 9 + contentHeight + _settings.paragraphSpacing,
+          ),
+        ),
+      );
+      consumed += (chinese?.length ?? 0) + (japanese?.length ?? 0);
+    }
+
+    if (parallel) {
+      var chineseRemaining = translation;
+      var japaneseRemaining = showJapanese ? item.block.japanese : '';
+      while (chineseRemaining.isNotEmpty || japaneseRemaining.isNotEmpty) {
+        final chinese = _takeTextPrefixThatFits(
+          context,
+          chineseRemaining,
+          chineseStyle,
+          columnWidth,
+          maxTextHeight,
+          locale: const Locale('zh', 'CN'),
+        );
+        final japanese = _takeTextPrefixThatFits(
+          context,
+          japaneseRemaining,
+          japaneseStyle,
+          columnWidth,
+          maxTextHeight,
+          locale: const Locale('ja', 'JP'),
+        );
+        addFragment(
+          chinese: chinese.isEmpty ? null : chinese,
+          japanese: japanese.isEmpty ? null : japanese,
+        );
+        chineseRemaining = chineseRemaining.substring(chinese.length);
+        japaneseRemaining = japaneseRemaining.substring(japanese.length);
+      }
+    } else {
+      void splitLanguage(
+        String text,
+        TextStyle style,
+        Locale locale,
+        bool chinese,
+      ) {
+        var remaining = text;
+        while (remaining.isNotEmpty) {
+          final part = _takeTextPrefixThatFits(
+            context,
+            remaining,
+            style,
+            columnWidth,
+            maxTextHeight,
+            locale: locale,
+          );
+          addFragment(
+            chinese: chinese ? part : null,
+            japanese: chinese ? null : part,
+          );
+          remaining = remaining.substring(part.length);
+        }
+      }
+
+      if (translation != null) {
+        splitLanguage(
+          translation,
+          chineseStyle,
+          const Locale('zh', 'CN'),
+          true,
+        );
+      }
+      if (showJapanese) {
+        splitLanguage(
+          item.block.japanese,
+          japaneseStyle,
+          const Locale('ja', 'JP'),
+          false,
+        );
+      }
+    }
+    return fragments;
+  }
+
+  String _takeTextPrefixThatFits(
+    BuildContext context,
+    String text,
+    TextStyle style,
+    double width,
+    double maxHeight, {
+    required Locale locale,
+  }) {
+    if (text.isEmpty ||
+        _measureTextHeight(context, text, style, width, locale: locale) <=
+            maxHeight) {
+      return text;
+    }
+    var low = 1;
+    var high = text.length;
+    var best = 0;
+    while (low <= high) {
+      var middle = (low + high) ~/ 2;
+      if (middle < text.length &&
+          middle > 0 &&
+          _isLowSurrogate(text.codeUnitAt(middle)) &&
+          _isHighSurrogate(text.codeUnitAt(middle - 1))) {
+        middle -= 1;
+      }
+      if (middle <= 0) {
+        low = 1;
+        continue;
+      }
+      final candidate = text.substring(0, middle);
+      final fits =
+          _measureTextHeight(
+            context,
+            candidate,
+            style,
+            width,
+            locale: locale,
+          ) <=
+          maxHeight;
+      if (fits) {
+        best = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    if (best > 0) return text.substring(0, best);
+    final firstLength =
+        text.length > 1 &&
+            _isHighSurrogate(text.codeUnitAt(0)) &&
+            _isLowSurrogate(text.codeUnitAt(1))
+        ? 2
+        : 1;
+    return text.substring(0, firstLength);
+  }
+
+  bool _isHighSurrogate(int codeUnit) =>
+      codeUnit >= 0xD800 && codeUnit <= 0xDBFF;
+
+  bool _isLowSurrogate(int codeUnit) =>
+      codeUnit >= 0xDC00 && codeUnit <= 0xDFFF;
 
   Widget _buildVerticalReader(Color foreground) {
     return ListView.builder(
@@ -1722,17 +2084,19 @@ class _ReaderScreenState extends State<ReaderScreen>
             final page = pages[pageIndex];
             return Padding(
               padding: EdgeInsets.only(top: topPadding, bottom: bottomPadding),
-              child: SingleChildScrollView(
+              child: ClipRect(
                 key: ValueKey('reader-horizontal-page-$pageIndex'),
-                primary: false,
-                physics: page.estimatedHeight > availableHeight
-                    ? const ClampingScrollPhysics()
-                    : const NeverScrollableScrollPhysics(),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final index in page.readerItemIndices)
-                      _buildReaderItem(context, index, foreground),
+                    for (final entry in page.entries)
+                      _buildHorizontalEntry(
+                        context,
+                        entry,
+                        foreground,
+                        constraints.maxWidth,
+                        availableHeight,
+                      ),
                   ],
                 ),
               ),
@@ -1740,6 +2104,42 @@ class _ReaderScreenState extends State<ReaderScreen>
           },
         );
       },
+    );
+  }
+
+  Widget _buildHorizontalEntry(
+    BuildContext context,
+    _ReaderHorizontalEntry entry,
+    Color foreground,
+    double viewportWidth,
+    double availableHeight,
+  ) {
+    final fragment = entry.fragment;
+    if (fragment != null) {
+      final streamIndex = _streamIndexForReaderItem(entry.readerItemIndex);
+      final item = streamIndex == null ? null : _items[streamIndex];
+      if (item is AlignedBlockItem) {
+        return _HorizontalAlignedBlockFragmentView(
+          key: ValueKey(
+            'block-${item.block.id}-horizontal-fragment-${fragment.index}',
+          ),
+          item: item,
+          fragment: fragment,
+          settings: _settings,
+          foreground: foreground,
+          bookmarked: _bookmarks.contains(item.block.id),
+        );
+      }
+    }
+    final child = _buildReaderItem(context, entry.readerItemIndex, foreground);
+    if (!entry.scaleToFit) return child;
+    return SizedBox(
+      height: availableHeight,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.topCenter,
+        child: SizedBox(width: viewportWidth, child: child),
+      ),
     );
   }
 
@@ -1896,21 +2296,63 @@ class _ReaderScreenState extends State<ReaderScreen>
 
 class _ReaderHorizontalPage {
   const _ReaderHorizontalPage({
-    required this.readerItemIndices,
+    required this.entries,
+    required this.anchor,
+    required this.anchorIntraBlockOffset,
+  });
+
+  final List<_ReaderHorizontalEntry> entries;
+  final AlignedBlockItem? anchor;
+  final int anchorIntraBlockOffset;
+}
+
+class _ReaderHorizontalEntry {
+  const _ReaderHorizontalEntry({
+    required this.readerItemIndex,
+    this.fragment,
+    this.scaleToFit = false,
+  });
+
+  final int readerItemIndex;
+  final _ReaderTextFragment? fragment;
+  final bool scaleToFit;
+}
+
+class _ReaderTextFragment {
+  const _ReaderTextFragment({
+    required this.index,
+    required this.chinese,
+    required this.japanese,
+    required this.intraBlockOffset,
     required this.estimatedHeight,
   });
 
-  final List<int> readerItemIndices;
+  final int index;
+  final String? chinese;
+  final String? japanese;
+  final int intraBlockOffset;
   final double estimatedHeight;
+}
+
+class _ReaderHorizontalLocation {
+  const _ReaderHorizontalLocation({
+    required this.pageIndex,
+    required this.intraBlockOffset,
+  });
+
+  final int pageIndex;
+  final int intraBlockOffset;
 }
 
 class _VisibleReaderAnchor {
   const _VisibleReaderAnchor({
     required this.stableId,
+    required this.intraBlockOffset,
     required this.viewportOffset,
   });
 
   final String stableId;
+  final int intraBlockOffset;
   final double viewportOffset;
 }
 
@@ -2299,6 +2741,132 @@ class _TranslationNotice extends StatelessWidget {
   }
 }
 
+bool _usesParallelColumns(ReaderSettings settings, double viewportWidth) {
+  return viewportWidth >= 1000 &&
+      settings.columnLayout != ReaderColumnLayout.singleColumn;
+}
+
+class _HorizontalAlignedBlockFragmentView extends StatelessWidget {
+  const _HorizontalAlignedBlockFragmentView({
+    required this.item,
+    required this.fragment,
+    required this.settings,
+    required this.foreground,
+    required this.bookmarked,
+    super.key,
+  });
+
+  final AlignedBlockItem item;
+  final _ReaderTextFragment fragment;
+  final ReaderSettings settings;
+  final Color foreground;
+  final bool bookmarked;
+
+  @override
+  Widget build(BuildContext context) {
+    final bodyWeight = settings.bodyBold ? FontWeight.w600 : FontWeight.w400;
+    final bodyFamily = settings.fontFamily == ReaderFontFamily.systemSerif
+        ? 'serif'
+        : null;
+    final hasTranslation =
+        item.chapter.translationState(settings.translationSource) ==
+            TranslationState.complete &&
+        item.block.translationFor(settings.translationSource) != null;
+    final chineseText = fragment.chinese == null
+        ? null
+        : Text(
+            fragment.chinese!,
+            key: ValueKey(
+              'block-${item.block.id}-chinese-fragment-${fragment.index}',
+            ),
+            style: TextStyle(
+              locale: const Locale('zh', 'CN'),
+              color: foreground,
+              fontSize: settings.chineseFontSize,
+              height: settings.lineHeight,
+              fontWeight: bodyWeight,
+              fontFamily: bodyFamily,
+              letterSpacing: 0.15,
+            ),
+          );
+    final japaneseText = fragment.japanese == null
+        ? null
+        : Text(
+            fragment.japanese!,
+            key: ValueKey(
+              'block-${item.block.id}-japanese-fragment-${fragment.index}',
+            ),
+            style: TextStyle(
+              locale: const Locale('ja', 'JP'),
+              color: foreground.withValues(
+                alpha: hasTranslation ? settings.japaneseOpacity : 0.88,
+              ),
+              fontSize: hasTranslation
+                  ? settings.japaneseFontSize
+                  : settings.chineseFontSize * 0.92,
+              height: settings.lineHeight,
+              fontWeight: bodyWeight,
+              fontFamily: bodyFamily,
+            ),
+          );
+    final parallel =
+        chineseText != null &&
+        japaneseText != null &&
+        _usesParallelColumns(settings, MediaQuery.sizeOf(context).width);
+    final isDialogue = item.block.kind == AlignedBlockKind.dialogue;
+    final semanticLabel = [
+      if (bookmarked && fragment.intraBlockOffset == 0) '已加入书签',
+      if (fragment.chinese != null) '中文：${fragment.chinese}',
+      if (fragment.japanese != null) '日文：${fragment.japanese}',
+    ].join('\n');
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: settings.readingWidth),
+        child: Semantics(
+          container: true,
+          excludeSemantics: true,
+          label: semanticLabel,
+          child: Stack(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  settings.pageMargin + (isDialogue ? 10 : 0),
+                  9,
+                  settings.pageMargin + (isDialogue ? 6 : 0),
+                  settings.paragraphSpacing,
+                ),
+                child: parallel
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: chineseText),
+                          const SizedBox(width: 28),
+                          Expanded(child: japaneseText),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [?chineseText, ?japaneseText],
+                      ),
+              ),
+              if (bookmarked && fragment.intraBlockOffset == 0)
+                Positioned(
+                  top: 8,
+                  right: (settings.pageMargin * 0.25).clamp(4.0, 12.0),
+                  child: Icon(
+                    Icons.bookmark_rounded,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AlignedBlockView extends StatefulWidget {
   const _AlignedBlockView({
     required this.item,
@@ -2412,9 +2980,7 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
     final parallelColumns =
         chineseText != null &&
         japaneseText != null &&
-        (widget.settings.columnLayout == ReaderColumnLayout.twoColumns ||
-            widget.settings.columnLayout == ReaderColumnLayout.automatic &&
-                viewportWidth >= 1000);
+        _usesParallelColumns(widget.settings, viewportWidth);
 
     return Center(
       child: ConstrainedBox(

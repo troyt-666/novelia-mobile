@@ -47,6 +47,39 @@ ReaderNovel _windowNovel(List<NovelChapter> chapters) {
   );
 }
 
+ReaderNovel _oversizedBlockNovel() {
+  final chinese = List.filled(120, '这一段文字会跨越多个横向页面，用来验证分页不会退化成垂直滚动。').join();
+  final japanese = List.filled(
+    120,
+    'この段落は複数の横ページにまたがり、縦スクロールへ戻らないことを確認します。',
+  ).join();
+  return ReaderNovel(
+    id: 'oversized-block-novel',
+    chineseTitle: '超长段落',
+    japaneseTitle: '長い段落',
+    author: '测试作者',
+    chapters: [
+      NovelChapter(
+        id: 'oversized-chapter',
+        index: 1,
+        chineseTitle: '分页测试',
+        japaneseTitle: 'ページテスト',
+        publishedAt: DateTime(2026, 8, 22),
+        blocks: [
+          AlignedBlock(
+            id: 'oversized-block',
+            ordinal: 0,
+            japanese: japanese,
+            translations: {
+              for (final source in TranslationSource.values) source: chinese,
+            },
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
 ScrollableState _readerScrollable(WidgetTester tester) {
   return tester.state<ScrollableState>(
     find
@@ -412,6 +445,86 @@ void main() {
     },
   );
 
+  testWidgets('paged mode fragments oversized blocks without vertical scroll', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      novel: _oversizedBlockNovel(),
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+
+    final reader = find.byKey(const ValueKey('reader-stream'));
+    final position = _readerScrollable(tester).position;
+    expect(
+      find.descendant(of: reader, matching: find.byType(SingleChildScrollView)),
+      findsNothing,
+    );
+    expect(position.axis, Axis.horizontal);
+    expect(
+      position.maxScrollExtent,
+      greaterThan(position.viewportDimension * 3),
+    );
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('block-oversized-block-chinese-fragment-0')),
+      findsWidgets,
+    );
+    final horizontalOffset = position.pixels;
+    await tester.drag(reader, const Offset(0, -300));
+    await tester.pumpAndSettle();
+
+    expect(position.pixels, closeTo(horizontalOffset, 1));
+  });
+
+  testWidgets(
+    'paged mode preserves its semantic anchor after viewport resize',
+    (tester) async {
+      final bookmarkChanges = <(ReadingPosition, bool)>[];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([_windowChapter(1, blockCount: 12)]),
+        initialSettings: const ReaderSettings(
+          layoutMode: ReaderLayoutMode.pages,
+        ),
+        onBookmarkChanged: (position, bookmarked) {
+          bookmarkChanges.add((position, bookmarked));
+        },
+      );
+
+      await tester.tapAt(const Offset(410, 466));
+      await tester.pump(const Duration(milliseconds: 220));
+      for (var page = 0; page < 4; page++) {
+        await tester.tapAt(const Offset(410, 466));
+        await tester.pumpAndSettle();
+      }
+      InkWell bookmarkAction() => tester.widget<InkWell>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('bookmark-button')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
+      bookmarkAction().onTap!();
+      await tester.pumpAndSettle();
+      final beforeResize = bookmarkChanges.single.$1;
+
+      tester.view.physicalSize = const Size(932, 430);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      bookmarkAction().onTap!();
+      await tester.pumpAndSettle();
+      final afterResize = bookmarkChanges.last.$1;
+
+      expect(afterResize.chapterId, beforeResize.chapterId);
+      expect(afterResize.blockId, beforeResize.blockId);
+    },
+  );
+
   testWidgets('scroll mode supports free vertical drag and overlapping taps', (
     tester,
   ) async {
@@ -560,6 +673,29 @@ void main() {
     );
     expect((padding.padding as EdgeInsets).left, 40);
     expect((padding.padding as EdgeInsets).bottom, 24);
+  });
+
+  testWidgets('phones remain single-column when two columns are requested', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(
+        columnLayout: ReaderColumnLayout.twoColumns,
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('block-c1-0-parallel-columns')),
+      findsNothing,
+    );
+    final chineseBottom = tester
+        .getBottomLeft(find.byKey(const ValueKey('block-c1-0-chinese')))
+        .dy;
+    final japaneseTop = tester
+        .getTopLeft(find.byKey(const ValueKey('block-c1-0-japanese')))
+        .dy;
+    expect(chineseBottom, lessThan(japaneseTop));
   });
 
   testWidgets('reader applies and resets its orientation preference', (
