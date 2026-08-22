@@ -18,7 +18,8 @@ certificates, profiles, and export options) never enters Git.
 
 `.github/workflows/publish-release-artifacts.yml` runs on a `v*` tag push, or
 manually with `workflow_dispatch` and an existing tag. It checks out that tag,
-runs `flutter analyze` and `flutter test`, and attaches:
+requires the tag to exactly match the `version` in `app/pubspec.yaml`, runs
+`flutter analyze` and `flutter test`, and attaches:
 
 - `JFZ-Reader-<tag>-android.apk` — release APK signed with the `jfzreader`
   keystore from GitHub Actions secrets. The job fails if the artifact is
@@ -109,6 +110,8 @@ device or renewing an expired certificate/profile.
 ## Release checklist
 
 1. Increment `version` in `app/pubspec.yaml`.
+   The installed Android and Apple package metadata, Settings screen, and
+   diagnostics all derive from this value; do not add a separate UI constant.
 2. Run `flutter analyze` and `flutter test`.
 3. Build from a clean commit and inspect the app/package identifiers.
 4. Verify the APK signature is not the Android Debug certificate.

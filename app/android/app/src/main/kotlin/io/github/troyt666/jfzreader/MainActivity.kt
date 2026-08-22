@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -43,6 +44,29 @@ class MainActivity : FlutterActivity() {
             } catch (_: ActivityNotFoundException) {
                 result.success(false)
             }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "io.github.troyt666.jfzreader/app_version",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "get") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
+            val buildNumber = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                packageInfo.versionCode.toLong()
+            }
+            result.success(
+                mapOf(
+                    "name" to (packageInfo.versionName ?: ""),
+                    "buildNumber" to buildNumber.toString(),
+                ),
+            )
         }
 
         MethodChannel(

@@ -6,7 +6,10 @@ void main() {
   test('v1 product metadata is release-ready', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
     expect(pubspec, startsWith('name: jfzreader\n'));
-    expect(pubspec, contains('version: 1.0.0+1'));
+    expect(
+      pubspec,
+      contains(RegExp(r'^version: \d+\.\d+\.\d+\+\d+$', multiLine: true)),
+    );
     expect(pubspec, isNot(contains('reader spike')));
 
     final macInfo = File('macos/Runner/Info.plist').readAsStringSync();
@@ -49,9 +52,23 @@ void main() {
     expect(workflow, contains('JFZREADER_ANDROID_KEY_ALIAS'));
     expect(workflow, contains('JFZREADER_ANDROID_KEY_PASSWORD'));
     expect(workflow, contains('verify_android_release.sh'));
+    expect(workflow, contains(r'Release tag $RELEASE_TAG does not match'));
     expect(workflow, contains('build ios --release --no-codesign'));
     expect(workflow, contains(r'JFZ-Reader-${tag}-ios-unsigned.ipa'));
     expect(workflow, isNot(contains('signingConfigs.getByName("debug")')));
+  });
+
+  test('supported platforms expose installed app version metadata', () {
+    const channel = 'io.github.troyt666.jfzreader/app_version';
+    for (final path in [
+      'android/app/src/main/kotlin/io/github/troyt666/jfzreader/MainActivity.kt',
+      'ios/Runner/AppDelegate.swift',
+      'macos/Runner/MainFlutterWindow.swift',
+    ]) {
+      final implementation = File(path).readAsStringSync();
+      expect(implementation, contains(channel), reason: path);
+      expect(implementation, contains('buildNumber'), reason: path);
+    }
   });
 
   test('macOS account storage does not trigger Keychain authorization', () {

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/platform/app_version.dart';
 import 'package:jfzreader/features/shell/library_screen.dart';
 import 'package:jfzreader/features/shell/settings_screen.dart';
 import 'package:jfzreader/features/shell/shell_view_models.dart';
@@ -178,6 +179,7 @@ void main() {
       await pumpScreen(
         tester,
         SettingsScreen(
+          appVersion: const AppVersion(name: '1.2.3', buildNumber: '45'),
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           onClearSearchHistory: () {},
@@ -186,6 +188,7 @@ void main() {
 
       expect(find.text('0 B · 0 部小说 · 0 章'), findsOneWidget);
       expect(find.text('0 B · 0 章 · 上限未设置'), findsOneWidget);
+      expect(find.text('1.2.3+45 · 手动安装版'), findsOneWidget);
       expect(find.textContaining('6.8 MB'), findsNothing);
       expect(find.textContaining('2.3 MB'), findsNothing);
     });
@@ -249,6 +252,7 @@ void main() {
       await pumpScreen(
         tester,
         SettingsScreen(
+          appVersion: const AppVersion(name: '1.2.3', buildNumber: '45'),
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           onClearSearchHistory: () {},
@@ -293,6 +297,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('export-diagnostics-button')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('diagnostics-preview')), findsOneWidget);
+      expect(find.textContaining('version=1.2.3+45'), findsOneWidget);
       expect(find.textContaining('offlineDownloadBytes=4096'), findsOneWidget);
       String? copiedDiagnostics;
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(

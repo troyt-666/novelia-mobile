@@ -43,6 +43,17 @@ jobs:
         working-directory: app
         run: flutter --no-version-check pub get
 
+      - name: Validate release tag matches app version
+        working-directory: app
+        run: |
+          set -euo pipefail
+          app_version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)"
+          test -n "$app_version"
+          if [[ "$RELEASE_TAG" != "v$app_version" ]]; then
+            echo "Release tag $RELEASE_TAG does not match app version $app_version." >&2
+            exit 1
+          fi
+
       - name: Analyze
         working-directory: app
         run: flutter --no-version-check analyze

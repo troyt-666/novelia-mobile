@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/account/account_models.dart';
 import '../../core/model/reader_models.dart';
 import '../../core/offline/offline_models.dart';
+import '../../core/platform/app_version.dart';
 import '../discover/catalog_models.dart';
 import '../discover/catalog_search_results_screen.dart';
 import '../discover/discover_screen.dart';
@@ -47,6 +48,7 @@ class NoveliaShell extends StatefulWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     required this.catalogAvailability,
+    this.appVersion = const AppVersion.unavailable(),
     this.novelDetailsLoader,
     this.readerLaunchLoader,
     this.commentPageLoader,
@@ -104,6 +106,7 @@ class NoveliaShell extends StatefulWidget {
   });
 
   final List<CatalogNovel> novels;
+  final AppVersion appVersion;
   final ReaderPageBuilder readerBuilder;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
@@ -792,6 +795,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
             : _openDownloadsManager,
       ),
       SettingsScreen(
+        appVersion: widget.appVersion,
         themeMode: widget.themeMode,
         onThemeModeChanged: widget.onThemeModeChanged,
         storageSummary: widget.storageSummary,

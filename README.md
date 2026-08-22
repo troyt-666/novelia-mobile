@@ -24,7 +24,8 @@ place, and continue reading when you are offline.
 - iOS
 - macOS
 
-The v1 release is version `1.0.0` (build `1`). Published builds are on the
+The release version is declared in `app/pubspec.yaml` and shown from the
+installed package metadata inside the app. Published builds are on the
 [Releases](https://github.com/troyt-666/novelia-mobile/releases) page:
 
 - **Android** (`JFZ-Reader-<tag>-android.apk`) — signed installable APK.

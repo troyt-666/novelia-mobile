@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/account/account_models.dart';
 import '../../core/offline/offline_models.dart';
+import '../../core/platform/app_version.dart';
 import '../account/account_screen.dart';
 import 'shell_view_models.dart';
 
@@ -13,6 +14,7 @@ class SettingsScreen extends StatelessWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     required this.onClearSearchHistory,
+    this.appVersion = const AppVersion.unavailable(),
     this.onManageOfflineDownloads,
     this.onCacheLimitChanged,
     this.onClearReadingCache,
@@ -34,6 +36,7 @@ class SettingsScreen extends StatelessWidget {
   }) : assert(cacheLimitBytes == null || cacheLimitBytes >= 0);
 
   final ThemeMode themeMode;
+  final AppVersion appVersion;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final VoidCallback onClearSearchHistory;
   final VoidCallback? onManageOfflineDownloads;
@@ -193,7 +196,7 @@ class SettingsScreen extends StatelessWidget {
                 key: const ValueKey('open-releases-button'),
                 leading: const Icon(Icons.new_releases_outlined),
                 title: const Text('版本与更新'),
-                subtitle: const Text('0.1.0 · 手动安装测试版'),
+                subtitle: Text('${appVersion.display} · 手动安装版'),
                 trailing: const Icon(Icons.open_in_new),
                 onTap: onReleasesRequested,
               ),
@@ -335,7 +338,7 @@ class SettingsScreen extends StatelessWidget {
     final diagnostics = <String>[
       'JFZ Reader diagnostics',
       'generatedAt=${DateTime.now().toUtc().toIso8601String()}',
-      'version=1.0.0+1',
+      'version=${appVersion.display}',
       'theme=${themeMode.name}',
       'accountState=${accountSession.status.name}',
       'offlineDownloadBytes=${storageSummary.offlineDownloadBytes}',

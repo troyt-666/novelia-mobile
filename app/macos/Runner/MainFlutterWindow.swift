@@ -3,6 +3,7 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
   private var externalLinksChannel: FlutterMethodChannel?
+  private var appVersionChannel: FlutterMethodChannel?
   private var accountSessionChannel: FlutterMethodChannel?
 
   override func awakeFromNib() {
@@ -39,6 +40,22 @@ class MainFlutterWindow: NSWindow {
       result(NSWorkspace.shared.open(url))
     }
     externalLinksChannel = channel
+
+    let versionChannel = FlutterMethodChannel(
+      name: "io.github.troyt666.jfzreader/app_version",
+      binaryMessenger: registrar.messenger)
+    versionChannel.setMethodCallHandler { call, result in
+      guard call.method == "get" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let info = Bundle.main.infoDictionary
+      result([
+        "name": info?["CFBundleShortVersionString"] as? String ?? "",
+        "buildNumber": info?["CFBundleVersion"] as? String ?? "",
+      ])
+    }
+    appVersionChannel = versionChannel
 
     let accountChannel = FlutterMethodChannel(
       name: "io.github.troyt666.jfzreader/account_session",

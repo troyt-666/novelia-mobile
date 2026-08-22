@@ -12,6 +12,7 @@ import 'core/database/local_state_repository.dart';
 import 'core/database/sqlite_offline_repository.dart';
 import 'core/model/reader_models.dart';
 import 'core/offline/offline_models.dart';
+import 'core/platform/app_version.dart';
 import 'core/platform/external_link_launcher.dart';
 import 'features/discover/catalog_models.dart';
 import 'features/discover/rankings_screen.dart';
@@ -37,6 +38,7 @@ const _defaultCacheLimitBytes = 256 * 1024 * 1024;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
+    final appVersion = await const InstalledAppVersion().load();
     final repository = await SqliteOfflineRepository.openApplicationSupport();
     final authGateway = HttpNoveliaAuthGateway();
     final accountSessionController = AccountSessionController(
@@ -75,6 +77,7 @@ Future<void> main() async {
     );
     runApp(
       NoveliaReaderApp(
+        appVersion: appVersion,
         repository: repository,
         accountSessionController: accountSessionController,
         accountGateway: accountGateway,
@@ -97,6 +100,7 @@ Future<void> main() async {
 class NoveliaReaderApp extends StatefulWidget {
   const NoveliaReaderApp({
     required this.repository,
+    this.appVersion = const AppVersion.unavailable(),
     this.contentCoordinator,
     this.downloadCoordinator,
     this.accountSessionController,
@@ -109,6 +113,7 @@ class NoveliaReaderApp extends StatefulWidget {
   });
 
   final SqliteOfflineRepository repository;
+  final AppVersion appVersion;
   final NoveliaContentCoordinator? contentCoordinator;
   final NoveliaDownloadCoordinator? downloadCoordinator;
   final AccountSessionController? accountSessionController;
@@ -1508,6 +1513,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
       home: NoveliaShell(
+        appVersion: widget.appVersion,
         novels: _catalogNovels,
         catalogAvailability: _catalogAvailability,
         continuedReads: _libraryContinuedReads(localNovelsById),
