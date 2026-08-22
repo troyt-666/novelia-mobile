@@ -223,12 +223,16 @@ void main() {
       blockId: chapter.blocks.first.id,
     );
     ReadingPosition? openedPosition;
+    var openedAtChapterTitle = true;
     await pumpShell(
       tester,
       continuedReads: [
         LibraryContinuedRead(novel: novel, position: position, progress: 0.25),
       ],
-      onReaderOpened: (_, data) => openedPosition = data.initialPosition,
+      onReaderOpened: (_, data) {
+        openedPosition = data.initialPosition;
+        openedAtChapterTitle = data.startAtChapterTitle;
+      },
     );
 
     final details = find.byKey(ValueKey('continued-details-${novel.id}'));
@@ -243,6 +247,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('fixture-reader-route')), findsOneWidget);
     expect(openedPosition, position);
+    expect(openedAtChapterTitle, isFalse);
   });
 
   testWidgets('most-clicked cards fit long live metadata on Android widths', (
@@ -856,10 +861,12 @@ void main() {
     tester,
   ) async {
     ReadingPosition? openedPosition;
+    var openedAtChapterTitle = false;
     await pumpShell(
       tester,
       readerBuilder: (_, data) {
         openedPosition = data.initialPosition;
+        openedAtChapterTitle = data.startAtChapterTitle;
         return Scaffold(
           body: Text(
             data.novel.chineseTitle,
@@ -892,6 +899,7 @@ void main() {
     expect(find.byKey(const ValueKey('fixture-reader-route')), findsOneWidget);
     expect(openedPosition?.chapterId, 'chapter-2');
     expect(openedPosition?.blockId, 'c2-0');
+    expect(openedAtChapterTitle, isTrue);
   });
 
   testWidgets('outline details expose loading, error, and retry hydration', (

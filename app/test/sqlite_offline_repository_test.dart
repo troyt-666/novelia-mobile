@@ -60,6 +60,29 @@ void main() {
         throwsStateError,
       );
     });
+
+    test('migrates v5 reader settings with compatibility defaults', () {
+      final database = sqlite3.openInMemory();
+      addTearDown(database.close);
+      _createVersion5SettingsFixture(database, t0);
+
+      final repository = SqliteOfflineRepository.fromDatabase(database);
+      addTearDown(repository.close);
+      final settings = repository.appSettings()!.readerSettings;
+
+      expect(repository.schemaVersion, 6);
+      expect(settings.layoutMode, ReaderLayoutMode.scroll);
+      expect(settings.palette, ReaderPalette.automatic);
+      expect(settings.fontFamily, ReaderFontFamily.systemSans);
+      expect(settings.bodyBold, isFalse);
+      expect(settings.paragraphSpacing, 15);
+      expect(settings.pageMargin, 24);
+      expect(settings.columnLayout, ReaderColumnLayout.automatic);
+      expect(
+        settings.orientationPreference,
+        ReaderOrientationPreference.followDevice,
+      );
+    });
   });
 
   group('durable offline repository', () {
@@ -126,6 +149,14 @@ void main() {
       expect(
         repository.appSettings()!.readerSettings.readingMode,
         ReadingMode.chineseOnly,
+      );
+      expect(
+        repository.appSettings()!.readerSettings.layoutMode,
+        ReaderLayoutMode.pages,
+      );
+      expect(
+        repository.appSettings()!.readerSettings.palette,
+        ReaderPalette.sepia,
       );
       expect(repository.appSettings()!.cacheLimitBytes, 64 * 1024 * 1024);
       expect(repository.passesIntegrityCheck, isTrue);
@@ -480,11 +511,19 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
       readerSettings: const ReaderSettings(
         readingMode: ReadingMode.chineseOnly,
         translationSource: TranslationSource.gpt,
+        layoutMode: ReaderLayoutMode.pages,
+        palette: ReaderPalette.sepia,
+        fontFamily: ReaderFontFamily.systemSerif,
+        bodyBold: true,
         chineseFontSize: 24,
         japaneseFontSize: 15,
         lineHeight: 1.7,
+        paragraphSpacing: 18,
         japaneseOpacity: 0.5,
+        pageMargin: 30,
         readingWidth: 680,
+        columnLayout: ReaderColumnLayout.singleColumn,
+        orientationPreference: ReaderOrientationPreference.portrait,
       ),
       themePreference: ThemePreference.dark,
       notifyNewChapters: true,
@@ -493,6 +532,42 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
     ),
   );
   repository.saveRecentSearches(['齿轮图书馆', '雪春']);
+}
+
+void _createVersion5SettingsFixture(Database database, DateTime now) {
+  database.execute('''
+    CREATE TABLE app_settings (
+      singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+      reading_mode TEXT NOT NULL,
+      translation_source TEXT NOT NULL,
+      chinese_font_size REAL NOT NULL,
+      japanese_font_size REAL NOT NULL,
+      line_height REAL NOT NULL,
+      japanese_opacity REAL NOT NULL,
+      reading_width REAL NOT NULL,
+      theme_preference TEXT NOT NULL,
+      notify_new_chapters INTEGER NOT NULL CHECK (notify_new_chapters IN (0, 1)),
+      cache_limit_bytes INTEGER NOT NULL,
+      updated_at_us INTEGER NOT NULL
+    );
+  ''');
+  database.execute(
+    'INSERT INTO app_settings VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);',
+    [
+      ReadingMode.chineseOnly.name,
+      TranslationSource.gpt.name,
+      24.0,
+      15.0,
+      1.7,
+      0.5,
+      680.0,
+      ThemePreference.dark.name,
+      1,
+      64 * 1024 * 1024,
+      now.microsecondsSinceEpoch,
+    ],
+  );
+  database.userVersion = 5;
 }
 
 void _createVersion1Fixture(Database database, DateTime now) {

@@ -4,6 +4,48 @@ import 'package:jfzreader/fixtures/reader_fixture.dart';
 
 void main() {
   group('reader domain', () {
+    test('reader appearance defaults preserve the v1 reading surface', () {
+      const settings = ReaderSettings();
+
+      expect(settings.layoutMode, ReaderLayoutMode.scroll);
+      expect(settings.palette, ReaderPalette.automatic);
+      expect(settings.fontFamily, ReaderFontFamily.systemSans);
+      expect(settings.bodyBold, isFalse);
+      expect(settings.paragraphSpacing, 15);
+      expect(settings.pageMargin, 24);
+      expect(settings.columnLayout, ReaderColumnLayout.automatic);
+      expect(
+        settings.orientationPreference,
+        ReaderOrientationPreference.followDevice,
+      );
+    });
+
+    test('reader settings copy all new layout and appearance fields', () {
+      final settings = const ReaderSettings().copyWith(
+        layoutMode: ReaderLayoutMode.pages,
+        palette: ReaderPalette.sepia,
+        fontFamily: ReaderFontFamily.systemSerif,
+        bodyBold: true,
+        paragraphSpacing: 20,
+        pageMargin: 32,
+        columnLayout: ReaderColumnLayout.twoColumns,
+        orientationPreference: ReaderOrientationPreference.landscape,
+      );
+
+      expect(settings.layoutMode, ReaderLayoutMode.pages);
+      expect(settings.palette, ReaderPalette.sepia);
+      expect(settings.fontFamily, ReaderFontFamily.systemSerif);
+      expect(settings.bodyBold, isTrue);
+      expect(settings.paragraphSpacing, 20);
+      expect(settings.pageMargin, 32);
+      expect(settings.columnLayout, ReaderColumnLayout.twoColumns);
+      expect(
+        settings.orientationPreference,
+        ReaderOrientationPreference.landscape,
+      );
+      expect(settings.translationSource, TranslationSource.sakura);
+    });
+
     test('stream preserves chapter boundaries and stable block order', () {
       final stream = fixtureNovel.buildStream();
 

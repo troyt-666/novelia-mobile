@@ -85,6 +85,8 @@ class NoveliaReaderWindowFactory {
       initialPosition: requestedId != null && catalogIds.contains(requestedId)
           ? requestedPosition
           : null,
+      startAtChapterTitle:
+          requestedId == null || !catalogIds.contains(requestedId),
       dataSource: session.dataSource,
     );
   }

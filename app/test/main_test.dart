@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/features/reader/reader_screen.dart';
@@ -46,6 +47,39 @@ ReaderNovel _windowNovel(List<NovelChapter> chapters) {
   );
 }
 
+ReaderNovel _oversizedBlockNovel() {
+  final chinese = List.filled(120, '这一段文字会跨越多个横向页面，用来验证分页不会退化成垂直滚动。').join();
+  final japanese = List.filled(
+    120,
+    'この段落は複数の横ページにまたがり、縦スクロールへ戻らないことを確認します。',
+  ).join();
+  return ReaderNovel(
+    id: 'oversized-block-novel',
+    chineseTitle: '超长段落',
+    japaneseTitle: '長い段落',
+    author: '测试作者',
+    chapters: [
+      NovelChapter(
+        id: 'oversized-chapter',
+        index: 1,
+        chineseTitle: '分页测试',
+        japaneseTitle: 'ページテスト',
+        publishedAt: DateTime(2026, 8, 22),
+        blocks: [
+          AlignedBlock(
+            id: 'oversized-block',
+            ordinal: 0,
+            japanese: japanese,
+            translations: {
+              for (final source in TranslationSource.values) source: chinese,
+            },
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
 ScrollableState _readerScrollable(WidgetTester tester) {
   return tester.state<ScrollableState>(
     find
@@ -57,19 +91,38 @@ ScrollableState _readerScrollable(WidgetTester tester) {
   );
 }
 
+class _FakeOrientationController implements ReaderOrientationController {
+  final applied = <ReaderOrientationPreference>[];
+  var resetCount = 0;
+
+  @override
+  Future<void> apply(ReaderOrientationPreference preference) async {
+    applied.add(preference);
+  }
+
+  @override
+  Future<void> reset() async {
+    resetCount += 1;
+  }
+}
+
 void main() {
   Future<void> pumpReader(
     WidgetTester tester, {
     ReaderNovel? novel,
     ReadingPosition? initialPosition,
+    bool startAtChapterTitle = false,
     ValueChanged<ReadingPosition>? onPositionChanged,
     ValueChanged<ReadingPosition>? onExitPosition,
     ReaderBookmarkChanged? onBookmarkChanged,
     Set<String> initialBookmarkedBlockIds = const {},
+    List<ReadingPosition> initialBookmarks = const [],
     ReaderSettings initialSettings = const ReaderSettings(),
     ValueChanged<ReaderSettings>? onSettingsChanged,
+    ReaderOrientationController? orientationController,
+    Size viewSize = const Size(430, 932),
   }) async {
-    tester.view.physicalSize = const Size(430, 932);
+    tester.view.physicalSize = viewSize;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -81,12 +134,15 @@ void main() {
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           initialPosition: initialPosition,
+          startAtChapterTitle: startAtChapterTitle,
           onPositionChanged: onPositionChanged,
           onExitPosition: onExitPosition,
           initialBookmarkedBlockIds: initialBookmarkedBlockIds,
+          initialBookmarks: initialBookmarks,
           onBookmarkChanged: onBookmarkChanged,
           initialSettings: initialSettings,
           onSettingsChanged: onSettingsChanged,
+          orientationController: orientationController,
         ),
       ),
     );
@@ -147,6 +203,7 @@ void main() {
     expect(find.byKey(const ValueKey('block-c1-0-chinese')), findsOneWidget);
     expect(find.byKey(const ValueKey('block-c1-0-japanese')), findsOneWidget);
     expect(find.byType(SelectableText), findsNothing);
+    expect(find.byKey(const ValueKey('reader-selection-area')), findsOneWidget);
 
     final chineseTop = tester
         .getTopLeft(find.byKey(const ValueKey('block-c1-0-chinese')))
@@ -155,6 +212,33 @@ void main() {
         .getTopLeft(find.byKey(const ValueKey('block-c1-0-japanese')))
         .dy;
     expect(chineseTop, lessThan(japaneseTop));
+  });
+
+  testWidgets('native selection keeps adaptive actions and blocks page turns', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    final selection = tester.widget<SelectionArea>(
+      find.byKey(const ValueKey('reader-selection-area')),
+    );
+    expect(selection.selectionControls, isNull);
+    expect(selection.contextMenuBuilder, isNotNull);
+    expect(find.byType(SelectableText), findsNothing);
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    selection.onSelectionChanged!(const SelectedContent(plainText: '最后一班列车'));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(_readerScrollable(tester).position.pixels, 0);
+
+    selection.onSelectionChanged!(null);
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(_readerScrollable(tester).position.pixels, greaterThan(300));
   });
 
   testWidgets('renders normalized illustration blocks as images, not URLs', (
@@ -256,6 +340,29 @@ void main() {
     expect(_readerScrollable(tester).position.pixels, greaterThan(40));
   });
 
+  testWidgets('an unread chapter opens on its title before the first block', (
+    tester,
+  ) async {
+    const firstBlock = ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-0');
+    await pumpReader(
+      tester,
+      initialPosition: firstBlock,
+      startAtChapterTitle: true,
+    );
+
+    final chapterTitle = find.byKey(
+      const ValueKey('chapter-boundary-chapter-1'),
+    );
+    final firstBody = find.byKey(const ValueKey('block-c1-0-chinese'));
+    expect(chapterTitle, findsOneWidget);
+    expect(firstBody, findsOneWidget);
+    expect(tester.getRect(chapterTitle).top, inInclusiveRange(60, 180));
+    expect(
+      tester.getRect(firstBody).top,
+      greaterThan(tester.getRect(chapterTitle).bottom),
+    );
+  });
+
   testWidgets('reading taps dismiss chrome and center taps reveal it', (
     tester,
   ) async {
@@ -277,6 +384,336 @@ void main() {
     await tester.tapAt(const Offset(215, 466));
     await tester.pump(const Duration(milliseconds: 220));
     expect(chrome().opacity, 1);
+  });
+
+  testWidgets('paged mode scrolls horizontally and snaps taps and drags', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    final position = _readerScrollable(tester).position;
+    final pageView = tester.widget<PageView>(
+      find.byKey(const ValueKey('reader-horizontal-pages')),
+    );
+    expect(pageView.scrollDirection, Axis.horizontal);
+    expect(pageView.physics, isA<PageScrollPhysics>());
+    expect(position.axis, Axis.horizontal);
+    expect(position.maxScrollExtent, greaterThan(300));
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(position.pixels, 0);
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    final afterTap = position.pixels;
+    expect(afterTap, closeTo(430, 1));
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(300, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(0, 1));
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(-300, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(afterTap, 1));
+  });
+
+  testWidgets(
+    'paged mode uses the full page instead of reserving chrome space',
+    (tester) async {
+      await pumpReader(
+        tester,
+        initialSettings: const ReaderSettings(
+          layoutMode: ReaderLayoutMode.pages,
+        ),
+      );
+
+      final firstChinese = find.byKey(const ValueKey('block-c1-0-chinese'));
+      final firstJapanese = find.byKey(const ValueKey('block-c1-0-japanese'));
+      expect(firstChinese, findsOneWidget);
+      expect(firstJapanese, findsOneWidget);
+      expect(tester.getRect(firstChinese).left, lessThan(430));
+      expect(tester.getRect(firstJapanese).bottom, greaterThan(466));
+    },
+  );
+
+  testWidgets('paged mode fragments oversized blocks without vertical scroll', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      novel: _oversizedBlockNovel(),
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+
+    final reader = find.byKey(const ValueKey('reader-stream'));
+    final position = _readerScrollable(tester).position;
+    expect(
+      find.descendant(of: reader, matching: find.byType(SingleChildScrollView)),
+      findsNothing,
+    );
+    expect(position.axis, Axis.horizontal);
+    expect(
+      position.maxScrollExtent,
+      greaterThan(position.viewportDimension * 3),
+    );
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('block-oversized-block-chinese-fragment-0')),
+      findsWidgets,
+    );
+    final horizontalOffset = position.pixels;
+    await tester.drag(reader, const Offset(0, -300));
+    await tester.pumpAndSettle();
+
+    expect(position.pixels, closeTo(horizontalOffset, 1));
+  });
+
+  testWidgets(
+    'paged mode preserves its semantic anchor after viewport resize',
+    (tester) async {
+      final bookmarkChanges = <(ReadingPosition, bool)>[];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([_windowChapter(1, blockCount: 12)]),
+        initialSettings: const ReaderSettings(
+          layoutMode: ReaderLayoutMode.pages,
+        ),
+        onBookmarkChanged: (position, bookmarked) {
+          bookmarkChanges.add((position, bookmarked));
+        },
+      );
+
+      await tester.tapAt(const Offset(410, 466));
+      await tester.pump(const Duration(milliseconds: 220));
+      for (var page = 0; page < 4; page++) {
+        await tester.tapAt(const Offset(410, 466));
+        await tester.pumpAndSettle();
+      }
+      InkWell bookmarkAction() => tester.widget<InkWell>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('bookmark-button')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
+      bookmarkAction().onTap!();
+      await tester.pumpAndSettle();
+      final beforeResize = bookmarkChanges.single.$1;
+
+      tester.view.physicalSize = const Size(932, 430);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      bookmarkAction().onTap!();
+      await tester.pumpAndSettle();
+      final afterResize = bookmarkChanges.last.$1;
+
+      expect(afterResize.chapterId, beforeResize.chapterId);
+      expect(afterResize.blockId, beforeResize.blockId);
+    },
+  );
+
+  testWidgets('scroll mode supports free vertical drag and overlapping taps', (
+    tester,
+  ) async {
+    await pumpReader(tester);
+    final position = _readerScrollable(tester).position;
+    expect(position.axis, Axis.vertical);
+
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    final afterTap = position.pixels;
+    expect(afterTap, closeTo(position.viewportDimension - 72, 1));
+
+    await tester.tapAt(const Offset(20, 466));
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(0, 1));
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(0, -180),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(0));
+  });
+
+  testWidgets('layout setting persists through the reader callback', (
+    tester,
+  ) async {
+    final changes = <ReaderSettings>[];
+    await pumpReader(tester, onSettingsChanged: changes.add);
+
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('翻页'));
+    await tester.tap(find.byKey(const ValueKey('settings-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changes.single.layoutMode, ReaderLayoutMode.pages);
+    expect(
+      find.byKey(const ValueKey('reader-horizontal-pages')),
+      findsOneWidget,
+    );
+    expect(_readerScrollable(tester).position.axis, Axis.horizontal);
+  });
+
+  testWidgets('reader chrome reports semantic progress and changes chapters', (
+    tester,
+  ) async {
+    await pumpReader(tester);
+
+    expect(find.text('第 1 / 4 章 · 本章 0%'), findsOneWidget);
+    final previous = tester.widget<IconButton>(
+      find.byKey(const ValueKey('previous-chapter-button')),
+    );
+    expect(previous.onPressed, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('next-chapter-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('第 2 / 4 章 · 本章 0%'), findsOneWidget);
+    expect(find.byKey(const ValueKey('block-c2-0-chinese')), findsOneWidget);
+  });
+
+  testWidgets('chapter scrubber previews and opens its target', (tester) async {
+    await pumpReader(tester);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('reader-chapter-scrubber')),
+    );
+
+    slider.onChanged!(3);
+    await tester.pump();
+    expect(find.text('第 4 / 4 章 · 星港'), findsOneWidget);
+    slider.onChangeEnd!(3);
+    await tester.pumpAndSettle();
+
+    expect(find.text('第 4 / 4 章 · 本章 0%'), findsOneWidget);
+    expect(find.byKey(const ValueKey('block-c4-0-chinese')), findsOneWidget);
+    final next = tester.widget<IconButton>(
+      find.byKey(const ValueKey('next-chapter-button')),
+    );
+    expect(next.onPressed, isNull);
+  });
+
+  testWidgets('appearance sheet previews, cancels, and commits palettes', (
+    tester,
+  ) async {
+    final changes = <ReaderSettings>[];
+    await pumpReader(tester, onSettingsChanged: changes.add);
+    Scaffold scaffold() => tester.widget<Scaffold>(find.byType(Scaffold));
+
+    expect(scaffold().backgroundColor, const Color(0xFFF5F2E8));
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-palette-sepia')));
+    await tester.pumpAndSettle();
+    expect(scaffold().backgroundColor, const Color(0xFFF0E1C2));
+
+    await tester.tap(find.byKey(const ValueKey('settings-cancel')));
+    await tester.pumpAndSettle();
+    expect(scaffold().backgroundColor, const Color(0xFFF5F2E8));
+    expect(changes, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-palette-sepia')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changes.single.palette, ReaderPalette.sepia);
+    expect(scaffold().backgroundColor, const Color(0xFFF0E1C2));
+  });
+
+  testWidgets('typography and responsive bilingual columns render directly', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      viewSize: const Size(1200, 900),
+      initialSettings: const ReaderSettings(
+        fontFamily: ReaderFontFamily.systemSerif,
+        bodyBold: true,
+        pageMargin: 40,
+        paragraphSpacing: 24,
+        readingWidth: 1000,
+        columnLayout: ReaderColumnLayout.twoColumns,
+      ),
+    );
+
+    final chinese = tester.widget<Text>(
+      find.byKey(const ValueKey('block-c1-0-chinese')),
+    );
+    expect(chinese.style!.fontFamily, 'serif');
+    expect(chinese.style!.fontWeight, FontWeight.w600);
+    expect(
+      find.byKey(const ValueKey('block-c1-0-parallel-columns')),
+      findsOneWidget,
+    );
+    final padding = tester.widget<Padding>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('block-c1-0-parallel-columns')),
+            matching: find.byType(Padding),
+          )
+          .first,
+    );
+    expect((padding.padding as EdgeInsets).left, 40);
+    expect((padding.padding as EdgeInsets).bottom, 24);
+  });
+
+  testWidgets('phones remain single-column when two columns are requested', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(
+        columnLayout: ReaderColumnLayout.twoColumns,
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('block-c1-0-parallel-columns')),
+      findsNothing,
+    );
+    final chineseBottom = tester
+        .getBottomLeft(find.byKey(const ValueKey('block-c1-0-chinese')))
+        .dy;
+    final japaneseTop = tester
+        .getTopLeft(find.byKey(const ValueKey('block-c1-0-japanese')))
+        .dy;
+    expect(chineseBottom, lessThan(japaneseTop));
+  });
+
+  testWidgets('reader applies and resets its orientation preference', (
+    tester,
+  ) async {
+    final orientation = _FakeOrientationController();
+    await pumpReader(
+      tester,
+      orientationController: orientation,
+      initialSettings: const ReaderSettings(
+        orientationPreference: ReaderOrientationPreference.landscape,
+      ),
+    );
+
+    expect(orientation.applied, [ReaderOrientationPreference.landscape]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(orientation.resetCount, 1);
   });
 
   testWidgets('scrolling and inactivity dismiss reader chrome', (tester) async {
@@ -569,6 +1006,68 @@ void main() {
     expect(changes.map((change) => change.$2), [true, false]);
     expect(changes.first.$1.chapterId, 'chapter-1');
     expect(changes.first.$1.blockId, 'c1-0');
+  });
+
+  testWidgets('bookmarks show markers and navigate inside the reader', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialBookmarks: const [
+        ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-0'),
+        ReadingPosition(chapterId: 'chapter-2', blockId: 'c2-1'),
+      ],
+    );
+
+    expect(
+      find.byKey(const ValueKey('block-c1-0-bookmark-marker')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('catalog-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-navigation-bookmarks')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reader-bookmarks-list')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-bookmark-c2-1')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reader-bookmark-c2-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('block-c2-1-chinese')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('block-c2-1-bookmark-marker')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('第 2 / 4 章'), findsOneWidget);
+  });
+
+  testWidgets('bookmark list removes a saved position in place', (
+    tester,
+  ) async {
+    final changes = <(ReadingPosition, bool)>[];
+    await pumpReader(
+      tester,
+      initialBookmarks: const [
+        ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-0'),
+      ],
+      onBookmarkChanged: (position, bookmarked) {
+        changes.add((position, bookmarked));
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('catalog-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-navigation-bookmarks')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('remove-reader-bookmark-c1-0')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('reader-bookmarks-empty')),
+      findsOneWidget,
+    );
+    expect(changes.single.$1.blockId, 'c1-0');
+    expect(changes.single.$2, isFalse);
   });
 
   testWidgets('reader settings can initialize from and write to local state', (
