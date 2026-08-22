@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 5;
+  static const int currentSchemaVersion = 6;
   static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -92,6 +92,12 @@ final class NoveliaDatabase {
       _transaction(database, () {
         _migrateVersion4To5(database);
         database.userVersion = 5;
+      });
+    }
+    if (database.userVersion == 5) {
+      _transaction(database, () {
+        _migrateVersion5To6(database);
+        database.userVersion = 6;
       });
     }
   }
@@ -321,6 +327,28 @@ final class NoveliaDatabase {
 
       CREATE INDEX remote_history_outbox_time_idx
         ON remote_history_outbox (occurred_at_us, novel_id);
+    ''');
+  }
+
+  static void _migrateVersion5To6(Database database) {
+    database.execute('''
+      ALTER TABLE app_settings
+        ADD COLUMN layout_mode TEXT NOT NULL DEFAULT 'scroll';
+      ALTER TABLE app_settings
+        ADD COLUMN reader_palette TEXT NOT NULL DEFAULT 'automatic';
+      ALTER TABLE app_settings
+        ADD COLUMN font_family TEXT NOT NULL DEFAULT 'systemSans';
+      ALTER TABLE app_settings
+        ADD COLUMN body_bold INTEGER NOT NULL DEFAULT 0
+          CHECK (body_bold IN (0, 1));
+      ALTER TABLE app_settings
+        ADD COLUMN paragraph_spacing REAL NOT NULL DEFAULT 15;
+      ALTER TABLE app_settings
+        ADD COLUMN page_margin REAL NOT NULL DEFAULT 24;
+      ALTER TABLE app_settings
+        ADD COLUMN column_layout TEXT NOT NULL DEFAULT 'automatic';
+      ALTER TABLE app_settings
+        ADD COLUMN orientation_preference TEXT NOT NULL DEFAULT 'followDevice';
     ''');
   }
 

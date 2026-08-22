@@ -9,6 +9,16 @@ enum ReadingMode {
   final String label;
 }
 
+enum ReaderLayoutMode { scroll, pages }
+
+enum ReaderPalette { automatic, paper, sepia, lowLight, dark, black }
+
+enum ReaderFontFamily { systemSans, systemSerif }
+
+enum ReaderColumnLayout { automatic, singleColumn, twoColumns }
+
+enum ReaderOrientationPreference { followDevice, portrait, landscape }
+
 enum TranslationSource {
   youdao('有道'),
   gpt('GPT'),
@@ -28,38 +38,71 @@ class ReaderSettings {
   const ReaderSettings({
     this.readingMode = ReadingMode.chineseJapanese,
     this.translationSource = TranslationSource.sakura,
+    this.layoutMode = ReaderLayoutMode.scroll,
+    this.palette = ReaderPalette.automatic,
+    this.fontFamily = ReaderFontFamily.systemSans,
+    this.bodyBold = false,
     this.chineseFontSize = 22,
     this.japaneseFontSize = 16,
     this.lineHeight = 1.8,
+    this.paragraphSpacing = 15,
     this.japaneseOpacity = 0.56,
+    this.pageMargin = 24,
     this.readingWidth = 720,
+    this.columnLayout = ReaderColumnLayout.automatic,
+    this.orientationPreference = ReaderOrientationPreference.followDevice,
   });
 
   final ReadingMode readingMode;
   final TranslationSource translationSource;
+  final ReaderLayoutMode layoutMode;
+  final ReaderPalette palette;
+  final ReaderFontFamily fontFamily;
+  final bool bodyBold;
   final double chineseFontSize;
   final double japaneseFontSize;
   final double lineHeight;
+  final double paragraphSpacing;
   final double japaneseOpacity;
+  final double pageMargin;
   final double readingWidth;
+  final ReaderColumnLayout columnLayout;
+  final ReaderOrientationPreference orientationPreference;
 
   ReaderSettings copyWith({
     ReadingMode? readingMode,
     TranslationSource? translationSource,
+    ReaderLayoutMode? layoutMode,
+    ReaderPalette? palette,
+    ReaderFontFamily? fontFamily,
+    bool? bodyBold,
     double? chineseFontSize,
     double? japaneseFontSize,
     double? lineHeight,
+    double? paragraphSpacing,
     double? japaneseOpacity,
+    double? pageMargin,
     double? readingWidth,
+    ReaderColumnLayout? columnLayout,
+    ReaderOrientationPreference? orientationPreference,
   }) {
     return ReaderSettings(
       readingMode: readingMode ?? this.readingMode,
       translationSource: translationSource ?? this.translationSource,
+      layoutMode: layoutMode ?? this.layoutMode,
+      palette: palette ?? this.palette,
+      fontFamily: fontFamily ?? this.fontFamily,
+      bodyBold: bodyBold ?? this.bodyBold,
       chineseFontSize: chineseFontSize ?? this.chineseFontSize,
       japaneseFontSize: japaneseFontSize ?? this.japaneseFontSize,
       lineHeight: lineHeight ?? this.lineHeight,
+      paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
       japaneseOpacity: japaneseOpacity ?? this.japaneseOpacity,
+      pageMargin: pageMargin ?? this.pageMargin,
       readingWidth: readingWidth ?? this.readingWidth,
+      columnLayout: columnLayout ?? this.columnLayout,
+      orientationPreference:
+          orientationPreference ?? this.orientationPreference,
     );
   }
 }
