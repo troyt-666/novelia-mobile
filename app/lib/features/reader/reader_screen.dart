@@ -1043,6 +1043,13 @@ class _ReaderScreenState extends State<ReaderScreen>
     action();
   }
 
+  void _openCatalogIndex(int index) {
+    final catalog = _chapterCatalog;
+    if (index < 0 || index >= catalog.length) return;
+    _scheduleChromeDismiss();
+    unawaited(_openCatalogEntry(catalog[index]));
+  }
+
   Future<void> _showCatalog() async {
     final chapter = await showModalBottomSheet<ReaderChapterCatalogEntry>(
       context: context,
@@ -1240,6 +1247,24 @@ class _ReaderScreenState extends State<ReaderScreen>
     final currentBookmark =
         _anchorBlockId.value != null &&
         _bookmarks.contains(_anchorBlockId.value);
+    final catalog = _chapterCatalog;
+    final currentCatalogIndex = catalog.indexWhere(
+      (chapter) => chapter.id == currentChapter?.id,
+    );
+    var chapterProgress = 0.0;
+    if (currentChapter != null && currentChapter.blocks.isNotEmpty) {
+      final blockIndex = currentChapter.blocks.indexWhere(
+        (block) => block.id == _lastPosition?.blockId,
+      );
+      if (blockIndex >= 0) {
+        final intraBlock = (_lastPosition?.intraBlockOffset ?? 0) / 1000;
+        chapterProgress =
+            ((blockIndex + intraBlock) / currentChapter.blocks.length).clamp(
+              0.0,
+              1.0,
+            );
+      }
+    }
 
     return Scaffold(
       backgroundColor: readerBackground,
@@ -1295,7 +1320,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                           addSemanticIndexes: false,
                           padding: EdgeInsets.only(
                             top: MediaQuery.paddingOf(context).top + 88,
-                            bottom: MediaQuery.paddingOf(context).bottom + 112,
+                            bottom: MediaQuery.paddingOf(context).bottom + 164,
                           ),
                           itemCount:
                               _windowEnd -
@@ -1378,6 +1403,12 @@ class _ReaderScreenState extends State<ReaderScreen>
             mode: _settings.readingMode,
             source: _settings.translationSource,
             bookmarked: currentBookmark,
+            catalog: catalog,
+            activeChapterIndex: currentCatalogIndex < 0
+                ? 0
+                : currentCatalogIndex,
+            chapterProgress: chapterProgress,
+            onChapterSelected: _openCatalogIndex,
             onCatalog: () => _runChromeAction(_showCatalog),
             onMode: () => _runChromeAction(_toggleMode),
             onSource: () => _runChromeAction(_showTranslationSources),
@@ -2169,12 +2200,16 @@ class _ReaderTopChrome extends StatelessWidget {
   }
 }
 
-class _ReaderBottomChrome extends StatelessWidget {
+class _ReaderBottomChrome extends StatefulWidget {
   const _ReaderBottomChrome({
     required this.visible,
     required this.mode,
     required this.source,
     required this.bookmarked,
+    required this.catalog,
+    required this.activeChapterIndex,
+    required this.chapterProgress,
+    required this.onChapterSelected,
     required this.onCatalog,
     required this.onMode,
     required this.onSource,
@@ -2186,11 +2221,50 @@ class _ReaderBottomChrome extends StatelessWidget {
   final ReadingMode mode;
   final TranslationSource source;
   final bool bookmarked;
+  final List<ReaderChapterCatalogEntry> catalog;
+  final int activeChapterIndex;
+  final double chapterProgress;
+  final ValueChanged<int> onChapterSelected;
   final VoidCallback onCatalog;
   final VoidCallback onMode;
   final VoidCallback onSource;
   final VoidCallback onSettings;
   final VoidCallback onBookmark;
+
+  @override
+  State<_ReaderBottomChrome> createState() => _ReaderBottomChromeState();
+}
+
+class _ReaderBottomChromeState extends State<_ReaderBottomChrome> {
+  double? _previewIndex;
+
+  @override
+  void didUpdateWidget(_ReaderBottomChrome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeChapterIndex != widget.activeChapterIndex ||
+        oldWidget.catalog.length != widget.catalog.length) {
+      _previewIndex = null;
+    }
+  }
+
+  int get _displayIndex {
+    if (widget.catalog.isEmpty) return 0;
+    return (_previewIndex?.round() ?? widget.activeChapterIndex).clamp(
+      0,
+      widget.catalog.length - 1,
+    );
+  }
+
+  String get _progressLabel {
+    if (widget.catalog.isEmpty) return '暂无章节';
+    if (_previewIndex != null) {
+      final chapter = widget.catalog[_displayIndex];
+      return '第 ${_displayIndex + 1} / ${widget.catalog.length} 章 · '
+          '${chapter.chineseTitle}';
+    }
+    return '第 ${widget.activeChapterIndex + 1} / ${widget.catalog.length} 章 · '
+        '本章 ${(widget.chapterProgress * 100).round()}%';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2199,14 +2273,14 @@ class _ReaderBottomChrome extends StatelessWidget {
       right: 0,
       bottom: 0,
       child: IgnorePointer(
-        ignoring: !visible,
+        ignoring: !widget.visible,
         child: AnimatedSlide(
           duration: const Duration(milliseconds: 180),
-          offset: visible ? Offset.zero : const Offset(0, 1),
+          offset: widget.visible ? Offset.zero : const Offset(0, 1),
           child: AnimatedOpacity(
             key: const ValueKey('reader-bottom-chrome'),
             duration: const Duration(milliseconds: 140),
-            opacity: visible ? 1 : 0,
+            opacity: widget.visible ? 1 : 0,
             child: Material(
               elevation: 4,
               color: Theme.of(
@@ -2215,42 +2289,146 @@ class _ReaderBottomChrome extends StatelessWidget {
               child: SafeArea(
                 top: false,
                 child: SizedBox(
-                  height: 76,
-                  child: Row(
+                  height: 128,
+                  child: Column(
                     children: [
-                      _ChromeAction(
-                        key: const ValueKey('catalog-button'),
-                        icon: Icons.format_list_numbered_rounded,
-                        label: '目录',
-                        onTap: onCatalog,
+                      SizedBox(
+                        height: 52,
+                        child: Row(
+                          children: [
+                            IconButton(
+                              key: const ValueKey('previous-chapter-button'),
+                              tooltip: '上一章',
+                              onPressed:
+                                  widget.catalog.isNotEmpty && _displayIndex > 0
+                                  ? () => widget.onChapterSelected(
+                                      _displayIndex - 1,
+                                    )
+                                  : null,
+                              icon: const Icon(Icons.skip_previous_rounded),
+                            ),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Semantics(
+                                    key: const ValueKey(
+                                      'reader-progress-label',
+                                    ),
+                                    liveRegion: true,
+                                    label: _progressLabel,
+                                    child: Text(
+                                      _progressLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                  ),
+                                  if (widget.catalog.length > 1)
+                                    SizedBox(
+                                      height: 24,
+                                      child: SliderTheme(
+                                        data: SliderTheme.of(context).copyWith(
+                                          trackHeight: 2,
+                                          thumbShape:
+                                              const RoundSliderThumbShape(
+                                                enabledThumbRadius: 6,
+                                              ),
+                                          overlayShape:
+                                              const RoundSliderOverlayShape(
+                                                overlayRadius: 14,
+                                              ),
+                                        ),
+                                        child: Slider(
+                                          key: const ValueKey(
+                                            'reader-chapter-scrubber',
+                                          ),
+                                          value:
+                                              _previewIndex ??
+                                              widget.activeChapterIndex
+                                                  .toDouble(),
+                                          min: 0,
+                                          max: (widget.catalog.length - 1)
+                                              .toDouble(),
+                                          divisions: widget.catalog.length - 1,
+                                          label: widget
+                                              .catalog[_displayIndex]
+                                              .chineseTitle,
+                                          onChanged: (value) {
+                                            setState(
+                                              () => _previewIndex = value,
+                                            );
+                                          },
+                                          onChangeEnd: (value) {
+                                            final target = value.round();
+                                            setState(
+                                              () => _previewIndex = null,
+                                            );
+                                            if (target !=
+                                                widget.activeChapterIndex) {
+                                              widget.onChapterSelected(target);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              key: const ValueKey('next-chapter-button'),
+                              tooltip: '下一章',
+                              onPressed:
+                                  widget.catalog.isNotEmpty &&
+                                      _displayIndex < widget.catalog.length - 1
+                                  ? () => widget.onChapterSelected(
+                                      _displayIndex + 1,
+                                    )
+                                  : null,
+                              icon: const Icon(Icons.skip_next_rounded),
+                            ),
+                          ],
+                        ),
                       ),
-                      _ChromeAction(
-                        key: const ValueKey('reading-mode-button'),
-                        icon: Icons.translate_rounded,
-                        label: mode == ReadingMode.chineseJapanese
-                            ? '中日'
-                            : '中文',
-                        onTap: onMode,
-                      ),
-                      _ChromeAction(
-                        key: const ValueKey('translation-source-button'),
-                        icon: Icons.hub_outlined,
-                        label: source.label,
-                        onTap: onSource,
-                      ),
-                      _ChromeAction(
-                        key: const ValueKey('reader-settings-button'),
-                        icon: Icons.text_fields_rounded,
-                        label: '样式',
-                        onTap: onSettings,
-                      ),
-                      _ChromeAction(
-                        key: const ValueKey('bookmark-button'),
-                        icon: bookmarked
-                            ? Icons.bookmark_rounded
-                            : Icons.bookmark_border_rounded,
-                        label: bookmarked ? '已书签' : '书签',
-                        onTap: onBookmark,
+                      Expanded(
+                        child: Row(
+                          children: [
+                            _ChromeAction(
+                              key: const ValueKey('catalog-button'),
+                              icon: Icons.format_list_numbered_rounded,
+                              label: '目录',
+                              onTap: widget.onCatalog,
+                            ),
+                            _ChromeAction(
+                              key: const ValueKey('reading-mode-button'),
+                              icon: Icons.translate_rounded,
+                              label: widget.mode == ReadingMode.chineseJapanese
+                                  ? '中日'
+                                  : '中文',
+                              onTap: widget.onMode,
+                            ),
+                            _ChromeAction(
+                              key: const ValueKey('translation-source-button'),
+                              icon: Icons.hub_outlined,
+                              label: widget.source.label,
+                              onTap: widget.onSource,
+                            ),
+                            _ChromeAction(
+                              key: const ValueKey('reader-settings-button'),
+                              icon: Icons.text_fields_rounded,
+                              label: '样式',
+                              onTap: widget.onSettings,
+                            ),
+                            _ChromeAction(
+                              key: const ValueKey('bookmark-button'),
+                              icon: widget.bookmarked
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_border_rounded,
+                              label: widget.bookmarked ? '已书签' : '书签',
+                              onTap: widget.onBookmark,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),

@@ -344,6 +344,43 @@ void main() {
     );
   });
 
+  testWidgets('reader chrome reports semantic progress and changes chapters', (
+    tester,
+  ) async {
+    await pumpReader(tester);
+
+    expect(find.text('第 1 / 4 章 · 本章 0%'), findsOneWidget);
+    final previous = tester.widget<IconButton>(
+      find.byKey(const ValueKey('previous-chapter-button')),
+    );
+    expect(previous.onPressed, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('next-chapter-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('第 2 / 4 章 · 本章 0%'), findsOneWidget);
+    expect(find.byKey(const ValueKey('block-c2-0-chinese')), findsOneWidget);
+  });
+
+  testWidgets('chapter scrubber previews and opens its target', (tester) async {
+    await pumpReader(tester);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('reader-chapter-scrubber')),
+    );
+
+    slider.onChanged!(3);
+    await tester.pump();
+    expect(find.text('第 4 / 4 章 · 星港'), findsOneWidget);
+    slider.onChangeEnd!(3);
+    await tester.pumpAndSettle();
+
+    expect(find.text('第 4 / 4 章 · 本章 0%'), findsOneWidget);
+    expect(find.byKey(const ValueKey('block-c4-0-chinese')), findsOneWidget);
+    final next = tester.widget<IconButton>(
+      find.byKey(const ValueKey('next-chapter-button')),
+    );
+    expect(next.onPressed, isNull);
+  });
+
   testWidgets('scrolling and inactivity dismiss reader chrome', (tester) async {
     await pumpReader(tester);
 
