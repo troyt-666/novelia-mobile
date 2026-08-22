@@ -331,25 +331,36 @@ final class NoveliaDatabase {
   }
 
   static void _migrateVersion5To6(Database database) {
-    database.execute('''
-      ALTER TABLE app_settings
-        ADD COLUMN layout_mode TEXT NOT NULL DEFAULT 'scroll';
-      ALTER TABLE app_settings
-        ADD COLUMN reader_palette TEXT NOT NULL DEFAULT 'automatic';
-      ALTER TABLE app_settings
-        ADD COLUMN font_family TEXT NOT NULL DEFAULT 'systemSans';
-      ALTER TABLE app_settings
-        ADD COLUMN body_bold INTEGER NOT NULL DEFAULT 0
-          CHECK (body_bold IN (0, 1));
-      ALTER TABLE app_settings
-        ADD COLUMN paragraph_spacing REAL NOT NULL DEFAULT 15;
-      ALTER TABLE app_settings
-        ADD COLUMN page_margin REAL NOT NULL DEFAULT 24;
-      ALTER TABLE app_settings
-        ADD COLUMN column_layout TEXT NOT NULL DEFAULT 'automatic';
-      ALTER TABLE app_settings
-        ADD COLUMN orientation_preference TEXT NOT NULL DEFAULT 'followDevice';
-    ''');
+    final existingColumns = database
+        .select('PRAGMA table_info(app_settings);')
+        .map((row) => row['name'] as String)
+        .toSet();
+    const additions = <String, String>{
+      'layout_mode':
+          "ALTER TABLE app_settings ADD COLUMN layout_mode TEXT NOT NULL DEFAULT 'scroll';",
+      'reader_palette':
+          "ALTER TABLE app_settings ADD COLUMN reader_palette TEXT NOT NULL DEFAULT 'automatic';",
+      'font_family':
+          "ALTER TABLE app_settings ADD COLUMN font_family TEXT NOT NULL DEFAULT 'systemSans';",
+      'body_bold':
+          'ALTER TABLE app_settings ADD COLUMN body_bold INTEGER NOT NULL '
+          'DEFAULT 0 CHECK (body_bold IN (0, 1));',
+      'paragraph_spacing':
+          'ALTER TABLE app_settings ADD COLUMN paragraph_spacing REAL NOT NULL '
+          'DEFAULT 15;',
+      'page_margin':
+          'ALTER TABLE app_settings ADD COLUMN page_margin REAL NOT NULL '
+          'DEFAULT 24;',
+      'column_layout':
+          "ALTER TABLE app_settings ADD COLUMN column_layout TEXT NOT NULL DEFAULT 'automatic';",
+      'orientation_preference':
+          'ALTER TABLE app_settings ADD COLUMN orientation_preference TEXT '
+          "NOT NULL DEFAULT 'followDevice';",
+    };
+
+    for (final MapEntry(key: column, value: statement) in additions.entries) {
+      if (!existingColumns.contains(column)) database.execute(statement);
+    }
   }
 
   static T _transaction<T>(Database database, T Function() action) {
