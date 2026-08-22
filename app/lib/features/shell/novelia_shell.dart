@@ -501,6 +501,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
       synchronousData = ReaderLaunchData(
         novel: fixtureNovel,
         initialPosition: initialPosition,
+        startAtChapterTitle: requestedPosition == null,
       );
       widget.onReaderOpened?.call(catalogNovel, synchronousData);
     }
@@ -578,6 +579,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
     return ReaderLaunchData(
       novel: loaded.novel,
       initialPosition: resolvedPosition,
+      startAtChapterTitle:
+          loaded.startAtChapterTitle ||
+          loaded.initialPosition == null && requestedPosition == null,
       dataSource: loaded.dataSource,
     );
   }

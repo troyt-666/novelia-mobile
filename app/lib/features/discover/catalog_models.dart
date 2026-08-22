@@ -114,11 +114,13 @@ class ReaderLaunchData {
   const ReaderLaunchData({
     required this.novel,
     this.initialPosition,
+    this.startAtChapterTitle = false,
     this.dataSource,
   });
 
   final ReaderNovel novel;
   final ReadingPosition? initialPosition;
+  final bool startAtChapterTitle;
 
   /// Optional dynamic source for a bounded body window and the full TOC.
   ///

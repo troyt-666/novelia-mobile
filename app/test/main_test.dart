@@ -78,6 +78,7 @@ void main() {
     WidgetTester tester, {
     ReaderNovel? novel,
     ReadingPosition? initialPosition,
+    bool startAtChapterTitle = false,
     ValueChanged<ReadingPosition>? onPositionChanged,
     ValueChanged<ReadingPosition>? onExitPosition,
     ReaderBookmarkChanged? onBookmarkChanged,
@@ -100,6 +101,7 @@ void main() {
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           initialPosition: initialPosition,
+          startAtChapterTitle: startAtChapterTitle,
           onPositionChanged: onPositionChanged,
           onExitPosition: onExitPosition,
           initialBookmarkedBlockIds: initialBookmarkedBlockIds,
@@ -303,6 +305,29 @@ void main() {
       initialPosition: restored,
     );
     expect(_readerScrollable(tester).position.pixels, greaterThan(40));
+  });
+
+  testWidgets('an unread chapter opens on its title before the first block', (
+    tester,
+  ) async {
+    const firstBlock = ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-0');
+    await pumpReader(
+      tester,
+      initialPosition: firstBlock,
+      startAtChapterTitle: true,
+    );
+
+    final chapterTitle = find.byKey(
+      const ValueKey('chapter-boundary-chapter-1'),
+    );
+    final firstBody = find.byKey(const ValueKey('block-c1-0-chinese'));
+    expect(chapterTitle, findsOneWidget);
+    expect(firstBody, findsOneWidget);
+    expect(tester.getRect(chapterTitle).top, inInclusiveRange(60, 180));
+    expect(
+      tester.getRect(firstBody).top,
+      greaterThan(tester.getRect(chapterTitle).bottom),
+    );
   });
 
   testWidgets('reading taps dismiss chrome and center taps reveal it', (

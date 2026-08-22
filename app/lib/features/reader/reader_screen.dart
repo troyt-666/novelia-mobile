@@ -46,6 +46,7 @@ class ReaderScreen extends StatefulWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     this.initialPosition,
+    this.startAtChapterTitle = false,
     this.onPositionChanged,
     this.onExitPosition,
     this.initialBookmarkedBlockIds = const {},
@@ -62,6 +63,7 @@ class ReaderScreen extends StatefulWidget {
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final ReadingPosition? initialPosition;
+  final bool startAtChapterTitle;
   final ValueChanged<ReadingPosition>? onPositionChanged;
   final ValueChanged<ReadingPosition>? onExitPosition;
   final Set<String> initialBookmarkedBlockIds;
@@ -444,7 +446,16 @@ class _ReaderScreenState extends State<ReaderScreen>
       if (!mounted) return;
       final blockId = _anchorBlockId.value;
       String? stableId;
-      if (blockId != null) {
+      if (widget.startAtChapterTitle && _activeChapterId != null) {
+        final chapterStableId = 'chapter:$_activeChapterId';
+        if (_itemIndices.containsKey(chapterStableId)) {
+          stableId = chapterStableId;
+          final chapter = _loadedChapters
+              .where((chapter) => chapter.id == _activeChapterId)
+              .firstOrNull;
+          _anchorBlockId.value = chapter?.blocks.firstOrNull?.id;
+        }
+      } else if (blockId != null) {
         final blockStableId = 'block:$blockId';
         if (_itemIndices.containsKey(blockStableId)) {
           stableId = blockStableId;
@@ -465,7 +476,11 @@ class _ReaderScreenState extends State<ReaderScreen>
                 widget.initialPosition!.blockId == blockId
             ? widget.initialPosition!.intraBlockOffset
             : 0;
-        await _jumpToStableId(stableId, intraBlockOffset: restoreOffset);
+        await _jumpToStableId(
+          stableId,
+          intraBlockOffset: restoreOffset,
+          alignment: widget.startAtChapterTitle ? 0.1 : 0,
+        );
         if (!mounted) return;
         final itemIndex = _itemIndices[stableId];
         if (itemIndex != null) {
@@ -494,6 +509,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   Future<void> _jumpToStableId(
     String stableId, {
     int intraBlockOffset = 0,
+    double alignment = 0,
   }) async {
     if (!mounted) return;
     final targetIndex = _itemIndices[stableId];
@@ -526,7 +542,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (targetContext != null && targetContext.mounted) {
       await Scrollable.ensureVisible(
         targetContext,
-        alignment: 0,
+        alignment: alignment,
         duration: Duration.zero,
       );
       if (intraBlockOffset > 0 &&

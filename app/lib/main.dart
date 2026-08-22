@@ -877,6 +877,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       return ReaderLaunchData(
         novel: readerNovel,
         initialPosition: requestedPosition,
+        startAtChapterTitle: requestedPosition == null,
       );
     }
     final hydrated = novel.hasChapterCatalog
@@ -1636,6 +1637,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           return ReaderScreen(
             novel: novel,
             initialPosition: initialPosition,
+            startAtChapterTitle: data.startAtChapterTitle,
             initialBookmarkedBlockIds: bookmarkedBlocks,
             initialBookmarks: savedBookmarks
                 .map((bookmark) => bookmark.position)
