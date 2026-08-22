@@ -17,8 +17,9 @@ bilingual and cross-chapter strengths.
 The program introduces a screenful-based paged mode alongside the existing
 scroll mode, predictable tap and swipe navigation, visible progress and chapter
 navigation, live appearance customization, responsive layouts, and in-reader
-bookmarks. It intentionally does not claim typesetter-grade print page numbers;
-`Pages` means deterministic movement by a readable viewport.
+bookmarks. It also enables native text selection so readers can use standard
+system copy and lookup actions. It intentionally does not claim typesetter-grade
+print page numbers; `Pages` means deterministic movement by a readable viewport.
 
 ## 2. Problem
 
@@ -34,6 +35,8 @@ The current reader has these user-facing gaps:
    not preview changes live.
 5. Bookmarks cannot be reviewed or navigated from inside the reader, and
    bookmarked passages have no in-content marker.
+6. Chinese and Japanese prose cannot be selected for copying or for lookup with
+   the operating system's standard text actions.
 
 Together these gaps make the experience feel like a long article rather than a
 purpose-built book reader.
@@ -53,14 +56,15 @@ purpose-built book reader.
   bookmarks, illustrations, and bilingual alignment.
 - Keep all new controls accessible by semantics and large enough for touch.
 - Make saved bookmarks visible and navigable without leaving the reader.
+- Enable native text selection without reintroducing paragraph-editor overhead.
 
 ## 4. Program exclusions
 
 - Typesetter-grade immutable pages or paragraph fragmentation across pages.
 - Download, catalog, account, comment, or discovery redesigns.
 - Cloud synchronization protocol changes for annotations or statistics.
-- Text selection, highlights, notes, copy, in-book search, dictionary, and
-  translation actions.
+- Highlights, notes, custom in-book search, custom dictionary, and custom
+  translation actions or persistence.
 - Text-to-speech, sentence highlighting, audio synchronization, and sleep
   timers.
 - Reading rulers, specialized accessibility presets, and a formal assistive-
@@ -252,6 +256,29 @@ Acceptance:
 - Add, remove, restart, and bookmark navigation preserve semantic positions.
 - Bookmark markers remain correct after translation-source or language changes.
 
+### R9. Native text selection
+
+- Chinese and Japanese prose can be selected with the platform's standard
+  mouse, touch, and keyboard selection gestures.
+- Use the adaptive system selection toolbar. Novelia must not replace or remove
+  system-provided actions such as Copy, Look Up, Translate, Search, or Share
+  when the platform makes them available.
+- Do not add custom dictionary, translation, search, annotation, or networking
+  actions to the toolbar.
+- Selection gestures take precedence over page-turn taps and swipes.
+- Dismissing or changing a selection does not change the saved reading anchor.
+- Preserve the optimized ordinary `Text` rendering path; use a selection region
+  rather than an editable/selectable text control per paragraph.
+
+Acceptance:
+
+- Long-press selection exposes the adaptive selection toolbar on mobile.
+- Drag and keyboard/mouse selection work on supported desktop platforms.
+- Selected text can be copied through the standard platform action.
+- Long press, handle drag, and toolbar actions never turn a page.
+- Rapid scrolling and paging do not create an editable text control for every
+  paragraph.
+
 ## 8. Interaction specification
 
 ### Chrome hidden
@@ -286,6 +313,8 @@ Acceptance:
   program when a Flutter/system API is sufficient.
 - Isolate orientation handling behind a package-neutral interface so widget and
   persistence tests remain deterministic.
+- Use Flutter's adaptive selection controls without a custom text-action service
+  or a content upload path.
 - Preserve stable `ValueKey` values and add keys for every new critical control.
 
 ## 10. Quality plan
@@ -297,6 +326,7 @@ Acceptance:
   scrubber navigation, live preview, cancel, done, and reset.
 - Persistence and widget tests for in-reader bookmark listing, markers,
   navigation, and removal.
+- Widget tests for selection regions and page-turn gesture exclusion.
 - Regression tests for semantic restoration, bookmarks, illustrations,
   translation pending states, lazy chapter windows, retries, and disposal.
 - Run `flutter analyze` and the complete Flutter test suite before handoff.
@@ -310,7 +340,8 @@ Acceptance:
 5. Live appearance sheet, palettes, typography, orientation, and responsive
    columns.
 6. In-reader bookmarks and markers.
-7. Verification fixes and documentation only if they form an independent
+7. Native text selection and adaptive system actions.
+8. Verification fixes and documentation only if they form an independent
    reviewable change.
 
 Each implementation commit must include its focused tests and leave analysis
@@ -318,8 +349,8 @@ and the relevant test subset passing.
 
 ## 12. Deferred backlog and research
 
-- Text selection, copy, highlights, notes, in-book search, dictionary, and
-  translation actions.
+- Highlights, notes, custom in-book search, dictionary, and translation
+  experiences.
 - On-device TTS, bilingual queues, sentence highlighting, and audio controls.
 - Low-vision/dyslexia presets, a reading ruler, and formal assistive-technology
   certification.
