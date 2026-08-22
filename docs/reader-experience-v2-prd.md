@@ -184,7 +184,7 @@ Acceptance:
 
 Appearance controls in scope:
 
-- Reader palette: Paper, Sepia, Low Light, Dark, Black.
+- Reader palette: Automatic, Paper, Sepia, Low Light, Dark, Black.
 - Chinese and Japanese font size.
 - Font family: System Sans and System Serif.
 - Regular or bold body weight.
@@ -209,13 +209,14 @@ Acceptance:
 - Reading width and page margins adapt without horizontal clipping at supported
   text sizes.
 - Larger displays retain the configurable maximum reading width.
-- Add Auto, Single Column, and Two Columns choices. Auto uses one column on
-  phones and may use two columns on sufficiently wide landscape/tablet/desktop
-  viewports.
-- In `Pages` mode, a two-column spread advances by one visible spread.
+- Add Auto, Single Column, and Parallel Columns choices. Auto uses a stacked
+  bilingual layout on phones and may place Chinese and Japanese side by side on
+  sufficiently wide landscape/tablet/desktop viewports.
+- In `Pages` mode, a parallel bilingual pair remains one semantic block and a
+  page turn advances by one visible screenful.
 - Add Follow Device, Portrait, and Landscape orientation choices on supported
-  mobile platforms. Unsupported desktop orientation choices remain visible but
-  disabled with an explanation.
+  mobile platforms. Desktop platforms may ignore the preference without
+  changing window geometry.
 - Persist column and orientation preferences and restore the semantic anchor
   through layout changes.
 

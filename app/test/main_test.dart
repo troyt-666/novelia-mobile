@@ -57,6 +57,21 @@ ScrollableState _readerScrollable(WidgetTester tester) {
   );
 }
 
+class _FakeOrientationController implements ReaderOrientationController {
+  final applied = <ReaderOrientationPreference>[];
+  var resetCount = 0;
+
+  @override
+  Future<void> apply(ReaderOrientationPreference preference) async {
+    applied.add(preference);
+  }
+
+  @override
+  Future<void> reset() async {
+    resetCount += 1;
+  }
+}
+
 void main() {
   Future<void> pumpReader(
     WidgetTester tester, {
@@ -68,8 +83,10 @@ void main() {
     Set<String> initialBookmarkedBlockIds = const {},
     ReaderSettings initialSettings = const ReaderSettings(),
     ValueChanged<ReaderSettings>? onSettingsChanged,
+    ReaderOrientationController? orientationController,
+    Size viewSize = const Size(430, 932),
   }) async {
-    tester.view.physicalSize = const Size(430, 932);
+    tester.view.physicalSize = viewSize;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -87,6 +104,7 @@ void main() {
           onBookmarkChanged: onBookmarkChanged,
           initialSettings: initialSettings,
           onSettingsChanged: onSettingsChanged,
+          orientationController: orientationController,
         ),
       ),
     );
@@ -379,6 +397,91 @@ void main() {
       find.byKey(const ValueKey('next-chapter-button')),
     );
     expect(next.onPressed, isNull);
+  });
+
+  testWidgets('appearance sheet previews, cancels, and commits palettes', (
+    tester,
+  ) async {
+    final changes = <ReaderSettings>[];
+    await pumpReader(tester, onSettingsChanged: changes.add);
+    Scaffold scaffold() => tester.widget<Scaffold>(find.byType(Scaffold));
+
+    expect(scaffold().backgroundColor, const Color(0xFFF5F2E8));
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-palette-sepia')));
+    await tester.pumpAndSettle();
+    expect(scaffold().backgroundColor, const Color(0xFFF0E1C2));
+
+    await tester.tap(find.byKey(const ValueKey('settings-cancel')));
+    await tester.pumpAndSettle();
+    expect(scaffold().backgroundColor, const Color(0xFFF5F2E8));
+    expect(changes, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-palette-sepia')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changes.single.palette, ReaderPalette.sepia);
+    expect(scaffold().backgroundColor, const Color(0xFFF0E1C2));
+  });
+
+  testWidgets('typography and responsive bilingual columns render directly', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      viewSize: const Size(1200, 900),
+      initialSettings: const ReaderSettings(
+        fontFamily: ReaderFontFamily.systemSerif,
+        bodyBold: true,
+        pageMargin: 40,
+        paragraphSpacing: 24,
+        readingWidth: 1000,
+        columnLayout: ReaderColumnLayout.twoColumns,
+      ),
+    );
+
+    final chinese = tester.widget<Text>(
+      find.byKey(const ValueKey('block-c1-0-chinese')),
+    );
+    expect(chinese.style!.fontFamily, 'serif');
+    expect(chinese.style!.fontWeight, FontWeight.w600);
+    expect(
+      find.byKey(const ValueKey('block-c1-0-parallel-columns')),
+      findsOneWidget,
+    );
+    final padding = tester.widget<Padding>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('block-c1-0-parallel-columns')),
+            matching: find.byType(Padding),
+          )
+          .first,
+    );
+    expect((padding.padding as EdgeInsets).left, 40);
+    expect((padding.padding as EdgeInsets).bottom, 24);
+  });
+
+  testWidgets('reader applies and resets its orientation preference', (
+    tester,
+  ) async {
+    final orientation = _FakeOrientationController();
+    await pumpReader(
+      tester,
+      orientationController: orientation,
+      initialSettings: const ReaderSettings(
+        orientationPreference: ReaderOrientationPreference.landscape,
+      ),
+    );
+
+    expect(orientation.applied, [ReaderOrientationPreference.landscape]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(orientation.resetCount, 1);
   });
 
   testWidgets('scrolling and inactivity dismiss reader chrome', (tester) async {

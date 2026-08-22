@@ -2,11 +2,41 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent, ScrollDirection;
+import 'package:flutter/services.dart';
 
 import '../../core/model/reader_models.dart';
 
 typedef ReaderBookmarkChanged =
     void Function(ReadingPosition position, bool bookmarked);
+
+abstract interface class ReaderOrientationController {
+  Future<void> apply(ReaderOrientationPreference preference);
+
+  Future<void> reset();
+}
+
+class SystemReaderOrientationController implements ReaderOrientationController {
+  const SystemReaderOrientationController();
+
+  @override
+  Future<void> apply(ReaderOrientationPreference preference) {
+    return SystemChrome.setPreferredOrientations(switch (preference) {
+      ReaderOrientationPreference.followDevice => DeviceOrientation.values,
+      ReaderOrientationPreference.portrait => const [
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ],
+      ReaderOrientationPreference.landscape => const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ],
+    });
+  }
+
+  @override
+  Future<void> reset() =>
+      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+}
 
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({
@@ -21,6 +51,7 @@ class ReaderScreen extends StatefulWidget {
     this.initialSettings = const ReaderSettings(),
     this.onSettingsChanged,
     this.chapterDataSource,
+    this.orientationController,
     super.key,
   });
 
@@ -35,6 +66,7 @@ class ReaderScreen extends StatefulWidget {
   final ReaderSettings initialSettings;
   final ValueChanged<ReaderSettings>? onSettingsChanged;
   final ReaderChapterDataSource? chapterDataSource;
+  final ReaderOrientationController? orientationController;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -61,11 +93,18 @@ class _ReaderScreenState extends State<ReaderScreen>
   late final RestorableInt _modeIndex;
   late final RestorableInt _sourceIndex;
   late final RestorableInt _layoutIndex;
+  late final RestorableInt _paletteIndex;
+  late final RestorableInt _fontFamilyIndex;
+  late final RestorableBool _bodyBold;
   late final RestorableDouble _chineseFontSize;
   late final RestorableDouble _japaneseFontSize;
   late final RestorableDouble _lineHeight;
+  late final RestorableDouble _paragraphSpacing;
   late final RestorableDouble _japaneseOpacity;
+  late final RestorableDouble _pageMargin;
   late final RestorableDouble _readingWidth;
+  late final RestorableInt _columnLayoutIndex;
+  late final RestorableInt _orientationIndex;
   final Set<String> _bookmarks = {};
   final Set<String> _mountedBlockIds = {};
 
@@ -95,6 +134,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   DateTime? _tapStartedAt;
   Timer? _chromeDismissTimer;
   bool _turningPage = false;
+  late ReaderOrientationController _orientationController;
 
   @override
   String? get restorationId => 'reader:${widget.novel.id}';
@@ -107,11 +147,22 @@ class _ReaderScreenState extends State<ReaderScreen>
     _modeIndex = RestorableInt(_settings.readingMode.index);
     _sourceIndex = RestorableInt(_settings.translationSource.index);
     _layoutIndex = RestorableInt(_settings.layoutMode.index);
+    _paletteIndex = RestorableInt(_settings.palette.index);
+    _fontFamilyIndex = RestorableInt(_settings.fontFamily.index);
+    _bodyBold = RestorableBool(_settings.bodyBold);
     _chineseFontSize = RestorableDouble(_settings.chineseFontSize);
     _japaneseFontSize = RestorableDouble(_settings.japaneseFontSize);
     _lineHeight = RestorableDouble(_settings.lineHeight);
+    _paragraphSpacing = RestorableDouble(_settings.paragraphSpacing);
     _japaneseOpacity = RestorableDouble(_settings.japaneseOpacity);
+    _pageMargin = RestorableDouble(_settings.pageMargin);
     _readingWidth = RestorableDouble(_settings.readingWidth);
+    _columnLayoutIndex = RestorableInt(_settings.columnLayout.index);
+    _orientationIndex = RestorableInt(_settings.orientationPreference.index);
+    _orientationController =
+        widget.orientationController ??
+        const SystemReaderOrientationController();
+    unawaited(_orientationController.apply(_settings.orientationPreference));
     _loadedChapters = List.of(widget.novel.chapters);
     _rebuildStream();
     final initialBoundaries = _initialBoundaryStatuses();
@@ -129,6 +180,13 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   void didUpdateWidget(ReaderScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.orientationController != widget.orientationController) {
+      unawaited(_orientationController.reset());
+      _orientationController =
+          widget.orientationController ??
+          const SystemReaderOrientationController();
+      unawaited(_orientationController.apply(_settings.orientationPreference));
+    }
     if (oldWidget.chapterDataSource == widget.chapterDataSource) return;
     oldWidget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
     widget.chapterDataSource?.addChapterUpdateListener(_onChapterUpdated);
@@ -250,22 +308,37 @@ class _ReaderScreenState extends State<ReaderScreen>
     registerForRestoration(_modeIndex, 'reading-mode');
     registerForRestoration(_sourceIndex, 'translation-source');
     registerForRestoration(_layoutIndex, 'layout-mode');
+    registerForRestoration(_paletteIndex, 'reader-palette');
+    registerForRestoration(_fontFamilyIndex, 'font-family');
+    registerForRestoration(_bodyBold, 'body-bold');
     registerForRestoration(_chineseFontSize, 'chinese-font-size');
     registerForRestoration(_japaneseFontSize, 'japanese-font-size');
     registerForRestoration(_lineHeight, 'line-height');
+    registerForRestoration(_paragraphSpacing, 'paragraph-spacing');
     registerForRestoration(_japaneseOpacity, 'japanese-opacity');
+    registerForRestoration(_pageMargin, 'page-margin');
     registerForRestoration(_readingWidth, 'reading-width');
+    registerForRestoration(_columnLayoutIndex, 'column-layout');
+    registerForRestoration(_orientationIndex, 'orientation-preference');
 
     _anchorBlockId.value ??= widget.initialPosition?.blockId;
     _settings = _settings.copyWith(
       readingMode: ReadingMode.values[_modeIndex.value],
       translationSource: TranslationSource.values[_sourceIndex.value],
       layoutMode: ReaderLayoutMode.values[_layoutIndex.value],
+      palette: ReaderPalette.values[_paletteIndex.value],
+      fontFamily: ReaderFontFamily.values[_fontFamilyIndex.value],
+      bodyBold: _bodyBold.value,
       chineseFontSize: _chineseFontSize.value,
       japaneseFontSize: _japaneseFontSize.value,
       lineHeight: _lineHeight.value,
+      paragraphSpacing: _paragraphSpacing.value,
       japaneseOpacity: _japaneseOpacity.value,
+      pageMargin: _pageMargin.value,
       readingWidth: _readingWidth.value,
+      columnLayout: ReaderColumnLayout.values[_columnLayoutIndex.value],
+      orientationPreference:
+          ReaderOrientationPreference.values[_orientationIndex.value],
     );
     _scheduleInitialRestore();
   }
@@ -288,6 +361,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   void dispose() {
     widget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
+    unawaited(_orientationController.reset());
     _windowGeneration += 1;
     _chromeDismissTimer?.cancel();
     if (!_restoring) {
@@ -302,11 +376,18 @@ class _ReaderScreenState extends State<ReaderScreen>
     _modeIndex.dispose();
     _sourceIndex.dispose();
     _layoutIndex.dispose();
+    _paletteIndex.dispose();
+    _fontFamilyIndex.dispose();
+    _bodyBold.dispose();
     _chineseFontSize.dispose();
     _japaneseFontSize.dispose();
     _lineHeight.dispose();
+    _paragraphSpacing.dispose();
     _japaneseOpacity.dispose();
+    _pageMargin.dispose();
     _readingWidth.dispose();
+    _columnLayoutIndex.dispose();
+    _orientationIndex.dispose();
     super.dispose();
   }
 
@@ -866,24 +947,37 @@ class _ReaderScreenState extends State<ReaderScreen>
   Future<void> _applySettings(
     ReaderSettings settings, {
     ThemeMode? themeMode,
+    bool notify = true,
   }) async {
     final anchor = _captureAnchor();
+    final orientationChanged =
+        settings.orientationPreference != _settings.orientationPreference;
     setState(() {
       _settings = settings;
       _restoring = true;
       _modeIndex.value = settings.readingMode.index;
       _sourceIndex.value = settings.translationSource.index;
       _layoutIndex.value = settings.layoutMode.index;
+      _paletteIndex.value = settings.palette.index;
+      _fontFamilyIndex.value = settings.fontFamily.index;
+      _bodyBold.value = settings.bodyBold;
       _chineseFontSize.value = settings.chineseFontSize;
       _japaneseFontSize.value = settings.japaneseFontSize;
       _lineHeight.value = settings.lineHeight;
+      _paragraphSpacing.value = settings.paragraphSpacing;
       _japaneseOpacity.value = settings.japaneseOpacity;
+      _pageMargin.value = settings.pageMargin;
       _readingWidth.value = settings.readingWidth;
+      _columnLayoutIndex.value = settings.columnLayout.index;
+      _orientationIndex.value = settings.orientationPreference.index;
     });
+    if (orientationChanged) {
+      await _orientationController.apply(settings.orientationPreference);
+    }
     if (themeMode != null && themeMode != widget.themeMode) {
       widget.onThemeModeChanged(themeMode);
     }
-    widget.onSettingsChanged?.call(settings);
+    if (notify) widget.onSettingsChanged?.call(settings);
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     if (anchor != null) {
@@ -1184,6 +1278,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Future<void> _showSettings() async {
+    final originalSettings = _settings;
     final result = await showModalBottomSheet<_SettingsResult>(
       context: context,
       useSafeArea: true,
@@ -1191,12 +1286,17 @@ class _ReaderScreenState extends State<ReaderScreen>
       showDragHandle: true,
       builder: (context) => _ReaderSettingsSheet(
         settings: _settings,
-        themeMode: widget.themeMode,
+        onPreview: (settings) {
+          unawaited(_applySettings(settings, notify: false));
+        },
       ),
     );
-    if (result != null && mounted) {
-      await _applySettings(result.settings, themeMode: result.themeMode);
+    if (!mounted) return;
+    if (result == null) {
+      await _applySettings(originalSettings, notify: false);
+      return;
     }
+    await _applySettings(result.settings);
   }
 
   void _toggleMode() {
@@ -1227,13 +1327,12 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final readerBackground = isDark
-        ? const Color(0xFF171A18)
-        : const Color(0xFFF5F2E8);
-    final foreground = isDark
-        ? const Color(0xFFE8ECE8)
-        : const Color(0xFF252925);
+    final readerColors = _ReaderPaletteColors.resolve(
+      _settings.palette,
+      theme.brightness,
+    );
+    final readerBackground = readerColors.background;
+    final foreground = readerColors.foreground;
     NovelChapter? currentChapter;
     for (final chapter in _loadedChapters) {
       if (chapter.id == _activeChapterId) {
@@ -1397,6 +1496,8 @@ class _ReaderScreenState extends State<ReaderScreen>
             title: widget.novel.chineseTitle,
             chapterTitle: currentChapter?.chineseTitle ?? '',
             onBack: () => Navigator.maybePop(context),
+            background: readerColors.chrome,
+            foreground: foreground,
           ),
           _ReaderBottomChrome(
             visible: _chromeVisible,
@@ -1414,6 +1515,8 @@ class _ReaderScreenState extends State<ReaderScreen>
             onSource: () => _runChromeAction(_showTranslationSources),
             onSettings: () => _runChromeAction(_showSettings),
             onBookmark: () => _runChromeAction(_toggleBookmark),
+            background: readerColors.chrome,
+            foreground: foreground,
           ),
           if (_catalogLoading || _catalogLoadError != null)
             _ReaderCatalogLoadOverlay(
@@ -1708,7 +1811,12 @@ class _ChapterBoundary extends StatelessWidget {
               '第${chapter.index}章，${chapter.chineseTitle}，${chapter.japaneseTitle}',
           child: Padding(
             key: ValueKey('chapter-boundary-${chapter.id}'),
-            padding: const EdgeInsets.fromLTRB(24, 42, 24, 24),
+            padding: EdgeInsets.fromLTRB(
+              settings.pageMargin,
+              42,
+              settings.pageMargin,
+              24,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1754,6 +1862,10 @@ class _ChapterBoundary extends StatelessWidget {
                     fontSize: 27,
                     height: 1.3,
                     fontWeight: FontWeight.w700,
+                    fontFamily:
+                        settings.fontFamily == ReaderFontFamily.systemSerif
+                        ? 'serif'
+                        : null,
                   ),
                 ),
                 const SizedBox(height: 7),
@@ -1889,6 +2001,55 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
       if (translation != null) '中文：$translation',
       if (showJapanese) '日文：${widget.item.block.japanese}',
     ].join('\n');
+    final bodyWeight = widget.settings.bodyBold
+        ? FontWeight.w600
+        : FontWeight.w400;
+    final bodyFamily =
+        widget.settings.fontFamily == ReaderFontFamily.systemSerif
+        ? 'serif'
+        : null;
+    final chineseText = translation == null
+        ? null
+        : Text(
+            translation,
+            key: ValueKey('block-${widget.item.block.id}-chinese'),
+            style: TextStyle(
+              locale: const Locale('zh', 'CN'),
+              color: widget.foreground,
+              fontSize: widget.settings.chineseFontSize,
+              height: widget.settings.lineHeight,
+              fontWeight: bodyWeight,
+              fontFamily: bodyFamily,
+              letterSpacing: 0.15,
+            ),
+          );
+    final japaneseText = !showJapanese
+        ? null
+        : Text(
+            widget.item.block.japanese,
+            key: ValueKey('block-${widget.item.block.id}-japanese'),
+            style: TextStyle(
+              locale: const Locale('ja', 'JP'),
+              color: widget.foreground.withValues(
+                alpha: translation == null
+                    ? 0.88
+                    : widget.settings.japaneseOpacity,
+              ),
+              fontSize: translation == null
+                  ? widget.settings.chineseFontSize * 0.92
+                  : widget.settings.japaneseFontSize,
+              height: widget.settings.lineHeight,
+              fontWeight: bodyWeight,
+              fontFamily: bodyFamily,
+            ),
+          );
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final parallelColumns =
+        chineseText != null &&
+        japaneseText != null &&
+        (widget.settings.columnLayout == ReaderColumnLayout.twoColumns ||
+            widget.settings.columnLayout == ReaderColumnLayout.automatic &&
+                viewportWidth >= 1000);
 
     return Center(
       child: ConstrainedBox(
@@ -1899,49 +2060,34 @@ class _AlignedBlockViewState extends State<_AlignedBlockView> {
           label: semanticLabel,
           child: Padding(
             padding: EdgeInsets.fromLTRB(
-              isDialogue ? 34 : 24,
+              widget.settings.pageMargin + (isDialogue ? 10 : 0),
               9,
-              isDialogue ? 30 : 24,
-              15,
+              widget.settings.pageMargin + (isDialogue ? 6 : 0),
+              widget.settings.paragraphSpacing,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (translation != null)
-                  Text(
-                    translation,
-                    key: ValueKey('block-${widget.item.block.id}-chinese'),
-                    style: TextStyle(
-                      locale: const Locale('zh', 'CN'),
-                      color: widget.foreground,
-                      fontSize: widget.settings.chineseFontSize,
-                      height: widget.settings.lineHeight,
-                      fontWeight: FontWeight.w400,
-                      letterSpacing: 0.15,
+            child: parallelColumns
+                ? Row(
+                    key: ValueKey(
+                      'block-${widget.item.block.id}-parallel-columns',
                     ),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: chineseText),
+                      const SizedBox(width: 28),
+                      Expanded(child: japaneseText),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ?chineseText,
+                      if (chineseText != null && japaneseText != null)
+                        SizedBox(
+                          height: widget.settings.chineseFontSize * 0.42,
+                        ),
+                      ?japaneseText,
+                    ],
                   ),
-                if (translation != null && showJapanese)
-                  SizedBox(height: widget.settings.chineseFontSize * 0.42),
-                if (showJapanese)
-                  Text(
-                    widget.item.block.japanese,
-                    key: ValueKey('block-${widget.item.block.id}-japanese'),
-                    style: TextStyle(
-                      locale: const Locale('ja', 'JP'),
-                      color: widget.foreground.withValues(
-                        alpha: translation == null
-                            ? 0.88
-                            : widget.settings.japaneseOpacity,
-                      ),
-                      fontSize: translation == null
-                          ? widget.settings.chineseFontSize * 0.92
-                          : widget.settings.japaneseFontSize,
-                      height: widget.settings.lineHeight,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-              ],
-            ),
           ),
         ),
       ),
@@ -2113,18 +2259,73 @@ class _IllustrationFailure extends StatelessWidget {
   }
 }
 
+class _ReaderPaletteColors {
+  const _ReaderPaletteColors({
+    required this.background,
+    required this.foreground,
+    required this.chrome,
+  });
+
+  final Color background;
+  final Color foreground;
+  final Color chrome;
+
+  static _ReaderPaletteColors resolve(
+    ReaderPalette palette,
+    Brightness systemBrightness,
+  ) {
+    final effective = palette == ReaderPalette.automatic
+        ? systemBrightness == Brightness.dark
+              ? ReaderPalette.dark
+              : ReaderPalette.paper
+        : palette;
+    return switch (effective) {
+      ReaderPalette.automatic => throw StateError('Palette was not resolved.'),
+      ReaderPalette.paper => const _ReaderPaletteColors(
+        background: Color(0xFFF5F2E8),
+        foreground: Color(0xFF252925),
+        chrome: Color(0xFFF9F7F0),
+      ),
+      ReaderPalette.sepia => const _ReaderPaletteColors(
+        background: Color(0xFFF0E1C2),
+        foreground: Color(0xFF3B2D20),
+        chrome: Color(0xFFF5E8CF),
+      ),
+      ReaderPalette.lowLight => const _ReaderPaletteColors(
+        background: Color(0xFF27302D),
+        foreground: Color(0xFFD3D9D2),
+        chrome: Color(0xFF303A36),
+      ),
+      ReaderPalette.dark => const _ReaderPaletteColors(
+        background: Color(0xFF171A18),
+        foreground: Color(0xFFE8ECE8),
+        chrome: Color(0xFF202421),
+      ),
+      ReaderPalette.black => const _ReaderPaletteColors(
+        background: Color(0xFF000000),
+        foreground: Color(0xFFE8E8E8),
+        chrome: Color(0xFF0D0D0D),
+      ),
+    };
+  }
+}
+
 class _ReaderTopChrome extends StatelessWidget {
   const _ReaderTopChrome({
     required this.visible,
     required this.title,
     required this.chapterTitle,
     required this.onBack,
+    required this.background,
+    required this.foreground,
   });
 
   final bool visible;
   final String title;
   final String chapterTitle;
   final VoidCallback onBack;
+  final Color background;
+  final Color foreground;
 
   @override
   Widget build(BuildContext context) {
@@ -2143,52 +2344,51 @@ class _ReaderTopChrome extends StatelessWidget {
             opacity: visible ? 1 : 0,
             child: Material(
               elevation: 1,
-              color: Theme.of(
-                context,
-              ).colorScheme.surface.withValues(alpha: 0.97),
-              child: SafeArea(
-                bottom: false,
-                child: SizedBox(
-                  height: 64,
-                  child: Row(
-                    children: [
-                      IconButton(
-                        key: const ValueKey('reader-back-button'),
-                        tooltip: '返回',
-                        onPressed: onBack,
-                        icon: const Icon(Icons.arrow_back_rounded),
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              chapterTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
+              color: background.withValues(alpha: 0.97),
+              child: IconTheme(
+                data: IconThemeData(color: foreground),
+                child: SafeArea(
+                  bottom: false,
+                  child: SizedBox(
+                    height: 64,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          key: const ValueKey('reader-back-button'),
+                          tooltip: '返回',
+                          onPressed: onBack,
+                          icon: const Icon(Icons.arrow_back_rounded),
                         ),
-                      ),
-                      const SizedBox(width: 16),
-                    ],
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ).copyWith(color: foreground),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                chapterTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: foreground.withValues(alpha: 0.68),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -2210,6 +2410,8 @@ class _ReaderBottomChrome extends StatefulWidget {
     required this.activeChapterIndex,
     required this.chapterProgress,
     required this.onChapterSelected,
+    required this.background,
+    required this.foreground,
     required this.onCatalog,
     required this.onMode,
     required this.onSource,
@@ -2225,6 +2427,8 @@ class _ReaderBottomChrome extends StatefulWidget {
   final int activeChapterIndex;
   final double chapterProgress;
   final ValueChanged<int> onChapterSelected;
+  final Color background;
+  final Color foreground;
   final VoidCallback onCatalog;
   final VoidCallback onMode;
   final VoidCallback onSource;
@@ -2283,154 +2487,168 @@ class _ReaderBottomChromeState extends State<_ReaderBottomChrome> {
             opacity: widget.visible ? 1 : 0,
             child: Material(
               elevation: 4,
-              color: Theme.of(
-                context,
-              ).colorScheme.surface.withValues(alpha: 0.97),
-              child: SafeArea(
-                top: false,
-                child: SizedBox(
-                  height: 128,
-                  child: Column(
-                    children: [
-                      SizedBox(
-                        height: 52,
-                        child: Row(
-                          children: [
-                            IconButton(
-                              key: const ValueKey('previous-chapter-button'),
-                              tooltip: '上一章',
-                              onPressed:
-                                  widget.catalog.isNotEmpty && _displayIndex > 0
-                                  ? () => widget.onChapterSelected(
-                                      _displayIndex - 1,
-                                    )
-                                  : null,
-                              icon: const Icon(Icons.skip_previous_rounded),
-                            ),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Semantics(
-                                    key: const ValueKey(
-                                      'reader-progress-label',
-                                    ),
-                                    liveRegion: true,
-                                    label: _progressLabel,
-                                    child: Text(
-                                      _progressLabel,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 11),
-                                    ),
+              color: widget.background.withValues(alpha: 0.97),
+              child: IconTheme(
+                data: IconThemeData(color: widget.foreground),
+                child: DefaultTextStyle.merge(
+                  style: TextStyle(color: widget.foreground),
+                  child: SafeArea(
+                    top: false,
+                    child: SizedBox(
+                      height: 128,
+                      child: Column(
+                        children: [
+                          SizedBox(
+                            height: 52,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  key: const ValueKey(
+                                    'previous-chapter-button',
                                   ),
-                                  if (widget.catalog.length > 1)
-                                    SizedBox(
-                                      height: 24,
-                                      child: SliderTheme(
-                                        data: SliderTheme.of(context).copyWith(
-                                          trackHeight: 2,
-                                          thumbShape:
-                                              const RoundSliderThumbShape(
-                                                enabledThumbRadius: 6,
-                                              ),
-                                          overlayShape:
-                                              const RoundSliderOverlayShape(
-                                                overlayRadius: 14,
-                                              ),
+                                  tooltip: '上一章',
+                                  onPressed:
+                                      widget.catalog.isNotEmpty &&
+                                          _displayIndex > 0
+                                      ? () => widget.onChapterSelected(
+                                          _displayIndex - 1,
+                                        )
+                                      : null,
+                                  icon: const Icon(Icons.skip_previous_rounded),
+                                ),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Semantics(
+                                        key: const ValueKey(
+                                          'reader-progress-label',
                                         ),
-                                        child: Slider(
-                                          key: const ValueKey(
-                                            'reader-chapter-scrubber',
-                                          ),
-                                          value:
-                                              _previewIndex ??
-                                              widget.activeChapterIndex
-                                                  .toDouble(),
-                                          min: 0,
-                                          max: (widget.catalog.length - 1)
-                                              .toDouble(),
-                                          divisions: widget.catalog.length - 1,
-                                          label: widget
-                                              .catalog[_displayIndex]
-                                              .chineseTitle,
-                                          onChanged: (value) {
-                                            setState(
-                                              () => _previewIndex = value,
-                                            );
-                                          },
-                                          onChangeEnd: (value) {
-                                            final target = value.round();
-                                            setState(
-                                              () => _previewIndex = null,
-                                            );
-                                            if (target !=
-                                                widget.activeChapterIndex) {
-                                              widget.onChapterSelected(target);
-                                            }
-                                          },
+                                        liveRegion: true,
+                                        label: _progressLabel,
+                                        child: Text(
+                                          _progressLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 11),
                                         ),
                                       ),
-                                    ),
-                                ],
-                              ),
+                                      if (widget.catalog.length > 1)
+                                        SizedBox(
+                                          height: 24,
+                                          child: SliderTheme(
+                                            data: SliderTheme.of(context).copyWith(
+                                              trackHeight: 2,
+                                              thumbShape:
+                                                  const RoundSliderThumbShape(
+                                                    enabledThumbRadius: 6,
+                                                  ),
+                                              overlayShape:
+                                                  const RoundSliderOverlayShape(
+                                                    overlayRadius: 14,
+                                                  ),
+                                            ),
+                                            child: Slider(
+                                              key: const ValueKey(
+                                                'reader-chapter-scrubber',
+                                              ),
+                                              value:
+                                                  _previewIndex ??
+                                                  widget.activeChapterIndex
+                                                      .toDouble(),
+                                              min: 0,
+                                              max: (widget.catalog.length - 1)
+                                                  .toDouble(),
+                                              divisions:
+                                                  widget.catalog.length - 1,
+                                              label: widget
+                                                  .catalog[_displayIndex]
+                                                  .chineseTitle,
+                                              onChanged: (value) {
+                                                setState(
+                                                  () => _previewIndex = value,
+                                                );
+                                              },
+                                              onChangeEnd: (value) {
+                                                final target = value.round();
+                                                setState(
+                                                  () => _previewIndex = null,
+                                                );
+                                                if (target !=
+                                                    widget.activeChapterIndex) {
+                                                  widget.onChapterSelected(
+                                                    target,
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  key: const ValueKey('next-chapter-button'),
+                                  tooltip: '下一章',
+                                  onPressed:
+                                      widget.catalog.isNotEmpty &&
+                                          _displayIndex <
+                                              widget.catalog.length - 1
+                                      ? () => widget.onChapterSelected(
+                                          _displayIndex + 1,
+                                        )
+                                      : null,
+                                  icon: const Icon(Icons.skip_next_rounded),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              key: const ValueKey('next-chapter-button'),
-                              tooltip: '下一章',
-                              onPressed:
-                                  widget.catalog.isNotEmpty &&
-                                      _displayIndex < widget.catalog.length - 1
-                                  ? () => widget.onChapterSelected(
-                                      _displayIndex + 1,
-                                    )
-                                  : null,
-                              icon: const Icon(Icons.skip_next_rounded),
+                          ),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                _ChromeAction(
+                                  key: const ValueKey('catalog-button'),
+                                  icon: Icons.format_list_numbered_rounded,
+                                  label: '目录',
+                                  onTap: widget.onCatalog,
+                                ),
+                                _ChromeAction(
+                                  key: const ValueKey('reading-mode-button'),
+                                  icon: Icons.translate_rounded,
+                                  label:
+                                      widget.mode == ReadingMode.chineseJapanese
+                                      ? '中日'
+                                      : '中文',
+                                  onTap: widget.onMode,
+                                ),
+                                _ChromeAction(
+                                  key: const ValueKey(
+                                    'translation-source-button',
+                                  ),
+                                  icon: Icons.hub_outlined,
+                                  label: widget.source.label,
+                                  onTap: widget.onSource,
+                                ),
+                                _ChromeAction(
+                                  key: const ValueKey('reader-settings-button'),
+                                  icon: Icons.text_fields_rounded,
+                                  label: '样式',
+                                  onTap: widget.onSettings,
+                                ),
+                                _ChromeAction(
+                                  key: const ValueKey('bookmark-button'),
+                                  icon: widget.bookmarked
+                                      ? Icons.bookmark_rounded
+                                      : Icons.bookmark_border_rounded,
+                                  label: widget.bookmarked ? '已书签' : '书签',
+                                  onTap: widget.onBookmark,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            _ChromeAction(
-                              key: const ValueKey('catalog-button'),
-                              icon: Icons.format_list_numbered_rounded,
-                              label: '目录',
-                              onTap: widget.onCatalog,
-                            ),
-                            _ChromeAction(
-                              key: const ValueKey('reading-mode-button'),
-                              icon: Icons.translate_rounded,
-                              label: widget.mode == ReadingMode.chineseJapanese
-                                  ? '中日'
-                                  : '中文',
-                              onTap: widget.onMode,
-                            ),
-                            _ChromeAction(
-                              key: const ValueKey('translation-source-button'),
-                              icon: Icons.hub_outlined,
-                              label: widget.source.label,
-                              onTap: widget.onSource,
-                            ),
-                            _ChromeAction(
-                              key: const ValueKey('reader-settings-button'),
-                              icon: Icons.text_fields_rounded,
-                              label: '样式',
-                              onTap: widget.onSettings,
-                            ),
-                            _ChromeAction(
-                              key: const ValueKey('bookmark-button'),
-                              icon: widget.bookmarked
-                                  ? Icons.bookmark_rounded
-                                  : Icons.bookmark_border_rounded,
-                              label: widget.bookmarked ? '已书签' : '书签',
-                              onTap: widget.onBookmark,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -2622,17 +2840,16 @@ class _TranslationSourceSheet extends StatelessWidget {
 }
 
 class _SettingsResult {
-  const _SettingsResult({required this.settings, required this.themeMode});
+  const _SettingsResult({required this.settings});
 
   final ReaderSettings settings;
-  final ThemeMode themeMode;
 }
 
 class _ReaderSettingsSheet extends StatefulWidget {
-  const _ReaderSettingsSheet({required this.settings, required this.themeMode});
+  const _ReaderSettingsSheet({required this.settings, required this.onPreview});
 
   final ReaderSettings settings;
-  final ThemeMode themeMode;
+  final ValueChanged<ReaderSettings> onPreview;
 
   @override
   State<_ReaderSettingsSheet> createState() => _ReaderSettingsSheetState();
@@ -2640,30 +2857,68 @@ class _ReaderSettingsSheet extends StatefulWidget {
 
 class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
   late ReaderSettings _draft;
-  late ThemeMode _themeMode;
 
   @override
   void initState() {
     super.initState();
     _draft = widget.settings;
-    _themeMode = widget.themeMode;
+  }
+
+  void _update(ReaderSettings settings) {
+    setState(() => _draft = settings);
+    widget.onPreview(settings);
+  }
+
+  void _resetAppearance() {
+    _update(
+      _draft.copyWith(
+        palette: ReaderPalette.automatic,
+        fontFamily: ReaderFontFamily.systemSans,
+        bodyBold: false,
+        chineseFontSize: 22,
+        japaneseFontSize: 16,
+        lineHeight: 1.8,
+        paragraphSpacing: 15,
+        japaneseOpacity: 0.56,
+        pageMargin: 24,
+        readingWidth: 720,
+        columnLayout: ReaderColumnLayout.automatic,
+        orientationPreference: ReaderOrientationPreference.followDevice,
+      ),
+    );
+  }
+
+  String _paletteLabel(ReaderPalette palette) {
+    return switch (palette) {
+      ReaderPalette.automatic => '自动',
+      ReaderPalette.paper => '纸张',
+      ReaderPalette.sepia => '棕褐',
+      ReaderPalette.lowLight => '低光',
+      ReaderPalette.dark => '深色',
+      ReaderPalette.black => '纯黑',
+    };
   }
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.88,
+      height: MediaQuery.sizeOf(context).height * 0.72,
       child: Column(
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 0, 20, 14),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 12, 10),
             child: Row(
               children: [
-                Expanded(
+                const Expanded(
                   child: Text(
                     '阅读样式',
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   ),
+                ),
+                TextButton(
+                  key: const ValueKey('settings-reset-appearance'),
+                  onPressed: _resetAppearance,
+                  child: const Text('重置'),
                 ),
               ],
             ),
@@ -2683,9 +2938,7 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   ],
                   selected: {_draft.readingMode},
                   onSelectionChanged: (selection) {
-                    setState(() {
-                      _draft = _draft.copyWith(readingMode: selection.single);
-                    });
+                    _update(_draft.copyWith(readingMode: selection.single));
                   },
                 ),
                 const SizedBox(height: 22),
@@ -2707,27 +2960,57 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   ],
                   selected: {_draft.layoutMode},
                   onSelectionChanged: (selection) {
-                    setState(() {
-                      _draft = _draft.copyWith(layoutMode: selection.single);
-                    });
+                    _update(_draft.copyWith(layoutMode: selection.single));
                   },
                 ),
                 const SizedBox(height: 22),
-                _SectionLabel('主题'),
+                _SectionLabel('页面配色'),
                 const SizedBox(height: 10),
-                SegmentedButton<ThemeMode>(
-                  key: const ValueKey('settings-theme-mode'),
-                  segments: const [
-                    ButtonSegment(value: ThemeMode.system, label: Text('跟随系统')),
-                    ButtonSegment(value: ThemeMode.light, label: Text('浅色')),
-                    ButtonSegment(value: ThemeMode.dark, label: Text('深色')),
+                Wrap(
+                  key: const ValueKey('settings-reader-palette'),
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    for (final palette in ReaderPalette.values)
+                      ChoiceChip(
+                        key: ValueKey('reader-palette-${palette.name}'),
+                        label: Text(_paletteLabel(palette)),
+                        selected: _draft.palette == palette,
+                        onSelected: (_) {
+                          _update(_draft.copyWith(palette: palette));
+                        },
+                      ),
                   ],
-                  selected: {_themeMode},
-                  onSelectionChanged: (selection) {
-                    setState(() => _themeMode = selection.single);
-                  },
                 ),
                 const SizedBox(height: 22),
+                _SectionLabel('字体'),
+                const SizedBox(height: 10),
+                SegmentedButton<ReaderFontFamily>(
+                  key: const ValueKey('settings-font-family'),
+                  segments: const [
+                    ButtonSegment(
+                      value: ReaderFontFamily.systemSans,
+                      label: Text('无衬线'),
+                    ),
+                    ButtonSegment(
+                      value: ReaderFontFamily.systemSerif,
+                      label: Text('衬线'),
+                    ),
+                  ],
+                  selected: {_draft.fontFamily},
+                  onSelectionChanged: (selection) {
+                    _update(_draft.copyWith(fontFamily: selection.single));
+                  },
+                ),
+                SwitchListTile(
+                  key: const ValueKey('settings-body-bold'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('加粗正文'),
+                  value: _draft.bodyBold,
+                  onChanged: (value) {
+                    _update(_draft.copyWith(bodyBold: value));
+                  },
+                ),
                 _ReaderSlider(
                   label: '中文字号',
                   valueLabel: _draft.chineseFontSize.round().toString(),
@@ -2736,9 +3019,7 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   max: 30,
                   divisions: 13,
                   onChanged: (value) {
-                    setState(
-                      () => _draft = _draft.copyWith(chineseFontSize: value),
-                    );
+                    _update(_draft.copyWith(chineseFontSize: value));
                   },
                 ),
                 _ReaderSlider(
@@ -2749,9 +3030,7 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   max: 24,
                   divisions: 12,
                   onChanged: (value) {
-                    setState(
-                      () => _draft = _draft.copyWith(japaneseFontSize: value),
-                    );
+                    _update(_draft.copyWith(japaneseFontSize: value));
                   },
                 ),
                 _ReaderSlider(
@@ -2762,7 +3041,18 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   max: 2.2,
                   divisions: 8,
                   onChanged: (value) {
-                    setState(() => _draft = _draft.copyWith(lineHeight: value));
+                    _update(_draft.copyWith(lineHeight: value));
+                  },
+                ),
+                _ReaderSlider(
+                  label: '段落间距',
+                  valueLabel: _draft.paragraphSpacing.round().toString(),
+                  value: _draft.paragraphSpacing,
+                  min: 8,
+                  max: 28,
+                  divisions: 10,
+                  onChanged: (value) {
+                    _update(_draft.copyWith(paragraphSpacing: value));
                   },
                 ),
                 _ReaderSlider(
@@ -2773,21 +3063,78 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   max: 0.85,
                   divisions: 11,
                   onChanged: (value) {
-                    setState(
-                      () => _draft = _draft.copyWith(japaneseOpacity: value),
-                    );
+                    _update(_draft.copyWith(japaneseOpacity: value));
+                  },
+                ),
+                _ReaderSlider(
+                  label: '页面边距',
+                  valueLabel: _draft.pageMargin.round().toString(),
+                  value: _draft.pageMargin,
+                  min: 12,
+                  max: 48,
+                  divisions: 12,
+                  onChanged: (value) {
+                    _update(_draft.copyWith(pageMargin: value));
                   },
                 ),
                 _ReaderSlider(
                   label: '正文宽度',
                   valueLabel: '${_draft.readingWidth.round()} px',
                   value: _draft.readingWidth,
-                  min: 520,
-                  max: 900,
-                  divisions: 19,
+                  min: 480,
+                  max: 1200,
+                  divisions: 24,
                   onChanged: (value) {
-                    setState(
-                      () => _draft = _draft.copyWith(readingWidth: value),
+                    _update(_draft.copyWith(readingWidth: value));
+                  },
+                ),
+                const SizedBox(height: 10),
+                _SectionLabel('宽屏对照'),
+                const SizedBox(height: 10),
+                SegmentedButton<ReaderColumnLayout>(
+                  key: const ValueKey('settings-column-layout'),
+                  segments: const [
+                    ButtonSegment(
+                      value: ReaderColumnLayout.automatic,
+                      label: Text('自动'),
+                    ),
+                    ButtonSegment(
+                      value: ReaderColumnLayout.singleColumn,
+                      label: Text('单栏'),
+                    ),
+                    ButtonSegment(
+                      value: ReaderColumnLayout.twoColumns,
+                      label: Text('对照双栏'),
+                    ),
+                  ],
+                  selected: {_draft.columnLayout},
+                  onSelectionChanged: (selection) {
+                    _update(_draft.copyWith(columnLayout: selection.single));
+                  },
+                ),
+                const SizedBox(height: 22),
+                _SectionLabel('屏幕方向'),
+                const SizedBox(height: 10),
+                SegmentedButton<ReaderOrientationPreference>(
+                  key: const ValueKey('settings-orientation'),
+                  segments: const [
+                    ButtonSegment(
+                      value: ReaderOrientationPreference.followDevice,
+                      label: Text('跟随'),
+                    ),
+                    ButtonSegment(
+                      value: ReaderOrientationPreference.portrait,
+                      label: Text('竖屏'),
+                    ),
+                    ButtonSegment(
+                      value: ReaderOrientationPreference.landscape,
+                      label: Text('横屏'),
+                    ),
+                  ],
+                  selected: {_draft.orientationPreference},
+                  onSelectionChanged: (selection) {
+                    _update(
+                      _draft.copyWith(orientationPreference: selection.single),
                     );
                   },
                 ),
@@ -2798,13 +3145,27 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-              child: FilledButton(
-                key: const ValueKey('settings-apply'),
-                onPressed: () => Navigator.pop(
-                  context,
-                  _SettingsResult(settings: _draft, themeMode: _themeMode),
-                ),
-                child: const Text('应用'),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const ValueKey('settings-cancel'),
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      key: const ValueKey('settings-apply'),
+                      onPressed: () => Navigator.pop(
+                        context,
+                        _SettingsResult(settings: _draft),
+                      ),
+                      child: const Text('完成'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
