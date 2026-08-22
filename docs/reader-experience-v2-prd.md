@@ -16,11 +16,9 @@ bilingual and cross-chapter strengths.
 
 The program introduces a screenful-based paged mode alongside the existing
 scroll mode, predictable tap and swipe navigation, visible progress and chapter
-navigation, live appearance customization, responsive layouts, in-reader
-bookmarks and annotations, text tools, read-aloud support, accessibility aids,
-and optional reading goals. It intentionally does not claim typesetter-grade
-print page numbers; `Pages` means deterministic movement by a readable
-viewport.
+navigation, live appearance customization, responsive layouts, and in-reader
+bookmarks. It intentionally does not claim typesetter-grade print page numbers;
+`Pages` means deterministic movement by a readable viewport.
 
 ## 2. Problem
 
@@ -36,12 +34,6 @@ The current reader has these user-facing gaps:
    not preview changes live.
 5. Bookmarks cannot be reviewed or navigated from inside the reader, and
    bookmarked passages have no in-content marker.
-6. Prose is non-selectable and has no highlights, notes, in-book search,
-   dictionary, or explicit text-tool workflow.
-7. There is no read-aloud experience or reading-focused accessibility aid such
-   as a low-vision preset or guide ruler.
-8. Readers who want habit support cannot see active reading time, an estimate
-   of time remaining, a daily goal, or a local streak.
 
 Together these gaps make the experience feel like a long article rather than a
 purpose-built book reader.
@@ -60,18 +52,21 @@ purpose-built book reader.
 - Preserve continuous cross-chapter loading, offline boundaries, restoration,
   bookmarks, illustrations, and bilingual alignment.
 - Keep all new controls accessible by semantics and large enough for touch.
-- Support in-reader bookmarks, annotations, search, dictionary, translation,
-  and read-aloud workflows without requiring every chapter to be loaded.
-- Provide optional, local-first reading statistics and goals.
+- Make saved bookmarks visible and navigable without leaving the reader.
 
 ## 4. Program exclusions
 
 - Typesetter-grade immutable pages or paragraph fragmentation across pages.
 - Download, catalog, account, comment, or discovery redesigns.
 - Cloud synchronization protocol changes for annotations or statistics.
-- Commercial dictionary, translation, or speech services that require secrets
-  or a paid account. The product uses installed platform capabilities and
-  existing Novelia translations, with truthful unavailable states.
+- Text selection, highlights, notes, copy, in-book search, dictionary, and
+  translation actions.
+- Text-to-speech, sentence highlighting, audio synchronization, and sleep
+  timers.
+- Reading rulers, specialized accessibility presets, and a formal assistive-
+  technology certification matrix. Baseline semantics remain required.
+- Reading time, estimates, goals, streaks, and achievements.
+- Commercial dictionary, translation, or speech services.
 - Bundling large CJK font files. Font choices use platform families and
   safe fallbacks.
 - Audio-book synchronization, recorded narration, and sleep timers.
@@ -97,11 +92,6 @@ changing the appearance of the entire application.
 
 Needs controls with stable semantics and navigation that remains usable without
 depending exclusively on raw pointer zones.
-
-### Active reader and learner
-
-Wants to find passages, keep highlights and notes, inspect unfamiliar words,
-listen while following the text, and build a consistent reading habit.
 
 ## 6. Experience principles
 
@@ -262,100 +252,6 @@ Acceptance:
 - Add, remove, restart, and bookmark navigation preserve semantic positions.
 - Bookmark markers remain correct after translation-source or language changes.
 
-### R9. Text selection, annotations, and tools
-
-- Long press enables selection of Chinese or Japanese text without triggering
-  page movement.
-- The contextual action surface offers Copy, Highlight, Note, Search in Book,
-  Define, and Translate where each action is available.
-- Highlights support at least four accessible colors and remain associated with
-  a semantic block plus character range.
-- Notes attach to highlights or a selected semantic range and are editable and
-  removable.
-- Add an in-reader `Annotations` list with navigation back to each location.
-- In-book search scans cached/loaded chapter bodies immediately and may load
-  additional chapter bodies only after an explicit full-book search action.
-- Search results show chapter, language, and a short matching excerpt.
-- Dictionary lookup uses installed platform dictionary capability where
-  available; otherwise the action reports unavailability without sending text.
-- Translation first uses the already-loaded aligned Chinese/Japanese pair. A
-  platform translation action may be offered only where available and only
-  after explicit user invocation.
-- Copy/share limits must remain compatible with the upstream content contract;
-  no bulk export is introduced.
-
-Acceptance:
-
-- Selection never causes an unintended page turn.
-- Annotations survive restart and reflow and remain attached to the intended
-  semantic block/revision when possible.
-- Missing or changed blocks are shown as unavailable annotations rather than
-  silently attached to other prose.
-- Search, dictionary, and translation expose loading, empty, unavailable, and
-  failure states accessibly.
-
-### R10. Read aloud
-
-- Add read-aloud controls for Chinese, Japanese, and bilingual order.
-- Use on-device/platform text-to-speech; network-only premium voices are not a
-  requirement.
-- Provide play/pause, previous sentence, next sentence, speech rate, language,
-  and stop controls.
-- Highlight the active sentence or block and keep it visible while speaking.
-- Continue across chapter boundaries through the existing chapter loader, and
-  stop truthfully at unavailable/offline boundaries.
-- Respect app lifecycle and audio interruption events; leaving the reader stops
-  speech unless the platform implementation explicitly supports safe background
-  continuation.
-- TTS state is ephemeral, while language and speed preferences persist.
-
-Acceptance:
-
-- Tests use an injectable speech interface and do not invoke real audio.
-- The spoken queue follows displayed language/source rules and never silently
-  substitutes a different translation source.
-- Stop, dispose, interruption, and chapter-load failures leave no active queue.
-
-### R11. Accessibility aids and certification
-
-- Add Standard, Large Text, Low Vision, and Dyslexia-friendly appearance
-  presets using available platform fonts and spacing.
-- Add a reading guide/ruler that highlights the active line or block and dims
-  surrounding content with adjustable opacity.
-- Respect reduced-motion preferences by replacing page animations with
-  immediate or minimal movement.
-- Maintain readable contrast for every palette, highlight color, disabled
-  state, secondary language, and guide overlay.
-- Complete and record a VoiceOver, TalkBack, keyboard, switch-access semantics,
-  large-text, and orientation matrix on supported targets.
-
-Acceptance:
-
-- All reader operations have non-positional semantic access.
-- At maximum supported text scale, controls remain reachable and text is not
-  clipped horizontally.
-- Reading guide and TTS active text are distinguishable without color alone.
-
-### R12. Reading time, goals, and streaks
-
-- Track active reading time locally using foreground reader activity, excluding
-  restoration, background time, and extended inactivity.
-- Show today's active minutes and an optional estimated time remaining based on
-  recent active reading pace and semantic progress.
-- Let users enable and set a daily minutes goal; goals are off by default.
-- Show a local daily streak and completed-day history without punitive copy.
-- Statistics and goals are device-local and clearable from Settings.
-- Do not transmit reading telemetry or add a remote analytics dependency.
-
-Acceptance:
-
-- Tests use an injectable clock and deterministic activity transitions.
-- Backgrounding, paused TTS, and inactivity do not inflate manual reading time.
-- Time-remaining estimates are hidden until enough progress/time evidence
-  exists and are always labeled estimates.
-- Clearing reading statistics does not remove reading position, bookmarks,
-  annotations, downloads, or app settings.
-
 ## 8. Interaction specification
 
 ### Chrome hidden
@@ -388,9 +284,8 @@ Acceptance:
   the next frame.
 - Do not add a plugin solely for reader brightness or orientation in this
   program when a Flutter/system API is sufficient.
-- Isolate text-to-speech, dictionary, translation, clipboard/share, and
-  orientation behind package-neutral interfaces so widget and persistence tests
-  remain deterministic.
+- Isolate orientation handling behind a package-neutral interface so widget and
+  persistence tests remain deterministic.
 - Preserve stable `ValueKey` values and add keys for every new critical control.
 
 ## 10. Quality plan
@@ -400,12 +295,11 @@ Acceptance:
   legacy defaults.
 - Widget tests for tap zones, swipes, mode switching, page clamping, progress,
   scrubber navigation, live preview, cancel, done, and reset.
-- Persistence and widget tests for bookmarks, annotations, search, text tools,
-  speech queues, accessibility presets, reading guide, and statistics.
+- Persistence and widget tests for in-reader bookmark listing, markers,
+  navigation, and removal.
 - Regression tests for semantic restoration, bookmarks, illustrations,
   translation pending states, lazy chapter windows, retries, and disposal.
 - Run `flutter analyze` and the complete Flutter test suite before handoff.
-- Record the manual accessibility/platform matrix in a release QA document.
 
 ## 11. Delivery and commit plan
 
@@ -416,28 +310,19 @@ Acceptance:
 5. Live appearance sheet, palettes, typography, orientation, and responsive
    columns.
 6. In-reader bookmarks and markers.
-7. Annotation persistence plus selection, note, search, dictionary, and
-   translation tools.
-8. Read-aloud abstraction and controls.
-9. Accessibility presets, reading guide, reduced motion, and certification QA.
-10. Reading statistics, estimates, goals, and streaks.
-11. Verification fixes and documentation only if they form an independent
+7. Verification fixes and documentation only if they form an independent
    reviewable change.
 
 Each implementation commit must include its focused tests and leave analysis
 and the relevant test subset passing.
 
-## 12. Delivery phases
+## 12. Deferred backlog and research
 
-- Phase A — Reading foundation: R1-R7.
-- Phase B — Reading tools: R8-R10.
-- Phase C — Inclusion and habits: R11-R12.
-
-All three phases are part of Reader Experience v2 and of this branch's intended
-scope. Phase boundaries exist for reviewability and risk control, not as a
-deferral of the Recommended Backlog.
-
-## 13. Research track
-
+- Text selection, copy, highlights, notes, in-book search, dictionary, and
+  translation actions.
+- On-device TTS, bilingual queues, sentence highlighting, and audio controls.
+- Low-vision/dyslexia presets, a reading ruler, and formal assistive-technology
+  certification.
+- Active reading time, time remaining, goals, streaks, and achievements.
 - True typeset pagination with text fragmentation, stable page anchors,
   illustration rules, and deterministic repagination across bilingual layouts.
