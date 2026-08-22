@@ -55,6 +55,7 @@ flutter --no-version-check build ios --simulator --debug
 
 GitHub Releases attach a signed Android APK, an unsigned iOS IPA for
 Sideloadly/AltStore, and an un-notarized macOS DMG. Local Android release
-builds without signing inputs stay unsigned. See
+builds without signing inputs stay unsigned. The tag workflow also publishes
+an HTTPS update manifest and AltStore Classic source through GitHub Pages. See
 [`docs/release-guide.md`](../docs/release-guide.md) for signing inputs,
-verification, and the optional ad hoc iOS export flow.
+verification, feed deployment, and the optional ad hoc iOS export flow.

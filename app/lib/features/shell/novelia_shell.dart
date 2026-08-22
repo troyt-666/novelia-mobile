@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/account/account_models.dart';
 import '../../core/model/reader_models.dart';
 import '../../core/offline/offline_models.dart';
+import '../../core/platform/app_update.dart';
 import '../../core/platform/app_version.dart';
 import '../discover/catalog_models.dart';
 import '../discover/catalog_search_results_screen.dart';
@@ -66,6 +67,8 @@ class NoveliaShell extends StatefulWidget {
     this.onAccountLogout,
     this.onHostedAccountHelp,
     this.onReleasesRequested,
+    this.onCheckForUpdate,
+    this.onOpenUpdateLink,
     this.continuedReads = const [],
     this.protectedDownloads = const [],
     this.bookmarks = const [],
@@ -128,6 +131,8 @@ class NoveliaShell extends StatefulWidget {
   final Future<void> Function()? onAccountLogout;
   final VoidCallback? onHostedAccountHelp;
   final VoidCallback? onReleasesRequested;
+  final Future<AppUpdateCheck> Function()? onCheckForUpdate;
+  final Future<void> Function(Uri uri)? onOpenUpdateLink;
   final List<LibraryContinuedRead> continuedReads;
   final List<LibraryProtectedDownload> protectedDownloads;
   final List<LibraryBookmarkItem> bookmarks;
@@ -824,6 +829,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
         onReleasesRequested:
             widget.onReleasesRequested ??
             () => _showFixtureAction('版本页将由平台链接打开'),
+        onCheckForUpdate: widget.onCheckForUpdate,
+        onOpenUpdateLink: widget.onOpenUpdateLink,
       ),
     ];
     final useRail = MediaQuery.sizeOf(context).width >= 840;

@@ -423,8 +423,8 @@ rate-limited, and run only against an owned test account.
 - WorkManager-style persistent background queue.
 - Release-signed APK through GitHub Releases. Do not implement APK
   self-updating.
-- An optional version check may open the GitHub Release page; download and
-  installation remain manual.
+- Check the GitHub Pages release manifest and open the signed release APK;
+  download and installation remain user-confirmed.
 
 ### iOS
 
@@ -435,8 +435,8 @@ rate-limited, and run only against an owned test account.
 - Ad hoc or other permitted direct IPA distribution to the intended small
   audience, with signing material kept outside the public source repository and
   a new production bundle ID.
-- An optional version check may open the private distribution/release page;
-  download and installation remain manual.
+- Check the GitHub Pages release manifest. Offer the AltStore source and the
+  unsigned IPA for Sideloadly; signing and installation remain tool-mediated.
 
 ### macOS development target
 
@@ -594,7 +594,8 @@ and iOS system fonts and rasterizers differ.
 1. Provide the external private Android keystore and Apple Team/profile inputs,
    then build and verify distributable APK/IPA artifacts. The repository now
    contains only secret-free configuration and rejects unsigned/debug-signed
-   Android artifacts; no in-app updater or public-store workflow is planned.
+   Android artifacts; the GitHub-hosted version check must never bypass the
+   platform installer or its user confirmation.
 2. Expand ranking selection beyond the current paginated default Syosetu query
    only if the additional provider-specific combinations materially help novel
    discovery.

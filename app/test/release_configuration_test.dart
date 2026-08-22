@@ -55,7 +55,22 @@ void main() {
     expect(workflow, contains(r'Release tag $RELEASE_TAG does not match'));
     expect(workflow, contains('build ios --release --no-codesign'));
     expect(workflow, contains(r'JFZ-Reader-${tag}-ios-unsigned.ipa'));
+    expect(workflow, contains('Print :CFBundleIdentifier'));
+    expect(workflow, contains('Print :MinimumOSVersion'));
+    expect(workflow, contains('UsageDescription'));
+    expect(workflow, contains('generate-update-site.sh'));
+    expect(workflow, contains('actions/deploy-pages@v4'));
+    expect(workflow, contains('pages: write'));
     expect(workflow, isNot(contains('signingConfigs.getByName("debug")')));
+
+    final feedGenerator = File(
+      '../.github/scripts/generate-update-site.sh',
+    ).readAsStringSync();
+    expect(feedGenerator, contains('altstore-source.json'));
+    expect(feedGenerator, contains('latest.json'));
+    expect(feedGenerator, contains('sha256'));
+    expect(feedGenerator, contains('io.github.troyt666.jfzreader'));
+    expect(feedGenerator, contains('minOSVersion: "13.0"'));
   });
 
   test('supported platforms expose installed app version metadata', () {

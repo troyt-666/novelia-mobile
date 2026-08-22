@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/core/platform/app_update.dart';
 import 'package:jfzreader/core/platform/app_version.dart';
 import 'package:jfzreader/features/shell/library_screen.dart';
 import 'package:jfzreader/features/shell/settings_screen.dart';
@@ -320,6 +321,81 @@ void main() {
       await tester.pumpAndSettle();
       expect(copiedDiagnostics, contains('JFZ Reader diagnostics'));
       expect(copiedDiagnostics, contains('cacheBytes=2048'));
+    });
+
+    testWidgets('checks for updates and exposes iOS sideload channels', (
+      tester,
+    ) async {
+      const installed = AppVersion(name: '1.2.3', buildNumber: '45');
+      final openedUris = <Uri>[];
+      var checks = 0;
+      String? copiedSource;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedSource =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        SettingsScreen(
+          appVersion: installed,
+          themeMode: ThemeMode.system,
+          onThemeModeChanged: (_) {},
+          onClearSearchHistory: () {},
+          onCheckForUpdate: () async {
+            checks += 1;
+            return AppUpdateCheck(
+              installedVersion: installed,
+              latestVersion: const AppVersion(name: '1.3.0', buildNumber: '46'),
+              platform: AppUpdatePlatform.ios,
+              updateAvailable: true,
+              releasePageUri: Uri.parse(
+                'https://github.com/example/repo/releases/tag/v1.3.0+46',
+              ),
+              downloadUri: Uri.parse(
+                'https://github.com/example/repo/releases/download/'
+                'v1.3.0+46/JFZ-Reader.ipa',
+              ),
+              altStoreSourceUri: Uri.parse(
+                'https://example.github.io/repo/altstore-source.json',
+              ),
+              releaseNotes: 'Improved update delivery.',
+            );
+          },
+          onOpenUpdateLink: (uri) async => openedUris.add(uri),
+        ),
+      );
+
+      expect(checks, 1);
+      expect(find.text('1.2.3+45 · 新版本 1.3.0+46'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('open-releases-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('发现新版本'), findsOneWidget);
+      expect(find.text('Improved update delivery.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('copy-altstore-source')));
+      await tester.pump();
+      expect(
+        copiedSource,
+        'https://example.github.io/repo/altstore-source.json',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('download-sideloadly-ipa')));
+      await tester.pump();
+      expect(openedUris.single.path, endsWith('.ipa'));
     });
   });
 }

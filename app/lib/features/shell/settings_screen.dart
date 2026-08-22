@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/account/account_models.dart';
 import '../../core/offline/offline_models.dart';
+import '../../core/platform/app_update.dart';
 import '../../core/platform/app_version.dart';
 import '../account/account_screen.dart';
 import 'shell_view_models.dart';
@@ -32,6 +33,8 @@ class SettingsScreen extends StatelessWidget {
     this.onHostedAccountHelp,
     this.onLoginRequested,
     this.onReleasesRequested,
+    this.onCheckForUpdate,
+    this.onOpenUpdateLink,
     super.key,
   }) : assert(cacheLimitBytes == null || cacheLimitBytes >= 0);
 
@@ -52,6 +55,8 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onHostedAccountHelp;
   final VoidCallback? onLoginRequested;
   final VoidCallback? onReleasesRequested;
+  final Future<AppUpdateCheck> Function()? onCheckForUpdate;
+  final Future<void> Function(Uri uri)? onOpenUpdateLink;
 
   @override
   Widget build(BuildContext context) {
@@ -192,13 +197,11 @@ class SettingsScreen extends StatelessWidget {
           _SettingsSection(
             title: '关于',
             children: [
-              ListTile(
-                key: const ValueKey('open-releases-button'),
-                leading: const Icon(Icons.new_releases_outlined),
-                title: const Text('版本与更新'),
-                subtitle: Text('${appVersion.display} · 手动安装版'),
-                trailing: const Icon(Icons.open_in_new),
-                onTap: onReleasesRequested,
+              _UpdateTile(
+                appVersion: appVersion,
+                onCheckForUpdate: onCheckForUpdate,
+                onOpenUpdateLink: onOpenUpdateLink,
+                onReleasesRequested: onReleasesRequested,
               ),
               const Divider(height: 1),
               const ListTile(
@@ -453,6 +456,235 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
     if (confirmed == true) await onAccountLogout?.call();
+  }
+}
+
+class _UpdateTile extends StatefulWidget {
+  const _UpdateTile({
+    required this.appVersion,
+    this.onCheckForUpdate,
+    this.onOpenUpdateLink,
+    this.onReleasesRequested,
+  });
+
+  final AppVersion appVersion;
+  final Future<AppUpdateCheck> Function()? onCheckForUpdate;
+  final Future<void> Function(Uri uri)? onOpenUpdateLink;
+  final VoidCallback? onReleasesRequested;
+
+  @override
+  State<_UpdateTile> createState() => _UpdateTileState();
+}
+
+class _UpdateTileState extends State<_UpdateTile> {
+  AppUpdateCheck? _result;
+  var _checking = false;
+  var _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.onCheckForUpdate != null && widget.appVersion.name.isNotEmpty) {
+      unawaited(_check());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _UpdateTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((oldWidget.onCheckForUpdate != widget.onCheckForUpdate ||
+            oldWidget.appVersion.display != widget.appVersion.display) &&
+        widget.onCheckForUpdate != null &&
+        widget.appVersion.name.isNotEmpty) {
+      unawaited(_check());
+    }
+  }
+
+  String get _subtitle {
+    if (_checking) return '${widget.appVersion.display} · 正在检查更新';
+    final result = _result;
+    if (result?.updateAvailable == true) {
+      return '${widget.appVersion.display} · 新版本 ${result!.latestVersion.display}';
+    }
+    if (result != null) return '${widget.appVersion.display} · 已是最新版本';
+    if (_failed) return '${widget.appVersion.display} · 无法检查，点击重试';
+    return '${widget.appVersion.display} · 手动安装版';
+  }
+
+  Future<void> _check({bool showDetails = false}) async {
+    final check = widget.onCheckForUpdate;
+    if (check == null || _checking) return;
+    setState(() {
+      _checking = true;
+      _failed = false;
+    });
+    try {
+      final result = await check();
+      if (!mounted) return;
+      setState(() => _result = result);
+      if (showDetails) await _showDetails(result);
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _result = null;
+        _failed = true;
+      });
+      if (showDetails) {
+        final messenger = ScaffoldMessenger.of(context);
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: const Text('暂时无法检查更新'),
+              action: widget.onReleasesRequested == null
+                  ? null
+                  : SnackBarAction(
+                      label: '发布页',
+                      onPressed: widget.onReleasesRequested!,
+                    ),
+            ),
+          );
+      }
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _handleTap() async {
+    final result = _result;
+    if (result != null) {
+      await _showDetails(result);
+      return;
+    }
+    if (widget.onCheckForUpdate != null) {
+      await _check(showDetails: true);
+      return;
+    }
+    widget.onReleasesRequested?.call();
+  }
+
+  Future<void> _showDetails(AppUpdateCheck result) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                result.updateAvailable ? '发现新版本' : '已是最新版本',
+                style: Theme.of(
+                  sheetContext,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '已安装 ${result.installedVersion.display}'
+                ' · 最新 ${result.latestVersion.display}',
+              ),
+              if (result.releaseNotes.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  result.releaseNotes,
+                  key: const ValueKey('update-release-notes'),
+                  maxLines: 6,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+              const SizedBox(height: 18),
+              if (result.updateAvailable &&
+                  result.platform != AppUpdatePlatform.ios)
+                FilledButton.icon(
+                  key: const ValueKey('download-platform-update'),
+                  onPressed: widget.onOpenUpdateLink == null
+                      ? null
+                      : () => widget.onOpenUpdateLink!(result.downloadUri),
+                  icon: const Icon(Icons.download_outlined),
+                  label: Text(
+                    result.platform == AppUpdatePlatform.android
+                        ? '下载 Android APK'
+                        : '下载 macOS DMG',
+                  ),
+                ),
+              if (result.platform == AppUpdatePlatform.ios) ...[
+                FilledButton.icon(
+                  key: const ValueKey('copy-altstore-source'),
+                  onPressed: () => _copyAltStoreSource(
+                    sheetContext,
+                    result.altStoreSourceUri,
+                  ),
+                  icon: const Icon(Icons.copy),
+                  label: const Text('复制 AltStore 源地址'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const ValueKey('download-sideloadly-ipa'),
+                  onPressed: widget.onOpenUpdateLink == null
+                      ? null
+                      : () => widget.onOpenUpdateLink!(result.downloadUri),
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('下载 IPA（Sideloadly）'),
+                ),
+              ],
+              const SizedBox(height: 8),
+              TextButton.icon(
+                key: const ValueKey('open-update-release-page'),
+                onPressed: widget.onOpenUpdateLink == null
+                    ? widget.onReleasesRequested
+                    : () => widget.onOpenUpdateLink!(result.releasePageUri),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('查看 GitHub 发布页'),
+              ),
+              TextButton(
+                key: const ValueKey('check-update-again'),
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_check(showDetails: true));
+                },
+                child: const Text('重新检查'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyAltStoreSource(BuildContext context, Uri uri) async {
+    await Clipboard.setData(ClipboardData(text: uri.toString()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('AltStore 源地址已复制')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: const ValueKey('open-releases-button'),
+      leading: Icon(
+        _result?.updateAvailable == true
+            ? Icons.system_update_alt
+            : Icons.new_releases_outlined,
+      ),
+      title: const Text('版本与更新'),
+      subtitle: Text(_subtitle),
+      trailing: _checking
+          ? const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(
+              _result?.updateAvailable == true
+                  ? Icons.download_outlined
+                  : Icons.chevron_right,
+            ),
+      onTap: _checking ? null : _handleTap,
+    );
   }
 }
 

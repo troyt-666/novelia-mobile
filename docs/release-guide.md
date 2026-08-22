@@ -10,9 +10,21 @@ GitHub Releases are the install and sideload channel:
 - unsigned iOS IPA for Sideloadly / AltStore
 - un-notarized macOS DMG
 
-The app has no self-updater. Installation and updates remain explicit user
-actions. Signing material (Android keystore, `key.properties`, Apple
-certificates, profiles, and export options) never enters Git.
+The app checks a small HTTPS manifest hosted on GitHub Pages. It reports when a
+new version is available and opens the appropriate signed APK, unsigned IPA,
+DMG, or GitHub Release. Installation remains an explicit user action; the app
+does not silently replace itself. Signing material (Android keystore,
+`key.properties`, Apple certificates, profiles, and export options) never
+enters Git.
+
+AltStore Classic users can add this source once and receive future version
+notifications inside AltStore:
+
+`https://troyt-666.github.io/novelia-mobile/altstore-source.json`
+
+Sideloadly users download the new IPA and install it over the existing app with
+the same Apple ID and bundle identifier. Its automatic refresh keeps an
+existing signature alive; it does not discover new JFZ Reader releases.
 
 ## GitHub Release automation
 
@@ -32,6 +44,19 @@ requires the tag to exactly match the `version` in `app/pubspec.yaml`, runs
 
 If the GitHub Release for that tag does not exist yet, the publish job creates
 it and uploads the assets. Re-running the workflow replaces the assets.
+
+After publishing the assets, the workflow derives their sizes and SHA-256
+hashes and deploys these files through GitHub Pages:
+
+- `latest.json` — schema-versioned update metadata consumed by the app;
+- `altstore-source.json` — AltStore Classic source pointing to the unsigned
+  release IPA;
+- `icon.png` — source/app artwork referenced by the AltStore metadata.
+
+Enable Pages once in the repository settings with **GitHub Actions** as the
+publishing source. The workflow uses the `github-pages` environment and needs
+`pages: write` plus `id-token: write`; no Pages branch or signing secret is
+required.
 
 ## Android signing
 
@@ -80,6 +105,13 @@ The GitHub Release IPA is unsigned by design. Recipients re-sign it with
 Sideloadly, AltStore, or another sideload tool using their own Apple ID. Do
 not treat that file as tap-to-install on a stock iPhone.
 
+The release workflow publishes the latest compatible iOS build in the AltStore
+source. Its `version` and `buildVersion` match the IPA metadata, and its `size`,
+`sha256`, minimum iOS version, bundle identifier, entitlements, and privacy
+declarations are generated alongside the release. If the app gains an iOS
+entitlement or privacy usage description, update the feed generator and verify
+the source against the release IPA before publishing.
+
 ## iOS ad hoc IPA
 
 Ad Hoc export is optional and stays off CI. The bundle identifier is
@@ -123,3 +155,6 @@ device or renewing an expired certificate/profile.
 8. Confirm the GitHub Release APK verifies with `apksigner` and is not the
    Android Debug certificate. The unsigned IPA and un-notarized DMG are
    expected.
+9. Confirm the `update-feeds` job deployed successfully, validate both JSON
+   documents, and add the source to AltStore on a physical device before
+   announcing the release.

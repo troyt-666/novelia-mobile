@@ -12,6 +12,7 @@ import 'core/database/local_state_repository.dart';
 import 'core/database/sqlite_offline_repository.dart';
 import 'core/model/reader_models.dart';
 import 'core/offline/offline_models.dart';
+import 'core/platform/app_update.dart';
 import 'core/platform/app_version.dart';
 import 'core/platform/external_link_launcher.dart';
 import 'features/discover/catalog_models.dart';
@@ -84,6 +85,9 @@ Future<void> main() async {
         contentCoordinator: contentCoordinator,
         downloadCoordinator: downloadCoordinator,
         externalLinkLauncher: const MethodChannelExternalLinkLauncher(),
+        updateChecker: GitHubAppUpdateChecker(
+          platform: AppUpdatePlatform.current(),
+        ),
         closeRepositoryOnDispose: true,
         onRuntimeDispose: () {
           gateway.close();
@@ -106,6 +110,7 @@ class NoveliaReaderApp extends StatefulWidget {
     this.accountSessionController,
     this.accountGateway,
     this.externalLinkLauncher,
+    this.updateChecker,
     this.catalogQuery = const NoveliaCatalogQuery(),
     this.onRuntimeDispose,
     this.closeRepositoryOnDispose = false,
@@ -119,6 +124,7 @@ class NoveliaReaderApp extends StatefulWidget {
   final AccountSessionController? accountSessionController;
   final NoveliaAccountGateway? accountGateway;
   final ExternalLinkLauncher? externalLinkLauncher;
+  final AppUpdateChecker? updateChecker;
   final NoveliaCatalogQuery catalogQuery;
   final VoidCallback? onRuntimeDispose;
   final bool closeRepositoryOnDispose;
@@ -1544,6 +1550,15 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
             : () => widget.externalLinkLauncher!.open(
                 Uri.parse('https://auth.novelia.cc/?app=n'),
               ),
+        onReleasesRequested: widget.externalLinkLauncher == null
+            ? null
+            : () => widget.externalLinkLauncher!.open(
+                Uri.parse(defaultReleasesUri),
+              ),
+        onCheckForUpdate: widget.updateChecker == null
+            ? null
+            : () => widget.updateChecker!.check(widget.appVersion),
+        onOpenUpdateLink: widget.externalLinkLauncher?.open,
         onFavoriteToFolderRequested: widget.accountGateway == null
             ? null
             : _favoriteNovel,

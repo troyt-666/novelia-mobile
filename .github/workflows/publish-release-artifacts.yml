@@ -186,6 +186,20 @@ jobs:
           test -n "$ios_app"
           test -d "$ios_app"
           test ! -d "$ios_app/_CodeSignature"
+          info_plist="$ios_app/Info.plist"
+          app_release="$(sed -n 's/^version:[[:space:]]*//p' app/pubspec.yaml)"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")" = \
+            "io.github.troyt666.jfzreader"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")" = \
+            "${app_release%+*}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")" = \
+            "${app_release##*+}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$info_plist")" = \
+            "13.0"
+          if /usr/libexec/PlistBuddy -c Print "$info_plist" | grep -q 'UsageDescription'; then
+            echo "Update AltStore privacy declarations before publishing." >&2
+            exit 1
+          fi
 
           rm -rf ios-payload dist
           mkdir -p ios-payload/Payload dist
@@ -319,3 +333,66 @@ jobs:
             "dist/JFZ-Reader-${tag}-macos.dmg" \
             --repo "$GH_REPO" \
             --clobber
+
+  update-feeds:
+    name: Publish update feeds
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Download published artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jfzreader-release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Read release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          app_release="$(sed -n 's/^version:[[:space:]]*//p' app/pubspec.yaml)"
+          test -n "$app_release"
+          echo "APP_VERSION=${app_release%+*}" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=${app_release##*+}" >> "$GITHUB_ENV"
+          gh release view "$RELEASE_TAG" \
+            --repo "$GH_REPO" \
+            --json body,publishedAt,url > "$RUNNER_TEMP/release.json"
+          jq -r '.body // ""' "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/release-notes.md"
+          echo "RELEASE_PUBLISHED_AT=$(jq -r .publishedAt "$RUNNER_TEMP/release.json")" >> "$GITHUB_ENV"
+          echo "RELEASE_PAGE_URL=$(jq -r .url "$RUNNER_TEMP/release.json")" >> "$GITHUB_ENV"
+
+      - name: Generate update manifest and AltStore source
+        env:
+          RELEASE_NOTES_FILE: ${{ runner.temp }}/release-notes.md
+          SITE_OUTPUT_DIR: update-site
+          ANDROID_APK: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-android.apk
+          IOS_IPA: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-ios-unsigned.ipa
+          MACOS_DMG: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-macos.dmg
+        run: .github/scripts/generate-update-site.sh
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: update-site
+
+      - name: Deploy update feeds to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

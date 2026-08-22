@@ -35,6 +35,13 @@ installed package metadata inside the app. Published builds are on the
 - **macOS** (`JFZ-Reader-<tag>-macos.dmg`) — not notarized. If Gatekeeper
   blocks it, right-click the app and choose Open.
 
+Installed builds check the project's HTTPS release metadata and show an update
+action in Settings. Installation is still confirmed by the user. AltStore
+Classic users can add the
+[JFZ Reader source](https://troyt-666.github.io/novelia-mobile/altstore-source.json)
+once; Sideloadly users install each new IPA over the existing app with the same
+Apple ID and bundle identifier.
+
 ## Offline reading
 
 JFZ Reader restores cached content and reading position locally, so a novel
