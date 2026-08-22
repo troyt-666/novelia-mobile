@@ -1681,8 +1681,11 @@ class _ReaderScreenState extends State<ReaderScreen>
     return LayoutBuilder(
       builder: (context, constraints) {
         final mediaPadding = MediaQuery.paddingOf(context);
-        final topPadding = mediaPadding.top + 88;
-        final bottomPadding = mediaPadding.bottom + 164;
+        // Page content should use the book surface, not permanently reserve
+        // the transient chrome's full footprint. The chrome overlays pages
+        // while visible and disappears during reading.
+        final topPadding = mediaPadding.top + 44;
+        final bottomPadding = mediaPadding.bottom + 44;
         final availableHeight = math.max(
           120.0,
           constraints.maxHeight - topPadding - bottomPadding,

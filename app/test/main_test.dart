@@ -368,6 +368,25 @@ void main() {
     expect(position.pixels, closeTo(afterTap, 1));
   });
 
+  testWidgets(
+    'paged mode uses the full page instead of reserving chrome space',
+    (tester) async {
+      await pumpReader(
+        tester,
+        initialSettings: const ReaderSettings(
+          layoutMode: ReaderLayoutMode.pages,
+        ),
+      );
+
+      final firstChinese = find.byKey(const ValueKey('block-c1-0-chinese'));
+      final firstJapanese = find.byKey(const ValueKey('block-c1-0-japanese'));
+      expect(firstChinese, findsOneWidget);
+      expect(firstJapanese, findsOneWidget);
+      expect(tester.getRect(firstChinese).left, lessThan(430));
+      expect(tester.getRect(firstJapanese).bottom, greaterThan(466));
+    },
+  );
+
   testWidgets('scroll mode supports free vertical drag and overlapping taps', (
     tester,
   ) async {
