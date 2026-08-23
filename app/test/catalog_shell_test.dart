@@ -27,6 +27,7 @@ void main() {
     ReaderRouteOpened? onReaderOpened,
     NovelDownloadRequested? onDownloadRequested,
     CatalogCriteriaRequested? onCatalogCriteriaRequested,
+    FutureOr<void> Function()? onDiscoveryRefreshRequested,
     ValueChanged<CatalogNovel>? onFavoriteRequested,
     AccountSessionSnapshot accountSession =
         const AccountSessionSnapshot.signedOut(),
@@ -54,6 +55,7 @@ void main() {
           onReaderOpened: onReaderOpened,
           onDownloadRequested: onDownloadRequested,
           onCatalogCriteriaRequested: onCatalogCriteriaRequested,
+          onDiscoveryRefreshRequested: onDiscoveryRefreshRequested,
           onFavoriteRequested: onFavoriteRequested,
           accountSession: accountSession,
           remoteFavorites: remoteFavorites,
@@ -103,6 +105,93 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('nav-settings')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings-theme-mode')), findsOneWidget);
+  });
+
+  testWidgets('reselecting Discovery refreshes its feed', (tester) async {
+    var refreshCount = 0;
+    await pumpShell(
+      tester,
+      onDiscoveryRefreshRequested: () async => refreshCount += 1,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('nav-discover')));
+    await tester.pump();
+
+    expect(refreshCount, 1);
+  });
+
+  testWidgets('Discovery supports pull refresh and requests its next page', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var refreshCount = 0;
+    final requestedSorts = <CatalogSort>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DiscoverScreen(
+            mode: DiscoverScreenMode.discovery,
+            novels: fixtureCatalogNovels,
+            catalogAvailability: CatalogAvailability.available,
+            onOpenNovel: (_) {},
+            onOpenRankings: () {},
+            onRefreshRequested: () async => refreshCount += 1,
+            onDiscoveryLoadMoreRequested: (sort) async {
+              requestedSorts.add(sort);
+            },
+            recentlyUpdatedHasMore: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.fling(
+      find.byType(CustomScrollView),
+      const Offset(0, 360),
+      1000,
+    );
+    await tester.pumpAndSettle();
+    expect(refreshCount, 1);
+
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -3000));
+    await tester.pump();
+    expect(requestedSorts, contains(CatalogSort.recentlyUpdated));
+  });
+
+  testWidgets('search sources default to checked multi-select chips', (
+    tester,
+  ) async {
+    await pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
+
+    final searchBar = tester.widget<SearchBar>(
+      find.byKey(const ValueKey('discover-search-field')),
+    );
+    expect(searchBar.elevation?.resolve({}), 0);
+    expect(searchBar.constraints?.minHeight, 48);
+    expect(searchBar.constraints?.maxHeight, 48);
+
+    final filters = find.byKey(const ValueKey('discover-filters-button'));
+    await tester.scrollUntilVisible(
+      filters,
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(filters);
+    await tester.pumpAndSettle();
+
+    for (final source in catalogSourceValues) {
+      final chip = tester.widget<FilterChip>(
+        find.byKey(ValueKey('filter-source-$source')),
+      );
+      expect(chip.selected, isTrue);
+      expect((chip.label as Text).data, isNot('全部'));
+    }
   });
 
   testWidgets('discovery exposes every tag and opens its catalog results', (
@@ -469,7 +558,17 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('filter-source-Kakuyomu')));
     await tester.pump();
-    expect(requests.last.source, 'Kakuyomu');
+    expect(requests.last.sources, isNot(contains('Kakuyomu')));
+    expect(requests.last.sources, hasLength(catalogSourceValues.length - 1));
+
+    await tester.tap(find.byKey(const ValueKey('filter-source-Syosetu')));
+    await tester.pump();
+    expect(requests.last.sources, isNot(contains('Syosetu')));
+    expect(requests.last.sources, hasLength(catalogSourceValues.length - 2));
+
+    await tester.tap(find.byKey(const ValueKey('filter-source-Kakuyomu')));
+    await tester.pump();
+    expect(requests.last.sources, contains('Kakuyomu'));
 
     await tester.tap(find.byKey(const ValueKey('filter-state-completed')));
     await tester.pump();
@@ -503,7 +602,8 @@ void main() {
     await tester.tap(tag);
     await tester.pump();
     expect(requests.last.exactTag, '幻想');
-    expect(requests.last.source, 'Kakuyomu');
+    expect(requests.last.sources, contains('Kakuyomu'));
+    expect(requests.last.sources, isNot(contains('Syosetu')));
     expect(requests.last.publicationState, NovelPublicationState.completed);
     expect(requests.last.contentLevel, CatalogContentLevel.all);
     expect(requests.last.translationSource, 'Sakura');

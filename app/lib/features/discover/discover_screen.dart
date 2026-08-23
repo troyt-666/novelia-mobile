@@ -22,11 +22,19 @@ class DiscoverScreen extends StatefulWidget {
     this.onCriteriaRequested,
     this.onSearchRequested,
     this.onLoadMoreRequested,
+    this.onRefreshRequested,
+    this.onDiscoveryLoadMoreRequested,
     this.catalogTotalCount,
     this.catalogHasMore = false,
     this.catalogLoading = false,
     this.catalogLoadingMore = false,
     this.catalogLoadMoreFailed = false,
+    this.recentlyUpdatedHasMore = false,
+    this.recentlyUpdatedLoadingMore = false,
+    this.recentlyUpdatedLoadMoreFailed = false,
+    this.mostClickedHasMore = false,
+    this.mostClickedLoadingMore = false,
+    this.mostClickedLoadMoreFailed = false,
     this.mostClickedNovels = const [],
     this.recentSearches = const [],
     this.onSearchCommitted,
@@ -49,11 +57,19 @@ class DiscoverScreen extends StatefulWidget {
   /// Search-only fallback when [onCriteriaRequested] is absent.
   final FutureOr<void> Function(String query)? onSearchRequested;
   final FutureOr<void> Function()? onLoadMoreRequested;
+  final FutureOr<void> Function()? onRefreshRequested;
+  final FutureOr<void> Function(CatalogSort sort)? onDiscoveryLoadMoreRequested;
   final int? catalogTotalCount;
   final bool catalogHasMore;
   final bool catalogLoading;
   final bool catalogLoadingMore;
   final bool catalogLoadMoreFailed;
+  final bool recentlyUpdatedHasMore;
+  final bool recentlyUpdatedLoadingMore;
+  final bool recentlyUpdatedLoadMoreFailed;
+  final bool mostClickedHasMore;
+  final bool mostClickedLoadingMore;
+  final bool mostClickedLoadMoreFailed;
   final List<CatalogNovel> mostClickedNovels;
   final List<String> recentSearches;
   final ValueChanged<String>? onSearchCommitted;
@@ -74,7 +90,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   late String _query;
   String? _authoritativeRemoteQuery;
   CatalogCriteria? _authoritativeRemoteCriteria;
-  late String? _source;
+  late Set<String> _sources;
   late NovelPublicationState? _publicationState;
   late CatalogContentLevel _contentLevel;
   late String? _translationSource;
@@ -119,7 +135,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   CatalogCriteria get _criteria => CatalogCriteria(
     search: _query.trim(),
-    source: _source,
+    sources: List.unmodifiable(_sources),
     publicationState: _publicationState,
     contentLevel: _contentLevel,
     translationSource: _translationSource,
@@ -130,7 +146,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   void _applyCriteria(CatalogCriteria criteria) {
     _query = criteria.search;
     _searchController.text = criteria.search;
-    _source = criteria.source;
+    _sources = criteria.sources.toSet();
     _publicationState = criteria.publicationState;
     _contentLevel = criteria.contentLevel;
     _translationSource = criteria.translationSource;
@@ -146,13 +162,49 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   void _maybeLoadMore() {
-    if (_scrollController.position.extentAfter > 600 ||
-        !widget.catalogHasMore ||
+    if (_scrollController.position.extentAfter > 600) {
+      return;
+    }
+    if (widget.mode == DiscoverScreenMode.discovery) {
+      if (!_discoveryHasMore ||
+          _discoveryLoadingMore ||
+          _discoveryLoadMoreFailed) {
+        return;
+      }
+      final callback = widget.onDiscoveryLoadMoreRequested;
+      if (callback != null) {
+        unawaited(
+          Future<void>.sync(() => callback(_discoverySort)).catchError((_) {}),
+        );
+      }
+      return;
+    }
+    if (!widget.catalogHasMore ||
         widget.catalogLoadingMore ||
         widget.catalogLoadMoreFailed) {
       return;
     }
     _requestLoadMore();
+  }
+
+  bool get _discoveryHasMore => _discoverySort == CatalogSort.mostClicked
+      ? widget.mostClickedHasMore
+      : widget.recentlyUpdatedHasMore;
+
+  bool get _discoveryLoadingMore => _discoverySort == CatalogSort.mostClicked
+      ? widget.mostClickedLoadingMore
+      : widget.recentlyUpdatedLoadingMore;
+
+  bool get _discoveryLoadMoreFailed => _discoverySort == CatalogSort.mostClicked
+      ? widget.mostClickedLoadMoreFailed
+      : widget.recentlyUpdatedLoadMoreFailed;
+
+  void _requestDiscoveryLoadMore() {
+    final callback = widget.onDiscoveryLoadMoreRequested;
+    if (callback == null) return;
+    unawaited(
+      Future<void>.sync(() => callback(_discoverySort)).catchError((_) {}),
+    );
   }
 
   void _requestLoadMore() {
@@ -179,7 +231,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           novel.chineseTitle.toLowerCase().contains(normalizedQuery) ||
           novel.japaneseTitle.toLowerCase().contains(normalizedQuery) ||
           (novel.author?.toLowerCase().contains(normalizedQuery) ?? false);
-      final matchesSource = _source == null || novel.source == _source;
+      final matchesSource = _sources.contains(novel.source);
       final matchesState =
           _publicationState == null ||
           novel.publicationState == _publicationState;
@@ -266,7 +318,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   void _clearFilters() {
     _changeCriteria(() {
-      _source = null;
+      _sources = catalogSourceValues.toSet();
       _publicationState = null;
       _contentLevel = CatalogContentLevel.all;
       _translationSource = null;
@@ -275,8 +327,15 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     });
   }
 
-  void _selectSource(String? value) {
-    _changeCriteria(() => _source = value);
+  void _toggleSource(String value, bool selected) {
+    if (!selected && _sources.length == 1) return;
+    _changeCriteria(() {
+      if (selected) {
+        _sources.add(value);
+      } else {
+        _sources.remove(value);
+      }
+    });
   }
 
   void _selectPublicationState(NovelPublicationState? value) {
@@ -353,351 +412,388 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     final showSearch = widget.mode != DiscoverScreenMode.discovery;
     final continuedNovel = showDiscovery ? widget.continuedNovel : null;
 
-    final discover = SafeArea(
-      bottom: false,
-      child: CustomScrollView(
-        key: const PageStorageKey('discover-scroll'),
-        controller: _scrollController,
-        slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-            sliver: SliverToBoxAdapter(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          showSearch && !showDiscovery ? '搜索' : '发现',
-                          style: Theme.of(context).textTheme.headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
+    final scrollView = CustomScrollView(
+      key: const PageStorageKey('discover-scroll'),
+      controller: _scrollController,
+      physics: showDiscovery ? const AlwaysScrollableScrollPhysics() : null,
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+          sliver: SliverToBoxAdapter(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        showSearch && !showDiscovery ? '搜索' : '发现',
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        showSearch && !showDiscovery
+                            ? '按官方目录条件查找网络小说'
+                            : '找到下一个想读的故事',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
-                        const SizedBox(height: 3),
-                        Text(
-                          showSearch && !showDiscovery
-                              ? '按官方目录条件查找网络小说'
-                              : '找到下一个想读的故事',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  if (showDiscovery)
-                    FilledButton.tonalIcon(
-                      key: const ValueKey('open-rankings-button'),
-                      onPressed: () {
-                        widget.onOpenRankings();
-                        setState(() {
-                          _showingRankings = true;
-                          _rankingsOpened = true;
-                        });
-                      },
-                      icon: const Icon(Icons.leaderboard_outlined),
-                      label: const Text('排行'),
-                    ),
-                ],
+                ),
+                if (showDiscovery)
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('open-rankings-button'),
+                    onPressed: () {
+                      widget.onOpenRankings();
+                      setState(() {
+                        _showingRankings = true;
+                        _rankingsOpened = true;
+                      });
+                    },
+                    icon: const Icon(Icons.leaderboard_outlined),
+                    label: const Text('排行'),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (widget.catalogAvailability != CatalogAvailability.available)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 2),
+            sliver: SliverToBoxAdapter(
+              child: _CatalogAvailabilityNotice(
+                availability: widget.catalogAvailability,
               ),
             ),
           ),
-          if (widget.catalogAvailability != CatalogAvailability.available)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 2),
-              sliver: SliverToBoxAdapter(
-                child: _CatalogAvailabilityNotice(
-                  availability: widget.catalogAvailability,
-                ),
+        if (continuedNovel case final continued?) ...[
+          _SectionHeader(title: '继续阅读'),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            sliver: SliverToBoxAdapter(
+              child: CatalogNovelCard(
+                novel: continued,
+                progress: widget.continuedProgress,
+                openKey: ValueKey('continue-reading-${continued.id}'),
+                openSemanticLabel: '继续阅读：${continued.chineseTitle}',
+                onOpen:
+                    widget.onContinueReading ??
+                    () => widget.onOpenNovel(continued),
+                onOpenDetails: widget.onContinueReading == null
+                    ? null
+                    : () => widget.onOpenNovel(continued),
+                onTagSelected: widget.onTagSelected ?? _selectTag,
               ),
             ),
-          if (continuedNovel case final continued?) ...[
-            _SectionHeader(title: '继续阅读'),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverToBoxAdapter(
-                child: CatalogNovelCard(
-                  novel: continued,
-                  progress: widget.continuedProgress,
-                  openKey: ValueKey('continue-reading-${continued.id}'),
-                  openSemanticLabel: '继续阅读：${continued.chineseTitle}',
-                  onOpen:
-                      widget.onContinueReading ??
-                      () => widget.onOpenNovel(continued),
-                  onOpenDetails: widget.onContinueReading == null
-                      ? null
-                      : () => widget.onOpenNovel(continued),
-                  onTagSelected: widget.onTagSelected ?? _selectTag,
-                ),
-              ),
-            ),
-          ],
-          if (widget.mode == DiscoverScreenMode.combined &&
-              mostClicked.isNotEmpty) ...[
-            _SectionHeader(title: '最多点击'),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: mostClickedShelfHeight,
-                child: ListView.separated(
-                  key: const ValueKey('most-clicked-shelf'),
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: mostClicked.take(4).length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 12),
-                  itemBuilder: (context, index) {
-                    final novel = mostClicked[index];
-                    return SizedBox(
-                      width: 302,
-                      child: CatalogNovelCard(
-                        compact: true,
-                        novel: novel,
-                        onOpen: () => widget.onOpenNovel(novel),
-                        onTagSelected: widget.onTagSelected ?? _selectTag,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ],
-          if (widget.mode == DiscoverScreenMode.combined &&
-              recentlyUpdated.isNotEmpty) ...[
-            _SectionHeader(title: '最近更新'),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverList.separated(
-                itemCount: recentlyUpdated.take(3).length,
-                separatorBuilder: (_, _) => const SizedBox(height: 10),
+          ),
+        ],
+        if (widget.mode == DiscoverScreenMode.combined &&
+            mostClicked.isNotEmpty) ...[
+          _SectionHeader(title: '最多点击'),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: mostClickedShelfHeight,
+              child: ListView.separated(
+                key: const ValueKey('most-clicked-shelf'),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                scrollDirection: Axis.horizontal,
+                itemCount: mostClicked.take(4).length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
                 itemBuilder: (context, index) {
-                  final novel = recentlyUpdated[index];
+                  final novel = mostClicked[index];
+                  return SizedBox(
+                    width: 302,
+                    child: CatalogNovelCard(
+                      compact: true,
+                      novel: novel,
+                      onOpen: () => widget.onOpenNovel(novel),
+                      onTagSelected: widget.onTagSelected ?? _selectTag,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+        if (widget.mode == DiscoverScreenMode.combined &&
+            recentlyUpdated.isNotEmpty) ...[
+          _SectionHeader(title: '最近更新'),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            sliver: SliverList.separated(
+              itemCount: recentlyUpdated.take(3).length,
+              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final novel = recentlyUpdated[index];
+                return CatalogNovelCard(
+                  novel: novel,
+                  compact: true,
+                  onOpen: () => widget.onOpenNovel(novel),
+                  onTagSelected: widget.onTagSelected ?? _selectTag,
+                );
+              },
+            ),
+          ),
+        ],
+        if (widget.mode == DiscoverScreenMode.discovery) ...[
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 26, 20, 12),
+            sliver: SliverToBoxAdapter(
+              child: SegmentedButton<CatalogSort>(
+                key: const ValueKey('discover-feed-selector'),
+                segments: const [
+                  ButtonSegment(
+                    value: CatalogSort.recentlyUpdated,
+                    icon: Icon(Icons.update),
+                    label: Text('最近更新'),
+                  ),
+                  ButtonSegment(
+                    value: CatalogSort.mostClicked,
+                    icon: Icon(Icons.local_fire_department_outlined),
+                    label: Text('最多点击'),
+                  ),
+                ],
+                selected: {_discoverySort},
+                onSelectionChanged: (selection) {
+                  setState(() => _discoverySort = selection.single);
+                },
+              ),
+            ),
+          ),
+          if (discoveryNovels.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: _EmptyDiscovery(),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+              sliver: SliverList.separated(
+                key: const ValueKey('discover-feed-results'),
+                itemCount: discoveryNovels.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final novel = discoveryNovels[index];
                   return CatalogNovelCard(
                     novel: novel,
-                    compact: true,
                     onOpen: () => widget.onOpenNovel(novel),
                     onTagSelected: widget.onTagSelected ?? _selectTag,
                   );
                 },
               ),
             ),
-          ],
-          if (widget.mode == DiscoverScreenMode.discovery) ...[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 26, 20, 12),
-              sliver: SliverToBoxAdapter(
-                child: SegmentedButton<CatalogSort>(
-                  key: const ValueKey('discover-feed-selector'),
-                  segments: const [
-                    ButtonSegment(
-                      value: CatalogSort.recentlyUpdated,
-                      icon: Icon(Icons.update),
-                      label: Text('最近更新'),
-                    ),
-                    ButtonSegment(
-                      value: CatalogSort.mostClicked,
-                      icon: Icon(Icons.local_fire_department_outlined),
-                      label: Text('最多点击'),
-                    ),
-                  ],
-                  selected: {_discoverySort},
-                  onSelectionChanged: (selection) {
-                    setState(() => _discoverySort = selection.single);
-                  },
-                ),
-              ),
-            ),
-            if (discoveryNovels.isEmpty)
-              const SliverFillRemaining(
-                hasScrollBody: false,
-                child: _EmptyDiscovery(),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
-                sliver: SliverList.separated(
-                  key: const ValueKey('discover-feed-results'),
-                  itemCount: discoveryNovels.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final novel = discoveryNovels[index];
-                    return CatalogNovelCard(
-                      novel: novel,
-                      onOpen: () => widget.onOpenNovel(novel),
-                      onTagSelected: widget.onTagSelected ?? _selectTag,
-                    );
-                  },
-                ),
-              ),
-          ],
-          if (showSearch)
-            _SectionHeader(
-              title: widget.mode == DiscoverScreenMode.search ? '搜索条件' : '全部小说',
-              topPadding: widget.mode == DiscoverScreenMode.search ? 18 : 30,
-            ),
-          if (showSearch)
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SearchBar(
-                      key: const ValueKey('discover-search-field'),
-                      controller: _searchController,
-                      hintText: '搜索中日文书名或作者',
-                      leading: const Icon(Icons.search),
-                      trailing: [
-                        if (_query.isNotEmpty)
-                          IconButton(
-                            key: const ValueKey('clear-discover-search'),
-                            tooltip: '清除搜索',
-                            onPressed: () {
-                              _searchController.clear();
-                              _setQuery('', commit: true);
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
-                      ],
-                      onChanged: _setQuery,
-                      onSubmitted: (value) => _setQuery(value, commit: true),
-                    ),
-                    if (widget.recentSearches.isNotEmpty && _query.isEmpty) ...[
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          for (final query in widget.recentSearches.take(4))
-                            InputChip(
-                              key: ValueKey('recent-search-$query'),
-                              avatar: const Icon(Icons.history, size: 16),
-                              label: Text(query),
-                              onPressed: () {
-                                _searchController.text = query;
-                                _setQuery(query, commit: true);
-                              },
-                            ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        OutlinedButton.icon(
-                          key: const ValueKey('discover-filters-button'),
-                          onPressed: () =>
-                              setState(() => _showFilters = !_showFilters),
-                          icon: const Icon(Icons.tune),
-                          label: Text(_showFilters ? '收起筛选' : '筛选'),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: DropdownButtonFormField<CatalogSort>(
-                            key: const ValueKey('catalog-sort-dropdown'),
-                            initialValue: _sort,
-                            decoration: const InputDecoration(
-                              labelText: '排序',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            items: [
-                              for (final sort in CatalogSort.values)
-                                DropdownMenuItem(
-                                  value: sort,
-                                  child: Text(sort.label),
-                                ),
-                            ],
-                            onChanged: (value) {
-                              if (value != null) _selectSort(value);
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 180),
-                      alignment: Alignment.topCenter,
-                      child: _showFilters
-                          ? Padding(
-                              padding: const EdgeInsets.only(top: 14),
-                              child: _CatalogFilters(
-                                selectedSource: _source,
-                                selectedState: _publicationState,
-                                selectedContentLevel: _contentLevel,
-                                selectedTranslationSource: _translationSource,
-                                exactTag: _exactTag,
-                                onSourceSelected: _selectSource,
-                                onStateSelected: _selectPublicationState,
-                                onContentLevelSelected: _selectContentLevel,
-                                onTranslationSelected: _selectTranslationSource,
-                                onClear: _clearFilters,
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      _resultCountLabel(novels.length),
-                      key: const ValueKey('catalog-result-count'),
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (showSearch && widget.catalogLoading)
-            const SliverFillRemaining(
-              hasScrollBody: false,
-              child: _CatalogLoading(),
-            )
-          else if (showSearch && novels.isEmpty)
-            const SliverFillRemaining(
-              hasScrollBody: false,
-              child: _EmptyCatalog(),
-            )
-          else if (showSearch)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-              sliver: SliverList.separated(
-                key: const ValueKey('discover-search-results'),
-                itemCount: novels.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final novel = novels[index];
-                  return CatalogNovelCard(
-                    novel: novel,
-                    onOpen: () {
-                      final committedQuery = _query.trim();
-                      if (committedQuery.isNotEmpty) {
-                        widget.onSearchCommitted?.call(committedQuery);
-                      }
-                      widget.onOpenNovel(novel);
-                    },
-                    onTagSelected: _selectTag,
-                  );
-                },
-              ),
-            ),
-          if (showSearch &&
-              !widget.catalogLoading &&
-              widget.onLoadMoreRequested != null &&
-              (widget.catalogHasMore ||
-                  widget.catalogLoadingMore ||
-                  widget.catalogLoadMoreFailed))
+          if (widget.onDiscoveryLoadMoreRequested != null &&
+              (_discoveryHasMore ||
+                  _discoveryLoadingMore ||
+                  _discoveryLoadMoreFailed))
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
               sliver: SliverToBoxAdapter(
                 child: _CatalogPageFooter(
-                  loading: widget.catalogLoadingMore,
-                  failed: widget.catalogLoadMoreFailed,
-                  onRetry: _requestLoadMore,
+                  loading: _discoveryLoadingMore,
+                  failed: _discoveryLoadMoreFailed,
+                  onRetry: _requestDiscoveryLoadMore,
                 ),
               ),
             ),
         ],
-      ),
+        if (showSearch)
+          _SectionHeader(
+            title: widget.mode == DiscoverScreenMode.search ? '搜索条件' : '全部小说',
+            topPadding: widget.mode == DiscoverScreenMode.search ? 18 : 30,
+          ),
+        if (showSearch)
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SearchBar(
+                    key: const ValueKey('discover-search-field'),
+                    controller: _searchController,
+                    hintText: '搜索中日文书名或作者',
+                    elevation: const WidgetStatePropertyAll(0),
+                    backgroundColor: WidgetStatePropertyAll(
+                      Theme.of(context).colorScheme.surfaceContainerLow,
+                    ),
+                    side: WidgetStatePropertyAll(
+                      BorderSide(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    shape: WidgetStatePropertyAll(
+                      RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    constraints: const BoxConstraints.tightFor(height: 48),
+                    padding: const WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                    leading: const Icon(Icons.search),
+                    trailing: [
+                      if (_query.isNotEmpty)
+                        IconButton(
+                          key: const ValueKey('clear-discover-search'),
+                          tooltip: '清除搜索',
+                          onPressed: () {
+                            _searchController.clear();
+                            _setQuery('', commit: true);
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                    ],
+                    onChanged: _setQuery,
+                    onSubmitted: (value) => _setQuery(value, commit: true),
+                  ),
+                  if (widget.recentSearches.isNotEmpty && _query.isEmpty) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        for (final query in widget.recentSearches.take(4))
+                          InputChip(
+                            key: ValueKey('recent-search-$query'),
+                            avatar: const Icon(Icons.history, size: 16),
+                            label: Text(query),
+                            onPressed: () {
+                              _searchController.text = query;
+                              _setQuery(query, commit: true);
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey('discover-filters-button'),
+                        onPressed: () =>
+                            setState(() => _showFilters = !_showFilters),
+                        icon: const Icon(Icons.tune),
+                        label: Text(_showFilters ? '收起筛选' : '筛选'),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: DropdownButtonFormField<CatalogSort>(
+                          key: const ValueKey('catalog-sort-dropdown'),
+                          initialValue: _sort,
+                          decoration: const InputDecoration(
+                            labelText: '排序',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final sort in CatalogSort.values)
+                              DropdownMenuItem(
+                                value: sort,
+                                child: Text(sort.label),
+                              ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) _selectSort(value);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    alignment: Alignment.topCenter,
+                    child: _showFilters
+                        ? Padding(
+                            padding: const EdgeInsets.only(top: 14),
+                            child: _CatalogFilters(
+                              selectedSources: _sources,
+                              selectedState: _publicationState,
+                              selectedContentLevel: _contentLevel,
+                              selectedTranslationSource: _translationSource,
+                              exactTag: _exactTag,
+                              onSourceToggled: _toggleSource,
+                              onStateSelected: _selectPublicationState,
+                              onContentLevelSelected: _selectContentLevel,
+                              onTranslationSelected: _selectTranslationSource,
+                              onClear: _clearFilters,
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _resultCountLabel(novels.length),
+                    key: const ValueKey('catalog-result-count'),
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (showSearch && widget.catalogLoading)
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: _CatalogLoading(),
+          )
+        else if (showSearch && novels.isEmpty)
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: _EmptyCatalog(),
+          )
+        else if (showSearch)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+            sliver: SliverList.separated(
+              key: const ValueKey('discover-search-results'),
+              itemCount: novels.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final novel = novels[index];
+                return CatalogNovelCard(
+                  novel: novel,
+                  onOpen: () {
+                    final committedQuery = _query.trim();
+                    if (committedQuery.isNotEmpty) {
+                      widget.onSearchCommitted?.call(committedQuery);
+                    }
+                    widget.onOpenNovel(novel);
+                  },
+                  onTagSelected: _selectTag,
+                );
+              },
+            ),
+          ),
+        if (showSearch &&
+            !widget.catalogLoading &&
+            widget.onLoadMoreRequested != null &&
+            (widget.catalogHasMore ||
+                widget.catalogLoadingMore ||
+                widget.catalogLoadMoreFailed))
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+            sliver: SliverToBoxAdapter(
+              child: _CatalogPageFooter(
+                loading: widget.catalogLoadingMore,
+                failed: widget.catalogLoadMoreFailed,
+                onRetry: _requestLoadMore,
+              ),
+            ),
+          ),
+      ],
+    );
+    final discover = SafeArea(
+      bottom: false,
+      child: showDiscovery && widget.onRefreshRequested != null
+          ? RefreshIndicator(
+              key: const ValueKey('discover-refresh-indicator'),
+              onRefresh: () => Future<void>.sync(widget.onRefreshRequested!),
+              child: scrollView,
+            )
+          : scrollView,
     );
     if (!showDiscovery) return discover;
     return PopScope(
@@ -801,11 +897,11 @@ const _officialSourceOptions = <_CatalogFilterOption>[
 
 class _CatalogFilters extends StatelessWidget {
   const _CatalogFilters({
-    required this.selectedSource,
+    required this.selectedSources,
     required this.selectedState,
     required this.selectedContentLevel,
     required this.selectedTranslationSource,
-    required this.onSourceSelected,
+    required this.onSourceToggled,
     required this.onStateSelected,
     required this.onContentLevelSelected,
     required this.onTranslationSelected,
@@ -813,12 +909,12 @@ class _CatalogFilters extends StatelessWidget {
     this.exactTag,
   });
 
-  final String? selectedSource;
+  final Set<String> selectedSources;
   final NovelPublicationState? selectedState;
   final CatalogContentLevel selectedContentLevel;
   final String? selectedTranslationSource;
   final String? exactTag;
-  final ValueChanged<String?> onSourceSelected;
+  final void Function(String source, bool selected) onSourceToggled;
   final ValueChanged<NovelPublicationState?> onStateSelected;
   final ValueChanged<CatalogContentLevel> onContentLevelSelected;
   final ValueChanged<String?> onTranslationSelected;
@@ -840,18 +936,13 @@ class _CatalogFilters extends StatelessWidget {
             Wrap(
               spacing: 7,
               children: [
-                ChoiceChip(
-                  label: const Text('全部'),
-                  selected: selectedSource == null,
-                  onSelected: (_) => onSourceSelected(null),
-                ),
                 for (final source in _officialSourceOptions)
-                  ChoiceChip(
+                  FilterChip(
                     key: ValueKey('filter-source-${source.value}'),
                     label: Text(source.label),
-                    selected: selectedSource == source.value,
+                    selected: selectedSources.contains(source.value),
                     onSelected: (selected) =>
-                        onSourceSelected(selected ? source.value : null),
+                        onSourceToggled(source.value, selected),
                   ),
               ],
             ),
