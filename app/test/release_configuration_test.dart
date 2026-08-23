@@ -18,6 +18,36 @@ void main() {
 
     final android = File('android/app/build.gradle.kts').readAsStringSync();
     expect(android, contains('applicationId = "io.github.troyt666.jfzreader"'));
+    final androidManifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    expect(androidManifest, contains('REQUEST_INSTALL_PACKAGES'));
+    expect(androidManifest, contains('FileProvider'));
+    expect(androidManifest, contains('@xml/update_file_paths'));
+    final androidActivity = File(
+      'android/app/src/main/kotlin/io/github/troyt666/jfzreader/MainActivity.kt',
+    ).readAsStringSync();
+    expect(
+      androidActivity,
+      contains('io.github.troyt666.jfzreader/app_update_installer'),
+    );
+    expect(androidActivity, contains('canRequestPackageInstalls'));
+
+    final macProject = File(
+      'macos/Runner.xcodeproj/project.pbxproj',
+    ).readAsStringSync();
+    expect(macProject, contains('sparkle-project/Sparkle'));
+    expect(macProject, contains('version = 2.9.2'));
+    final macUpdateInfo = File('macos/Runner/Info.plist').readAsStringSync();
+    expect(macUpdateInfo, contains('SUEnableInstallerLauncherService'));
+    expect(macUpdateInfo, contains('SUVerifyUpdateBeforeExtraction'));
+    expect(macUpdateInfo, contains('appcast.xml'));
+    expect(macUpdateInfo, isNot(contains('SPARKLE_PUBLIC_KEY_PENDING')));
+    final macRunner = File(
+      'macos/Runner/MainFlutterWindow.swift',
+    ).readAsStringSync();
+    expect(macRunner, contains('SPUStandardUpdaterController'));
+    expect(macRunner, contains('checkForUpdates'));
 
     final ios = File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
     expect(
@@ -59,6 +89,8 @@ void main() {
     expect(workflow, contains('Print :MinimumOSVersion'));
     expect(workflow, contains('UsageDescription'));
     expect(workflow, contains('generate-update-site.sh'));
+    expect(workflow, contains('SPARKLE_PRIVATE_KEY'));
+    expect(workflow, contains('macos.sparkle-signature'));
     expect(workflow, contains('actions/deploy-pages@v4'));
     expect(workflow, contains('pages: write'));
     expect(workflow, isNot(contains('signingConfigs.getByName("debug")')));
@@ -68,6 +100,8 @@ void main() {
     ).readAsStringSync();
     expect(feedGenerator, contains('altstore-source.json'));
     expect(feedGenerator, contains('latest.json'));
+    expect(feedGenerator, contains('appcast.xml'));
+    expect(feedGenerator, contains('sparkle:edSignature'));
     expect(feedGenerator, contains('sha256'));
     expect(feedGenerator, contains('io.github.troyt666.jfzreader'));
     expect(feedGenerator, contains('minOSVersion: "13.0"'));

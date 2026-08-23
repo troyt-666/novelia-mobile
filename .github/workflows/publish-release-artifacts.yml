@@ -266,11 +266,34 @@ jobs:
             "dist/JFZ-Reader-${tag}-macos.dmg"
           test -s "dist/JFZ-Reader-${tag}-macos.dmg"
 
+      - name: Sign Sparkle update
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "Missing GitHub secret SPARKLE_PRIVATE_KEY." >&2
+            exit 1
+          fi
+          tag="${RELEASE_TAG//\//-}"
+          dmg="dist/JFZ-Reader-${tag}-macos.dmg"
+          sign_update="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+            -type f -path '*/Sparkle/bin/sign_update' -perm +111 -print -quit)"
+          test -x "$sign_update"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | \
+            "$sign_update" --ed-key-file - "$dmg" > \
+              "dist/JFZ-Reader-${tag}-macos.sparkle-signature"
+          grep -Eq '^sparkle:edSignature="[A-Za-z0-9+/=]+" length="[0-9]+"$' \
+            "dist/JFZ-Reader-${tag}-macos.sparkle-signature"
+
       - name: Upload macOS build artifact
         uses: actions/upload-artifact@v7
         with:
           name: jfzreader-release-macos
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/*.sparkle-signature
           if-no-files-found: error
           compression-level: 0
           overwrite: true
@@ -299,7 +322,8 @@ jobs:
           for asset in \
             "dist/JFZ-Reader-${tag}-android.apk" \
             "dist/JFZ-Reader-${tag}-ios-unsigned.ipa" \
-            "dist/JFZ-Reader-${tag}-macos.dmg"; do
+            "dist/JFZ-Reader-${tag}-macos.dmg" \
+            "dist/JFZ-Reader-${tag}-macos.sparkle-signature"; do
             test -s "$asset"
           done
           find dist -maxdepth 1 -type f -print
@@ -383,6 +407,7 @@ jobs:
           ANDROID_APK: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-android.apk
           IOS_IPA: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-ios-unsigned.ipa
           MACOS_DMG: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-macos.dmg
+          MACOS_SPARKLE_SIGNATURE_FILE: dist/JFZ-Reader-${{ env.RELEASE_TAG }}-macos.sparkle-signature
         run: .github/scripts/generate-update-site.sh
 
       - name: Configure GitHub Pages

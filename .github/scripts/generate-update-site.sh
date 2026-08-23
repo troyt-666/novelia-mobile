@@ -12,6 +12,7 @@ required_variables=(
   ANDROID_APK
   IOS_IPA
   MACOS_DMG
+  MACOS_SPARKLE_SIGNATURE_FILE
   GITHUB_REPOSITORY
   GITHUB_REPOSITORY_OWNER
 )
@@ -29,6 +30,10 @@ for artifact in "$ANDROID_APK" "$IOS_IPA" "$MACOS_DMG"; do
     exit 1
   fi
 done
+if [[ ! -s "$MACOS_SPARKLE_SIGNATURE_FILE" ]]; then
+  echo "Missing Sparkle signature: $MACOS_SPARKLE_SIGNATURE_FILE" >&2
+  exit 1
+fi
 
 if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Invalid app version: $APP_VERSION" >&2
@@ -72,6 +77,17 @@ macos_size="$(file_size "$MACOS_DMG")"
 android_sha256="$(file_sha256 "$ANDROID_APK")"
 ios_sha256="$(file_sha256 "$IOS_IPA")"
 macos_sha256="$(file_sha256 "$MACOS_DMG")"
+sparkle_signature_fragment="$(tr -d '\r\n' < "$MACOS_SPARKLE_SIGNATURE_FILE")"
+if [[ ! "$sparkle_signature_fragment" =~ ^sparkle:edSignature=\"([A-Za-z0-9+/=]+)\"[[:space:]]length=\"([0-9]+)\"$ ]]; then
+  echo "Invalid Sparkle signature metadata." >&2
+  exit 1
+fi
+sparkle_ed_signature="${BASH_REMATCH[1]}"
+sparkle_signed_size="${BASH_REMATCH[2]}"
+if [[ "$sparkle_signed_size" != "$macos_size" ]]; then
+  echo "Sparkle signature size does not match the macOS DMG." >&2
+  exit 1
+fi
 
 jq -n \
   --arg version "$APP_VERSION" \
@@ -115,6 +131,40 @@ jq -n \
       }
     }
   }' > "$SITE_OUTPUT_DIR/latest.json"
+
+release_page_xml="$(jq -rn --arg value "$RELEASE_PAGE_URL" '$value | @html')"
+release_notes_xml="$(jq -Rs -r '@html' "$RELEASE_NOTES_FILE")"
+macos_url_xml="$(jq -rn --arg value "$macos_url" '$value | @html')"
+if published_at_rfc2822="$(date --date="$RELEASE_PUBLISHED_AT" --rfc-email 2>/dev/null)"; then
+  :
+else
+  published_at_rfc2822="$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+    "$RELEASE_PUBLISHED_AT" '+%a, %d %b %Y %H:%M:%S +0000')"
+fi
+cat > "$SITE_OUTPUT_DIR/appcast.xml" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>JFZ Reader macOS updates</title>
+    <link>$release_page_xml</link>
+    <description>Signed JFZ Reader updates for macOS.</description>
+    <language>zh-CN</language>
+    <item>
+      <title>JFZ Reader $APP_VERSION</title>
+      <link>$release_page_xml</link>
+      <sparkle:version>$APP_BUILD_NUMBER</sparkle:version>
+      <sparkle:shortVersionString>$APP_VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>10.15.0</sparkle:minimumSystemVersion>
+      <pubDate>$published_at_rfc2822</pubDate>
+      <description sparkle:format="plain-text">$release_notes_xml</description>
+      <enclosure url="$macos_url_xml"
+        sparkle:edSignature="$sparkle_ed_signature"
+        length="$macos_size"
+        type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>
+EOF
 
 jq -n \
   --arg website "https://github.com/${GITHUB_REPOSITORY}" \
@@ -168,3 +218,4 @@ jq -n \
 
 jq empty "$SITE_OUTPUT_DIR/latest.json"
 jq empty "$SITE_OUTPUT_DIR/altstore-source.json"
+grep -q '<sparkle:version>' "$SITE_OUTPUT_DIR/appcast.xml"

@@ -6,6 +6,7 @@ import '../../core/account/account_models.dart';
 import '../../core/model/reader_models.dart';
 import '../../core/offline/offline_models.dart';
 import '../../core/platform/app_update.dart';
+import '../../core/platform/app_update_installer.dart';
 import '../../core/platform/app_version.dart';
 import '../discover/catalog_models.dart';
 import '../discover/catalog_search_results_screen.dart';
@@ -49,6 +50,7 @@ class NoveliaShell extends StatefulWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     required this.catalogAvailability,
+    this.discoveryAvailability,
     this.appVersion = const AppVersion.unavailable(),
     this.novelDetailsLoader,
     this.readerLaunchLoader,
@@ -68,6 +70,7 @@ class NoveliaShell extends StatefulWidget {
     this.onHostedAccountHelp,
     this.onReleasesRequested,
     this.onCheckForUpdate,
+    this.updateInstaller,
     this.onOpenUpdateLink,
     this.continuedReads = const [],
     this.protectedDownloads = const [],
@@ -122,6 +125,7 @@ class NoveliaShell extends StatefulWidget {
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final CatalogAvailability catalogAvailability;
+  final CatalogAvailability? discoveryAvailability;
   final NovelDetailsLoader? novelDetailsLoader;
   final ReaderLaunchLoader? readerLaunchLoader;
   final NovelCommentPageLoader? commentPageLoader;
@@ -140,6 +144,7 @@ class NoveliaShell extends StatefulWidget {
   final VoidCallback? onHostedAccountHelp;
   final VoidCallback? onReleasesRequested;
   final Future<AppUpdateCheck> Function()? onCheckForUpdate;
+  final AppUpdateInstaller? updateInstaller;
   final Future<void> Function(Uri uri)? onOpenUpdateLink;
   final List<LibraryContinuedRead> continuedReads;
   final List<LibraryProtectedDownload> protectedDownloads;
@@ -771,7 +776,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
         novels: widget.recentlyUpdatedNovels.isEmpty
             ? widget.novels
             : widget.recentlyUpdatedNovels,
-        catalogAvailability: widget.catalogAvailability,
+        catalogAvailability:
+            widget.discoveryAvailability ?? widget.catalogAvailability,
         continuedNovel: continuedRead?.novel,
         continuedProgress: continuedRead?.progress,
         onContinueReading: continuedRead == null
@@ -864,6 +870,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
             widget.onReleasesRequested ??
             () => _showFixtureAction('版本页将由平台链接打开'),
         onCheckForUpdate: widget.onCheckForUpdate,
+        updateInstaller: widget.updateInstaller,
         onOpenUpdateLink: widget.onOpenUpdateLink,
       ),
     ];

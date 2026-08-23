@@ -197,6 +197,39 @@ void main() {
     expect(find.text('当前处于离线状态'), findsNothing);
   });
 
+  testWidgets('a live Discovery feed clears a stale catalog offline banner', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = SqliteOfflineRepository.openInMemory();
+    addTearDown(repository.close);
+    await tester.pumpWidget(
+      NoveliaReaderApp(
+        repository: repository,
+        contentCoordinator: _SplitStartupAvailabilityCoordinator(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('缓存目录小说'), findsWidgets);
+    expect(find.text('当前处于离线状态'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
+    expect(find.text('当前处于离线状态'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('nav-discover')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('最多点击').last);
+    await tester.pumpAndSettle();
+    expect(find.text('实时发现小说'), findsWidgets);
+    expect(find.text('当前处于离线状态'), findsNothing);
+  });
+
   testWidgets('typed catalog controls reach the service query boundary', (
     tester,
   ) async {
@@ -659,6 +692,32 @@ class _PagedCatalogCoordinator implements NoveliaContentCoordinator {
         ),
       ],
       declaredChapterCount: 1,
+    );
+  }
+}
+
+class _SplitStartupAvailabilityCoordinator extends _PagedCatalogCoordinator {
+  @override
+  Future<NoveliaContentResult<NoveliaCatalogSlice>> loadCatalog(
+    NoveliaCatalogQuery query,
+  ) async {
+    if (query.sort == 1) {
+      return NoveliaContentResult.available(
+        NoveliaCatalogSlice(
+          pageIndex: 0,
+          totalPages: 1,
+          novels: [
+            _PagedCatalogCoordinator._outline('live-discovery', '实时发现小说'),
+          ],
+        ),
+      );
+    }
+    return NoveliaContentResult.offline(
+      cachedData: NoveliaCatalogSlice(
+        pageIndex: 0,
+        totalPages: 1,
+        novels: [_PagedCatalogCoordinator._outline('cached-catalog', '缓存目录小说')],
+      ),
     );
   }
 }

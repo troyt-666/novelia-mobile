@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -13,6 +14,7 @@ import 'core/database/sqlite_offline_repository.dart';
 import 'core/model/reader_models.dart';
 import 'core/offline/offline_models.dart';
 import 'core/platform/app_update.dart';
+import 'core/platform/app_update_installer.dart';
 import 'core/platform/app_version.dart';
 import 'core/platform/external_link_launcher.dart';
 import 'features/discover/catalog_models.dart';
@@ -88,6 +90,11 @@ Future<void> main() async {
         updateChecker: GitHubAppUpdateChecker(
           platform: AppUpdatePlatform.current(),
         ),
+        updateInstaller: Platform.isAndroid
+            ? AndroidAppUpdateInstaller()
+            : Platform.isMacOS
+            ? const MacOsSparkleUpdateInstaller()
+            : null,
         closeRepositoryOnDispose: true,
         onRuntimeDispose: () {
           gateway.close();
@@ -111,6 +118,7 @@ class NoveliaReaderApp extends StatefulWidget {
     this.accountGateway,
     this.externalLinkLauncher,
     this.updateChecker,
+    this.updateInstaller,
     this.catalogQuery = const NoveliaCatalogQuery(),
     this.onRuntimeDispose,
     this.closeRepositoryOnDispose = false,
@@ -125,6 +133,7 @@ class NoveliaReaderApp extends StatefulWidget {
   final NoveliaAccountGateway? accountGateway;
   final ExternalLinkLauncher? externalLinkLauncher;
   final AppUpdateChecker? updateChecker;
+  final AppUpdateInstaller? updateInstaller;
   final NoveliaCatalogQuery catalogQuery;
   final VoidCallback? onRuntimeDispose;
   final bool closeRepositoryOnDispose;
@@ -146,6 +155,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   late List<CatalogNovel> _catalogNovels;
   late List<CatalogNovel> _recentlyUpdatedNovels;
   late CatalogAvailability _catalogAvailability;
+  late CatalogAvailability _recentlyUpdatedAvailability;
+  late CatalogAvailability _mostClickedAvailability;
   final Set<String> _activeDownloadSyncs = <String>{};
   final Set<String> _pendingDownloadSyncs = <String>{};
   var _catalogLoadGeneration = 0;
@@ -205,6 +216,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       _catalogNovels = fixtureCatalogNovels;
       _recentlyUpdatedNovels = fixtureCatalogNovels;
       _catalogAvailability = CatalogAvailability.available;
+      _recentlyUpdatedAvailability = CatalogAvailability.available;
+      _mostClickedAvailability = CatalogAvailability.available;
     } else {
       _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
       _catalogNovels = _restoreCachedCatalog();
@@ -213,6 +226,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       // the service is currently reachable. A live-origin refresh promotes the
       // state to available once it actually succeeds.
       _catalogAvailability = CatalogAvailability.offline;
+      _recentlyUpdatedAvailability = CatalogAvailability.offline;
+      _mostClickedAvailability = CatalogAvailability.offline;
       unawaited(_refreshCatalog());
       unawaited(_refreshMostClicked());
       unawaited(_resumeDownloadIntents());
@@ -574,6 +589,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       final slice = result.data;
       setState(() {
         _catalogAvailability = result.availability;
+        if (_isPlainRecentlyUpdated(requestedCriteria)) {
+          _recentlyUpdatedAvailability = result.availability;
+        }
         _catalogCriteria = requestedCriteria;
         _catalogLoading = false;
         _catalogLoadingMore = false;
@@ -615,6 +633,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         _catalogLoadMoreFailed = append;
         if (_catalogNovels.isEmpty) {
           _catalogAvailability = CatalogAvailability.offline;
+        }
+        if (_isPlainRecentlyUpdated(requestedCriteria)) {
+          _recentlyUpdatedAvailability = CatalogAvailability.offline;
         }
       });
     }
@@ -749,6 +770,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       if (!mounted || generation != _mostClickedGeneration) return;
       final data = result.data;
       setState(() {
+        _mostClickedAvailability = result.availability;
         _mostClickedLoadingMore = false;
         _mostClickedLoadMoreFailed = append && data == null;
         if (data == null || result.origin != NoveliaContentOrigin.live) return;
@@ -761,6 +783,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     } on Object {
       if (!mounted || generation != _mostClickedGeneration) return;
       setState(() {
+        _mostClickedAvailability = CatalogAvailability.offline;
         _mostClickedLoadingMore = false;
         _mostClickedLoadMoreFailed = append;
       });
@@ -800,6 +823,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       if (!mounted || generation != _recentlyUpdatedGeneration) return;
       final data = result.data;
       setState(() {
+        _recentlyUpdatedAvailability = result.availability;
         _recentlyUpdatedLoadingMore = false;
         _recentlyUpdatedLoadMoreFailed = append && data == null;
         if (data == null) return;
@@ -812,6 +836,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     } on Object {
       if (!mounted || generation != _recentlyUpdatedGeneration) return;
       setState(() {
+        _recentlyUpdatedAvailability = CatalogAvailability.offline;
         _recentlyUpdatedLoadingMore = false;
         _recentlyUpdatedLoadMoreFailed = append;
       });
@@ -854,6 +879,28 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     final selected = sources.toSet();
     return selected.length == catalogSourceValues.length &&
         selected.containsAll(catalogSourceValues);
+  }
+
+  CatalogAvailability get _discoveryAvailability {
+    final feeds = [_recentlyUpdatedAvailability, _mostClickedAvailability];
+    if (feeds.contains(CatalogAvailability.available)) {
+      return CatalogAvailability.available;
+    }
+    if (feeds.contains(CatalogAvailability.authenticationRequired)) {
+      return CatalogAvailability.authenticationRequired;
+    }
+    return CatalogAvailability.offline;
+  }
+
+  CatalogAvailability get _searchAvailability {
+    if (_catalogAvailability == CatalogAvailability.authenticationRequired) {
+      return CatalogAvailability.authenticationRequired;
+    }
+    if (_catalogAvailability == CatalogAvailability.offline &&
+        _discoveryAvailability == CatalogAvailability.available) {
+      return CatalogAvailability.available;
+    }
+    return _catalogAvailability;
   }
 
   Future<RankingPageView> _loadRankings(RankingsQuery query) async {
@@ -1619,7 +1666,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       home: NoveliaShell(
         appVersion: widget.appVersion,
         novels: _catalogNovels,
-        catalogAvailability: _catalogAvailability,
+        catalogAvailability: _searchAvailability,
+        discoveryAvailability: _discoveryAvailability,
         continuedReads: _libraryContinuedReads(localNovelsById),
         protectedDownloads: _libraryDownloads(localNovelsById),
         bookmarks: _libraryBookmarks(localNovelsById),
@@ -1655,6 +1703,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         onCheckForUpdate: widget.updateChecker == null
             ? null
             : () => widget.updateChecker!.check(widget.appVersion),
+        updateInstaller: widget.updateInstaller,
         onOpenUpdateLink: widget.externalLinkLauncher?.open,
         onFavoriteToFolderRequested: widget.accountGateway == null
             ? null

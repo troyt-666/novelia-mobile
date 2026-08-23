@@ -36,7 +36,7 @@ class AppUpdateManifest {
     required this.version,
     required this.releasePageUri,
     required this.altStoreSourceUri,
-    required this.downloadUris,
+    required this.artifacts,
     this.releaseNotes = '',
   });
 
@@ -55,13 +55,27 @@ class AppUpdateManifest {
     if (downloads is! Map<String, Object?>) {
       throw const FormatException('Invalid update downloads.');
     }
-    final downloadUris = <AppUpdatePlatform, Uri>{};
+    final artifacts = <AppUpdatePlatform, AppUpdateArtifact>{};
     for (final platform in AppUpdatePlatform.values) {
       final value = downloads[platform.manifestKey];
       if (value is! Map<String, Object?>) {
         throw FormatException('Missing ${platform.manifestKey} download.');
       }
-      downloadUris[platform] = _requiredHttpsUri(value, 'url');
+      final size = value['size'];
+      if (size is! int || size <= 0 || size > 512 * 1024 * 1024) {
+        throw FormatException('Invalid ${platform.manifestKey} download size.');
+      }
+      final checksum = _requiredString(value, 'sha256').toLowerCase();
+      if (!_sha256Pattern.hasMatch(checksum)) {
+        throw FormatException(
+          'Invalid ${platform.manifestKey} download checksum.',
+        );
+      }
+      artifacts[platform] = AppUpdateArtifact(
+        uri: _requiredHttpsUri(value, 'url'),
+        size: size,
+        sha256: checksum,
+      );
     }
 
     final releasePageUri = _requiredHttpsUri(json, 'releasePageUrl');
@@ -70,8 +84,8 @@ class AppUpdateManifest {
     if (altStoreSourceUri.toString() != defaultAltStoreSourceUri) {
       throw const FormatException('Untrusted AltStore source URL.');
     }
-    for (final uri in downloadUris.values) {
-      _requireTrustedReleaseUri(uri, download: true);
+    for (final artifact in artifacts.values) {
+      _requireTrustedReleaseUri(artifact.uri, download: true);
     }
 
     return AppUpdateManifest(
@@ -81,7 +95,7 @@ class AppUpdateManifest {
       ),
       releasePageUri: releasePageUri,
       altStoreSourceUri: altStoreSourceUri,
-      downloadUris: Map.unmodifiable(downloadUris),
+      artifacts: Map.unmodifiable(artifacts),
       releaseNotes: _optionalString(json, 'releaseNotes'),
     );
   }
@@ -89,16 +103,28 @@ class AppUpdateManifest {
   final AppVersion version;
   final Uri releasePageUri;
   final Uri altStoreSourceUri;
-  final Map<AppUpdatePlatform, Uri> downloadUris;
+  final Map<AppUpdatePlatform, AppUpdateArtifact> artifacts;
   final String releaseNotes;
 
-  Uri downloadUriFor(AppUpdatePlatform platform) {
-    final uri = downloadUris[platform];
-    if (uri == null) {
+  AppUpdateArtifact artifactFor(AppUpdatePlatform platform) {
+    final artifact = artifacts[platform];
+    if (artifact == null) {
       throw StateError('No update download is configured for $platform.');
     }
-    return uri;
+    return artifact;
   }
+}
+
+class AppUpdateArtifact {
+  const AppUpdateArtifact({
+    required this.uri,
+    required this.size,
+    required this.sha256,
+  });
+
+  final Uri uri;
+  final int size;
+  final String sha256;
 }
 
 class AppUpdateCheck {
@@ -108,7 +134,7 @@ class AppUpdateCheck {
     required this.platform,
     required this.updateAvailable,
     required this.releasePageUri,
-    required this.downloadUri,
+    required this.artifact,
     required this.altStoreSourceUri,
     this.releaseNotes = '',
   });
@@ -118,9 +144,11 @@ class AppUpdateCheck {
   final AppUpdatePlatform platform;
   final bool updateAvailable;
   final Uri releasePageUri;
-  final Uri downloadUri;
+  final AppUpdateArtifact artifact;
   final Uri altStoreSourceUri;
   final String releaseNotes;
+
+  Uri get downloadUri => artifact.uri;
 }
 
 abstract interface class AppUpdateChecker {
@@ -153,6 +181,7 @@ class GitHubAppUpdateChecker implements AppUpdateChecker {
       throw const FormatException('The update manifest must be an object.');
     }
     final manifest = AppUpdateManifest.fromJson(decoded);
+    final artifact = manifest.artifactFor(platform);
     return AppUpdateCheck(
       installedVersion: installedVersion,
       latestVersion: manifest.version,
@@ -162,12 +191,14 @@ class GitHubAppUpdateChecker implements AppUpdateChecker {
         installed: installedVersion,
       ),
       releasePageUri: manifest.releasePageUri,
-      downloadUri: manifest.downloadUriFor(platform),
+      artifact: artifact,
       altStoreSourceUri: manifest.altStoreSourceUri,
       releaseNotes: manifest.releaseNotes,
     );
   }
 }
+
+final _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
 
 bool isVersionNewer({
   required AppVersion candidate,

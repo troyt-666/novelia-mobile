@@ -12,8 +12,10 @@ GitHub Releases are the install and sideload channel:
 
 The app checks a small HTTPS manifest hosted on GitHub Pages. It reports when a
 new version is available and opens the appropriate signed APK, unsigned IPA,
-DMG, or GitHub Release. Installation remains an explicit user action; the app
-does not silently replace itself. Signing material (Android keystore,
+DMG, or GitHub Release. Android downloads the APK into private cache, verifies
+the manifest size and SHA-256, then opens the system package installer directly.
+Installation remains an explicit user action; the app does not silently replace
+itself. Signing material (Android keystore,
 `key.properties`, Apple certificates, profiles, and export options) never
 enters Git.
 
@@ -49,6 +51,8 @@ After publishing the assets, the workflow derives their sizes and SHA-256
 hashes and deploys these files through GitHub Pages:
 
 - `latest.json` — schema-versioned update metadata consumed by the app;
+- `appcast.xml` — Sparkle appcast containing the Ed25519 signature for the
+  macOS DMG;
 - `altstore-source.json` — AltStore Classic source pointing to the unsigned
   release IPA;
 - `icon.png` — source/app artwork referenced by the AltStore metadata.
@@ -56,7 +60,20 @@ hashes and deploys these files through GitHub Pages:
 Enable Pages once in the repository settings with **GitHub Actions** as the
 publishing source. The workflow uses the `github-pages` environment and needs
 `pages: write` plus `id-token: write`; no Pages branch or signing secret is
-required.
+required. The macOS job requires the `SPARKLE_PRIVATE_KEY` Actions secret; only
+its corresponding public key is embedded in `macos/Runner/Info.plist`.
+
+## macOS Sparkle signing
+
+The Sparkle Ed25519 private key is stored in the maintainer's login Keychain
+under account `io.github.troyt666.jfzreader` and in the repository's encrypted
+`SPARKLE_PRIVATE_KEY` Actions secret. Never commit or print the exported key.
+The release job signs the DMG with Sparkle's pinned `sign_update` tool and
+publishes the signature in `appcast.xml`.
+
+The first release that embeds Sparkle must be installed from its DMG. After
+that migration release, Settings can open Sparkle to download, verify, replace,
+and relaunch the sandboxed macOS application.
 
 ## Android signing
 
@@ -156,5 +173,6 @@ device or renewing an expired certificate/profile.
    Android Debug certificate. The unsigned IPA and un-notarized DMG are
    expected.
 9. Confirm the `update-feeds` job deployed successfully, validate both JSON
-   documents, and add the source to AltStore on a physical device before
-   announcing the release.
+   documents and `appcast.xml`, test Sparkle from the previous macOS release,
+   and add the source to AltStore on a physical device before announcing the
+   release.

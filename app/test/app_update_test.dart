@@ -58,6 +58,8 @@ void main() {
       expect(result.latestVersion.display, '1.2.4+5');
       expect(result.platform, AppUpdatePlatform.ios);
       expect(result.downloadUri.path, endsWith('.ipa'));
+      expect(result.artifact.size, 1024);
+      expect(result.artifact.sha256, _checksum('b'));
       expect(result.altStoreSourceUri.path, endsWith('altstore-source.json'));
     },
   );
@@ -74,6 +76,8 @@ void main() {
     final downloads = manifest['downloads']! as Map<String, Object?>;
     downloads['android'] = <String, Object?>{
       'url': 'http://downloads.example/jfz-reader.apk',
+      'size': 1024,
+      'sha256': _checksum('a'),
     };
     expect(() => AppUpdateManifest.fromJson(manifest), throwsFormatException);
 
@@ -105,17 +109,25 @@ Map<String, Object?> _manifest({
         'url':
             'https://github.com/troyt-666/novelia-mobile/releases/download/'
             'v$version/jfz-reader.apk',
+        'size': 1024,
+        'sha256': _checksum('a'),
       },
       'ios': <String, Object?>{
         'url':
             'https://github.com/troyt-666/novelia-mobile/releases/download/'
             'v$version/jfz-reader.ipa',
+        'size': 1024,
+        'sha256': _checksum('b'),
       },
       'macos': <String, Object?>{
         'url':
             'https://github.com/troyt-666/novelia-mobile/releases/download/'
             'v$version/jfz-reader.dmg',
+        'size': 1024,
+        'sha256': _checksum('c'),
       },
     },
   };
 }
+
+String _checksum(String character) => List.filled(64, character).join();

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../core/account/account_models.dart';
 import '../../core/offline/offline_models.dart';
 import '../../core/platform/app_update.dart';
+import '../../core/platform/app_update_installer.dart';
 import '../../core/platform/app_version.dart';
 import '../account/account_screen.dart';
 import 'shell_view_models.dart';
@@ -34,6 +35,7 @@ class SettingsScreen extends StatelessWidget {
     this.onLoginRequested,
     this.onReleasesRequested,
     this.onCheckForUpdate,
+    this.updateInstaller,
     this.onOpenUpdateLink,
     super.key,
   }) : assert(cacheLimitBytes == null || cacheLimitBytes >= 0);
@@ -56,6 +58,7 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onLoginRequested;
   final VoidCallback? onReleasesRequested;
   final Future<AppUpdateCheck> Function()? onCheckForUpdate;
+  final AppUpdateInstaller? updateInstaller;
   final Future<void> Function(Uri uri)? onOpenUpdateLink;
 
   @override
@@ -200,6 +203,7 @@ class SettingsScreen extends StatelessWidget {
               _UpdateTile(
                 appVersion: appVersion,
                 onCheckForUpdate: onCheckForUpdate,
+                updateInstaller: updateInstaller,
                 onOpenUpdateLink: onOpenUpdateLink,
                 onReleasesRequested: onReleasesRequested,
               ),
@@ -463,12 +467,14 @@ class _UpdateTile extends StatefulWidget {
   const _UpdateTile({
     required this.appVersion,
     this.onCheckForUpdate,
+    this.updateInstaller,
     this.onOpenUpdateLink,
     this.onReleasesRequested,
   });
 
   final AppVersion appVersion;
   final Future<AppUpdateCheck> Function()? onCheckForUpdate;
+  final AppUpdateInstaller? updateInstaller;
   final Future<void> Function(Uri uri)? onOpenUpdateLink;
   final VoidCallback? onReleasesRequested;
 
@@ -568,98 +574,17 @@ class _UpdateTileState extends State<_UpdateTile> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                result.updateAvailable ? '发现新版本' : '已是最新版本',
-                style: Theme.of(
-                  sheetContext,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '已安装 ${result.installedVersion.display}'
-                ' · 最新 ${result.latestVersion.display}',
-              ),
-              if (result.releaseNotes.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  result.releaseNotes,
-                  key: const ValueKey('update-release-notes'),
-                  maxLines: 6,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-              const SizedBox(height: 18),
-              if (result.updateAvailable &&
-                  result.platform != AppUpdatePlatform.ios)
-                FilledButton.icon(
-                  key: const ValueKey('download-platform-update'),
-                  onPressed: widget.onOpenUpdateLink == null
-                      ? null
-                      : () => widget.onOpenUpdateLink!(result.downloadUri),
-                  icon: const Icon(Icons.download_outlined),
-                  label: Text(
-                    result.platform == AppUpdatePlatform.android
-                        ? '下载 Android APK'
-                        : '下载 macOS DMG',
-                  ),
-                ),
-              if (result.platform == AppUpdatePlatform.ios) ...[
-                FilledButton.icon(
-                  key: const ValueKey('copy-altstore-source'),
-                  onPressed: () => _copyAltStoreSource(
-                    sheetContext,
-                    result.altStoreSourceUri,
-                  ),
-                  icon: const Icon(Icons.copy),
-                  label: const Text('复制 AltStore 源地址'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  key: const ValueKey('download-sideloadly-ipa'),
-                  onPressed: widget.onOpenUpdateLink == null
-                      ? null
-                      : () => widget.onOpenUpdateLink!(result.downloadUri),
-                  icon: const Icon(Icons.download_outlined),
-                  label: const Text('下载 IPA（Sideloadly）'),
-                ),
-              ],
-              const SizedBox(height: 8),
-              TextButton.icon(
-                key: const ValueKey('open-update-release-page'),
-                onPressed: widget.onOpenUpdateLink == null
-                    ? widget.onReleasesRequested
-                    : () => widget.onOpenUpdateLink!(result.releasePageUri),
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('查看 GitHub 发布页'),
-              ),
-              TextButton(
-                key: const ValueKey('check-update-again'),
-                onPressed: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(_check(showDetails: true));
-                },
-                child: const Text('重新检查'),
-              ),
-            ],
-          ),
-        ),
+      builder: (sheetContext) => _UpdateDetailsSheet(
+        result: result,
+        installer: widget.updateInstaller,
+        onOpenUpdateLink: widget.onOpenUpdateLink,
+        onOpenReleases: widget.onReleasesRequested,
+        onCheckAgain: () {
+          Navigator.of(sheetContext).pop();
+          unawaited(_check(showDetails: true));
+        },
       ),
     );
-  }
-
-  Future<void> _copyAltStoreSource(BuildContext context, Uri uri) async {
-    await Clipboard.setData(ClipboardData(text: uri.toString()));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('AltStore 源地址已复制')));
   }
 
   @override
@@ -685,6 +610,217 @@ class _UpdateTileState extends State<_UpdateTile> {
             ),
       onTap: _checking ? null : _handleTap,
     );
+  }
+}
+
+class _UpdateDetailsSheet extends StatefulWidget {
+  const _UpdateDetailsSheet({
+    required this.result,
+    required this.onCheckAgain,
+    this.installer,
+    this.onOpenUpdateLink,
+    this.onOpenReleases,
+  });
+
+  final AppUpdateCheck result;
+  final AppUpdateInstaller? installer;
+  final Future<void> Function(Uri uri)? onOpenUpdateLink;
+  final VoidCallback? onOpenReleases;
+  final VoidCallback onCheckAgain;
+
+  @override
+  State<_UpdateDetailsSheet> createState() => _UpdateDetailsSheetState();
+}
+
+class _UpdateDetailsSheetState extends State<_UpdateDetailsSheet> {
+  AppUpdateInstallProgress? _progress;
+  String? _installError;
+  var _installing = false;
+  var _installerOpened = false;
+
+  Future<void> _installPlatformUpdate() async {
+    final installer = widget.installer;
+    if (installer == null || _installing) return;
+    setState(() {
+      _installing = true;
+      _installerOpened = false;
+      _installError = null;
+      _progress = null;
+    });
+    try {
+      await installer.install(
+        widget.result,
+        onProgress: (progress) {
+          if (mounted) setState(() => _progress = progress);
+        },
+      );
+      if (!mounted) return;
+      setState(() => _installerOpened = true);
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _installError = error.code == 'INSTALL_PERMISSION_REQUIRED'
+            ? '请允许 JFZ Reader 安装未知应用，然后再次点击更新。'
+            : '无法打开系统更新程序，请稍后重试。';
+      });
+    } on FormatException {
+      if (!mounted) return;
+      setState(() => _installError = '安装包校验失败，未打开系统更新程序。');
+    } on Object {
+      if (!mounted) return;
+      setState(() => _installError = '更新下载失败，请检查网络后重试。');
+    } finally {
+      if (mounted) setState(() => _installing = false);
+    }
+  }
+
+  String get _progressLabel {
+    final progress = _progress;
+    if (progress == null) return '准备下载…';
+    return switch (progress.stage) {
+      AppUpdateInstallStage.downloading =>
+        '正在下载 ${(progress.fraction * 100).floor()}%',
+      AppUpdateInstallStage.verifying => '正在校验安装包…',
+      AppUpdateInstallStage.openingInstaller =>
+        widget.result.platform == AppUpdatePlatform.macos
+            ? '正在打开 Sparkle 更新程序…'
+            : '正在打开系统安装器…',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final result = widget.result;
+    final inAppInstall =
+        (result.platform == AppUpdatePlatform.android ||
+            result.platform == AppUpdatePlatform.macos) &&
+        widget.installer != null;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              result.updateAvailable ? '发现新版本' : '已是最新版本',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '已安装 ${result.installedVersion.display}'
+              ' · 最新 ${result.latestVersion.display}',
+            ),
+            if (result.releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                result.releaseNotes,
+                key: const ValueKey('update-release-notes'),
+                maxLines: 6,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            if (_installing) ...[
+              const SizedBox(height: 18),
+              LinearProgressIndicator(
+                key: const ValueKey('platform-update-progress'),
+                value: _progress?.stage == AppUpdateInstallStage.downloading
+                    ? _progress?.fraction
+                    : null,
+              ),
+              const SizedBox(height: 8),
+              Text(_progressLabel, textAlign: TextAlign.center),
+            ],
+            if (_installerOpened) ...[
+              const SizedBox(height: 12),
+              Text(
+                result.platform == AppUpdatePlatform.macos
+                    ? '已打开 Sparkle 更新程序'
+                    : '已打开 Android 系统安装器',
+                key: const ValueKey('platform-installer-opened'),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            if (_installError case final error?) ...[
+              const SizedBox(height: 12),
+              Text(
+                error,
+                key: const ValueKey('android-update-error'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 18),
+            if (result.updateAvailable &&
+                result.platform != AppUpdatePlatform.ios)
+              FilledButton.icon(
+                key: const ValueKey('download-platform-update'),
+                onPressed: _installing
+                    ? null
+                    : inAppInstall
+                    ? _installPlatformUpdate
+                    : widget.onOpenUpdateLink == null
+                    ? null
+                    : () => widget.onOpenUpdateLink!(result.downloadUri),
+                icon: Icon(
+                  inAppInstall
+                      ? Icons.system_update_alt
+                      : Icons.download_outlined,
+                ),
+                label: Text(
+                  result.platform == AppUpdatePlatform.android
+                      ? '下载并安装 Android 更新'
+                      : inAppInstall
+                      ? '使用 Sparkle 更新并重启 macOS 应用'
+                      : '下载 macOS DMG',
+                ),
+              ),
+            if (result.platform == AppUpdatePlatform.ios) ...[
+              FilledButton.icon(
+                key: const ValueKey('copy-altstore-source'),
+                onPressed: () =>
+                    _copyAltStoreSource(context, result.altStoreSourceUri),
+                icon: const Icon(Icons.copy),
+                label: const Text('复制 AltStore 源地址'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const ValueKey('download-sideloadly-ipa'),
+                onPressed: widget.onOpenUpdateLink == null
+                    ? null
+                    : () => widget.onOpenUpdateLink!(result.downloadUri),
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('下载 IPA（Sideloadly）'),
+              ),
+            ],
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const ValueKey('open-update-release-page'),
+              onPressed: widget.onOpenUpdateLink == null
+                  ? widget.onOpenReleases
+                  : () => widget.onOpenUpdateLink!(result.releasePageUri),
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('查看 GitHub 发布页'),
+            ),
+            TextButton(
+              key: const ValueKey('check-update-again'),
+              onPressed: _installing ? null : widget.onCheckAgain,
+              child: const Text('重新检查'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Future<void> _copyAltStoreSource(BuildContext context, Uri uri) async {
+    await Clipboard.setData(ClipboardData(text: uri.toString()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('AltStore 源地址已复制')));
   }
 }
 

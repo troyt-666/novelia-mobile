@@ -36,11 +36,17 @@ installed package metadata inside the app. Published builds are on the
   blocks it, right-click the app and choose Open.
 
 Installed builds check the project's HTTPS release metadata and show an update
-action in Settings. Installation is still confirmed by the user. AltStore
-Classic users can add the
+action in Settings. On Android, the app downloads the APK into private cache,
+verifies its published size and SHA-256, and opens the system installer without
+routing through the browser. Android still controls the one-time unknown-app
+permission and final installation confirmation. AltStore Classic users can add
+the
 [JFZ Reader source](https://troyt-666.github.io/novelia-mobile/altstore-source.json)
 once; Sideloadly users install each new IPA over the existing app with the same
-Apple ID and bundle identifier.
+Apple ID and bundle identifier. On macOS, Sparkle verifies the release DMG with
+the project's Ed25519 update key, safely replaces the sandboxed app, and offers
+to relaunch into the new version. The first Sparkle-enabled build must still be
+installed manually; later releases support in-app update and restart.
 
 ## Install with AltStore Classic
 

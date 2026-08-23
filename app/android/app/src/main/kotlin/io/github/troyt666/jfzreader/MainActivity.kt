@@ -5,12 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -67,6 +70,87 @@ class MainActivity : FlutterActivity() {
                     "buildNumber" to buildNumber.toString(),
                 ),
             )
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "io.github.troyt666.jfzreader/app_update_installer",
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "ensureInstallPermission") {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !packageManager.canRequestPackageInstalls()
+                ) {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                    result.error(
+                        "INSTALL_PERMISSION_REQUIRED",
+                        "Allow JFZ Reader to install unknown apps, then try again.",
+                        null,
+                    )
+                } else {
+                    result.success(true)
+                }
+                return@setMethodCallHandler
+            }
+            if (call.method != "installApk") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val rawPath = call.arguments as? String
+            if (rawPath == null) {
+                result.error("INVALID_APK", "The update APK path is missing.", null)
+                return@setMethodCallHandler
+            }
+            try {
+                val updateDirectory = File(cacheDir, "jfzreader-updates").canonicalFile
+                val apk = File(rawPath).canonicalFile
+                if (apk.parentFile != updateDirectory ||
+                    !apk.isFile ||
+                    apk.length() <= 0L ||
+                    apk.extension.lowercase() != "apk"
+                ) {
+                    result.error("INVALID_APK", "The update APK is outside app cache.", null)
+                    return@setMethodCallHandler
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !packageManager.canRequestPackageInstalls()
+                ) {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                    result.error(
+                        "INSTALL_PERMISSION_REQUIRED",
+                        "Allow JFZ Reader to install unknown apps, then try again.",
+                        null,
+                    )
+                    return@setMethodCallHandler
+                }
+                val uri = FileProvider.getUriForFile(
+                    this,
+                    "$packageName.update_files",
+                    apk,
+                )
+                val intent = Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(intent)
+                result.success(true)
+            } catch (_: ActivityNotFoundException) {
+                result.success(false)
+            } catch (_: SecurityException) {
+                result.error(
+                    "INSTALL_NOT_ALLOWED",
+                    "Android did not allow the package installer to open.",
+                    null,
+                )
+            }
         }
 
         MethodChannel(

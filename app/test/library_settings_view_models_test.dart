@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/core/platform/app_update.dart';
+import 'package:jfzreader/core/platform/app_update_installer.dart';
 import 'package:jfzreader/core/platform/app_version.dart';
 import 'package:jfzreader/features/shell/library_screen.dart';
 import 'package:jfzreader/features/shell/settings_screen.dart';
@@ -364,9 +367,13 @@ void main() {
               releasePageUri: Uri.parse(
                 'https://github.com/example/repo/releases/tag/v1.3.0+46',
               ),
-              downloadUri: Uri.parse(
-                'https://github.com/example/repo/releases/download/'
-                'v1.3.0+46/JFZ-Reader.ipa',
+              artifact: AppUpdateArtifact(
+                uri: Uri.parse(
+                  'https://github.com/example/repo/releases/download/'
+                  'v1.3.0+46/JFZ-Reader.ipa',
+                ),
+                size: 100,
+                sha256: List.filled(64, 'a').join(),
               ),
               altStoreSourceUri: Uri.parse(
                 'https://example.github.io/repo/altstore-source.json',
@@ -397,5 +404,143 @@ void main() {
       await tester.pump();
       expect(openedUris.single.path, endsWith('.ipa'));
     });
+
+    testWidgets('Android updates download in-app before opening installer', (
+      tester,
+    ) async {
+      const installed = AppVersion(name: '1.2.3', buildNumber: '45');
+      final openedUris = <Uri>[];
+      final installer = _ControlledUpdateInstaller();
+      final update = AppUpdateCheck(
+        installedVersion: installed,
+        latestVersion: const AppVersion(name: '1.3.0', buildNumber: '46'),
+        platform: AppUpdatePlatform.android,
+        updateAvailable: true,
+        releasePageUri: Uri.parse(
+          'https://github.com/example/repo/releases/tag/v1.3.0+46',
+        ),
+        artifact: AppUpdateArtifact(
+          uri: Uri.parse(
+            'https://github.com/example/repo/releases/download/'
+            'v1.3.0+46/JFZ-Reader.apk',
+          ),
+          size: 100,
+          sha256: List.filled(64, 'a').join(),
+        ),
+        altStoreSourceUri: Uri.parse(
+          'https://example.github.io/repo/altstore-source.json',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        SettingsScreen(
+          appVersion: installed,
+          themeMode: ThemeMode.system,
+          onThemeModeChanged: (_) {},
+          onClearSearchHistory: () {},
+          onCheckForUpdate: () async => update,
+          updateInstaller: installer,
+          onOpenUpdateLink: (uri) async => openedUris.add(uri),
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('open-releases-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('download-platform-update')));
+      await tester.pump();
+
+      expect(installer.update, same(update));
+      expect(openedUris, isEmpty);
+      expect(
+        find.byKey(const ValueKey('platform-update-progress')),
+        findsOneWidget,
+      );
+      expect(find.text('正在下载 50%'), findsOneWidget);
+
+      installer.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('platform-installer-opened')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('macOS updates open Sparkle instead of the browser', (
+      tester,
+    ) async {
+      const installed = AppVersion(name: '1.2.3', buildNumber: '45');
+      final openedUris = <Uri>[];
+      final installer = _ControlledUpdateInstaller();
+      final update = AppUpdateCheck(
+        installedVersion: installed,
+        latestVersion: const AppVersion(name: '1.3.0', buildNumber: '46'),
+        platform: AppUpdatePlatform.macos,
+        updateAvailable: true,
+        releasePageUri: Uri.parse(
+          'https://github.com/example/repo/releases/tag/v1.3.0+46',
+        ),
+        artifact: AppUpdateArtifact(
+          uri: Uri.parse(
+            'https://github.com/example/repo/releases/download/'
+            'v1.3.0+46/JFZ-Reader.dmg',
+          ),
+          size: 100,
+          sha256: List.filled(64, 'a').join(),
+        ),
+        altStoreSourceUri: Uri.parse(
+          'https://example.github.io/repo/altstore-source.json',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        SettingsScreen(
+          appVersion: installed,
+          themeMode: ThemeMode.system,
+          onThemeModeChanged: (_) {},
+          onClearSearchHistory: () {},
+          onCheckForUpdate: () async => update,
+          updateInstaller: installer,
+          onOpenUpdateLink: (uri) async => openedUris.add(uri),
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('open-releases-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('使用 Sparkle 更新并重启 macOS 应用'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('download-platform-update')));
+      await tester.pump();
+      expect(installer.update, same(update));
+      expect(openedUris, isEmpty);
+
+      installer.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('已打开 Sparkle 更新程序'), findsOneWidget);
+    });
   });
+}
+
+class _ControlledUpdateInstaller implements AppUpdateInstaller {
+  final _completion = Completer<void>();
+  AppUpdateCheck? update;
+
+  @override
+  Future<void> install(
+    AppUpdateCheck update, {
+    AppUpdateProgressChanged? onProgress,
+  }) {
+    this.update = update;
+    onProgress?.call(
+      const AppUpdateInstallProgress(
+        stage: AppUpdateInstallStage.downloading,
+        receivedBytes: 50,
+        totalBytes: 100,
+      ),
+    );
+    return _completion.future;
+  }
+
+  void complete() => _completion.complete();
 }

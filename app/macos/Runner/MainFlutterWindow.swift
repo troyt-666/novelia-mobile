@@ -1,10 +1,16 @@
 import Cocoa
 import FlutterMacOS
+import Sparkle
 
 class MainFlutterWindow: NSWindow {
   private var externalLinksChannel: FlutterMethodChannel?
   private var appVersionChannel: FlutterMethodChannel?
   private var accountSessionChannel: FlutterMethodChannel?
+  private var appUpdateInstallerChannel: FlutterMethodChannel?
+  private lazy var updaterController = SPUStandardUpdaterController(
+    startingUpdater: true,
+    updaterDelegate: nil,
+    userDriverDelegate: nil)
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -56,6 +62,19 @@ class MainFlutterWindow: NSWindow {
       ])
     }
     appVersionChannel = versionChannel
+
+    let updateChannel = FlutterMethodChannel(
+      name: "io.github.troyt666.jfzreader/app_update_installer",
+      binaryMessenger: registrar.messenger)
+    updateChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "checkForUpdates" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      self?.updaterController.checkForUpdates(nil)
+      result(true)
+    }
+    appUpdateInstallerChannel = updateChannel
 
     let accountChannel = FlutterMethodChannel(
       name: "io.github.troyt666.jfzreader/account_session",
