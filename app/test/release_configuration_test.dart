@@ -91,6 +91,13 @@ void main() {
     expect(workflow, contains('generate-update-site.sh'));
     expect(workflow, contains('SPARKLE_PRIVATE_KEY'));
     expect(workflow, contains('macos.sparkle-signature'));
+    expect(workflow, contains('Sparkle-2.9.2.tar.xz'));
+    expect(
+      workflow,
+      contains(
+        '1cb340cbbef04c6c0d162078610c25e2221031d794a3449d89f2f56f4df77c95',
+      ),
+    );
     expect(workflow, contains('actions/deploy-pages@v4'));
     expect(workflow, contains('pages: write'));
     expect(workflow, isNot(contains('signingConfigs.getByName("debug")')));

@@ -278,8 +278,18 @@ jobs:
           fi
           tag="${RELEASE_TAG//\//-}"
           dmg="dist/JFZ-Reader-${tag}-macos.dmg"
-          sign_update="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-            -type f -path '*/Sparkle/bin/sign_update' -perm +111 -print -quit)"
+          sparkle_archive="$RUNNER_TEMP/Sparkle-2.9.2.tar.xz"
+          sparkle_tools="$RUNNER_TEMP/sparkle-tools"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/sparkle-project/Sparkle/releases/download/2.9.2/Sparkle-2.9.2.tar.xz' \
+            --output "$sparkle_archive"
+          printf '%s  %s\n' \
+            '1cb340cbbef04c6c0d162078610c25e2221031d794a3449d89f2f56f4df77c95' \
+            "$sparkle_archive" | shasum -a 256 -c -
+          mkdir -p "$sparkle_tools"
+          tar -xJf "$sparkle_archive" -C "$sparkle_tools"
+          sign_update="$sparkle_tools/bin/sign_update"
           test -x "$sign_update"
           printf '%s' "$SPARKLE_PRIVATE_KEY" | \
             "$sign_update" --ed-key-file - "$dmg" > \
