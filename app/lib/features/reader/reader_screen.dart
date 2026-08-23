@@ -2078,7 +2078,9 @@ class _ReaderScreenState extends State<ReaderScreen>
           controller: _pageController,
           scrollDirection: Axis.horizontal,
           physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
-          allowImplicitScrolling: true,
+          // Offscreen pages contain selectable paragraphs too. Build them on
+          // demand so the active SelectionArea tracks only the visible page.
+          allowImplicitScrolling: false,
           itemCount: pages.length,
           itemBuilder: (context, pageIndex) {
             final page = pages[pageIndex];
