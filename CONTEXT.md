@@ -48,6 +48,14 @@ _Avoid_: one-time novel snapshot, Cache Copy, chapter download
 A chapter-based Novelia-compatible work whose content is read as Aligned Blocks.
 _Avoid_: Wenku work, EPUB, book
 
+**Wenku Novel**:
+A volume-based Novelia-compatible work whose readable editions are provided as Wenku EPUBs rather than chapter content.
+_Avoid_: Web Novel, local book, EPUB file
+
+**Wenku EPUB**:
+A downloadable EPUB edition of one Wenku Novel volume that contains its Japanese Original and a selected Chinese Translation for bilingual reading.
+_Avoid_: Web Novel EPUB, chapter download, source EPUB
+
 **Reader Account**:
 The Novelia identity whose Favorites and Reading History synchronize across reader installations.
 _Avoid_: local profile, device account

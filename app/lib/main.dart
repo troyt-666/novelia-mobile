@@ -26,6 +26,7 @@ import 'features/shell/novelia_shell.dart';
 import 'features/shell/shell_view_models.dart';
 import 'fixtures/catalog_fixture.dart';
 import 'gateway/novelia/http_novelia_gateway.dart';
+import 'gateway/novelia/http_novelia_wenku_gateway.dart';
 import 'gateway/novelia/http_novelia_auth_gateway.dart';
 import 'gateway/novelia/http_novelia_account_gateway.dart';
 import 'gateway/novelia/novelia_account_gateway.dart';
@@ -34,6 +35,7 @@ import 'gateway/novelia/novelia_content_coordinator.dart';
 import 'gateway/novelia/novelia_download_coordinator.dart';
 import 'gateway/novelia/novelia_domain_adapter.dart';
 import 'gateway/novelia/novelia_gateway.dart';
+import 'gateway/novelia/novelia_wenku_gateway.dart';
 import 'gateway/novelia/novelia_reader_window.dart';
 
 const _defaultCacheLimitBytes = 256 * 1024 * 1024;
@@ -51,6 +53,7 @@ Future<void> main() async {
     final gateway = HttpNoveliaGateway(
       accessTokenProvider: accountSessionController.accessToken,
     );
+    final wenkuGateway = HttpNoveliaWenkuGateway();
     final accountGateway = HttpNoveliaAccountGateway(
       accessTokenProvider: accountSessionController.accessToken,
     );
@@ -85,6 +88,7 @@ Future<void> main() async {
         accountSessionController: accountSessionController,
         accountGateway: accountGateway,
         contentCoordinator: contentCoordinator,
+        wenkuGateway: wenkuGateway,
         downloadCoordinator: downloadCoordinator,
         externalLinkLauncher: const MethodChannelExternalLinkLauncher(),
         updateChecker: GitHubAppUpdateChecker(
@@ -100,6 +104,7 @@ Future<void> main() async {
           gateway.close();
           authGateway.close();
           accountGateway.close();
+          wenkuGateway.close();
         },
       ),
     );
@@ -113,6 +118,7 @@ class NoveliaReaderApp extends StatefulWidget {
     required this.repository,
     this.appVersion = const AppVersion.unavailable(),
     this.contentCoordinator,
+    this.wenkuGateway,
     this.downloadCoordinator,
     this.accountSessionController,
     this.accountGateway,
@@ -128,6 +134,7 @@ class NoveliaReaderApp extends StatefulWidget {
   final SqliteOfflineRepository repository;
   final AppVersion appVersion;
   final NoveliaContentCoordinator? contentCoordinator;
+  final NoveliaWenkuGateway? wenkuGateway;
   final NoveliaDownloadCoordinator? downloadCoordinator;
   final AccountSessionController? accountSessionController;
   final NoveliaAccountGateway? accountGateway;
@@ -1664,6 +1671,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
       home: NoveliaShell(
+        wenkuGateway: widget.wenkuGateway,
         appVersion: widget.appVersion,
         novels: _catalogNovels,
         catalogAvailability: _searchAvailability,
