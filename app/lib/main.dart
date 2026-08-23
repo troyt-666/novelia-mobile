@@ -158,6 +158,14 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _mostClickedNovels = const <CatalogNovel>[];
   var _mostClickedGeneration = 0;
   var _recentlyUpdatedGeneration = 0;
+  var _mostClickedPageIndex = -1;
+  var _mostClickedTotalPages = 0;
+  var _mostClickedLoadingMore = false;
+  var _mostClickedLoadMoreFailed = false;
+  var _recentlyUpdatedPageIndex = -1;
+  var _recentlyUpdatedTotalPages = 0;
+  var _recentlyUpdatedLoadingMore = false;
+  var _recentlyUpdatedLoadMoreFailed = false;
   var _defaultRankingPageSize = 0;
   var _currentDestination = 0;
   var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
@@ -535,7 +543,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       });
     }
     final base = widget.catalogQuery;
-    final provider = _providerIdForSource(requestedCriteria.source);
+    final providers = _usesAllCatalogSources(requestedCriteria.sources)
+        ? base.providers
+        : [
+            for (final source in requestedCriteria.sources)
+              ?_providerIdForSource(source),
+          ];
     final effectiveSearch = requestedCriteria.search.trim().isNotEmpty
         ? requestedCriteria.search.trim()
         : requestedCriteria.exactTag?.trim() ?? '';
@@ -543,7 +556,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       page: targetPage,
       pageSize: base.pageSize,
       search: effectiveSearch,
-      providers: provider == null ? base.providers : [provider],
+      providers: providers,
       publicationType: _publicationTypeFor(
         requestedCriteria.publicationState,
         fallback: base.publicationType,
@@ -586,6 +599,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
             _catalogNovels = List.unmodifiable(incoming);
             if (_isPlainRecentlyUpdated(requestedCriteria)) {
               _recentlyUpdatedNovels = _catalogNovels;
+              _recentlyUpdatedPageIndex = slice.pageIndex;
+              _recentlyUpdatedTotalPages = slice.totalPages;
             }
           }
           _catalogPageIndex = slice.pageIndex;
@@ -672,10 +687,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     CatalogNovel novel,
     CatalogCriteria criteria,
   ) {
-    final selectedSource = criteria.source;
-    if (selectedSource != null &&
-        _providerIdForSource(novel.source) !=
-            _providerIdForSource(selectedSource)) {
+    final selectedProviders = criteria.sources
+        .map(_providerIdForSource)
+        .whereType<String>();
+    if (!selectedProviders.contains(_providerIdForSource(novel.source))) {
       return false;
     }
     final isRestricted = novel.tags.any(
@@ -701,15 +716,31 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     return true;
   }
 
-  Future<void> _refreshMostClicked() async {
+  Future<void> _refreshMostClicked({bool append = false}) async {
     final coordinator = widget.contentCoordinator;
     if (coordinator == null) return;
-    final generation = ++_mostClickedGeneration;
+    if (append &&
+        (_mostClickedLoadingMore ||
+            _mostClickedPageIndex < 0 ||
+            _mostClickedPageIndex + 1 >= _mostClickedTotalPages)) {
+      return;
+    }
+    final generation = append
+        ? _mostClickedGeneration
+        : ++_mostClickedGeneration;
+    final targetPage = append ? _mostClickedPageIndex + 1 : 0;
     final base = widget.catalogQuery;
+    if (append && mounted) {
+      setState(() {
+        _mostClickedLoadingMore = true;
+        _mostClickedLoadMoreFailed = false;
+      });
+    }
     try {
       final result = await coordinator.loadCatalog(
         NoveliaCatalogQuery(
-          pageSize: 8,
+          page: targetPage,
+          pageSize: base.pageSize,
           providers: base.providers,
           contentLevel: base.contentLevel,
           sort: 1,
@@ -717,22 +748,49 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       );
       if (!mounted || generation != _mostClickedGeneration) return;
       final data = result.data;
-      if (data != null && result.origin == NoveliaContentOrigin.live) {
-        setState(() => _mostClickedNovels = List.unmodifiable(data.novels));
-      }
+      setState(() {
+        _mostClickedLoadingMore = false;
+        _mostClickedLoadMoreFailed = append && data == null;
+        if (data == null || result.origin != NoveliaContentOrigin.live) return;
+        _mostClickedNovels = append
+            ? _appendUniqueNovels(_mostClickedNovels, data.novels)
+            : List.unmodifiable(data.novels);
+        _mostClickedPageIndex = data.pageIndex;
+        _mostClickedTotalPages = data.totalPages;
+      });
     } on Object {
-      // Popularity order cannot be reconstructed truthfully from cached rows.
+      if (!mounted || generation != _mostClickedGeneration) return;
+      setState(() {
+        _mostClickedLoadingMore = false;
+        _mostClickedLoadMoreFailed = append;
+      });
     }
   }
 
-  Future<void> _refreshRecentlyUpdated() async {
+  Future<void> _refreshRecentlyUpdated({bool append = false}) async {
     final coordinator = widget.contentCoordinator;
     if (coordinator == null) return;
-    final generation = ++_recentlyUpdatedGeneration;
+    if (append &&
+        (_recentlyUpdatedLoadingMore ||
+            _recentlyUpdatedPageIndex < 0 ||
+            _recentlyUpdatedPageIndex + 1 >= _recentlyUpdatedTotalPages)) {
+      return;
+    }
+    final generation = append
+        ? _recentlyUpdatedGeneration
+        : ++_recentlyUpdatedGeneration;
+    final targetPage = append ? _recentlyUpdatedPageIndex + 1 : 0;
     final base = widget.catalogQuery;
+    if (append && mounted) {
+      setState(() {
+        _recentlyUpdatedLoadingMore = true;
+        _recentlyUpdatedLoadMoreFailed = false;
+      });
+    }
     try {
       final result = await coordinator.loadCatalog(
         NoveliaCatalogQuery(
+          page: targetPage,
           pageSize: base.pageSize,
           providers: base.providers,
           contentLevel: base.contentLevel,
@@ -741,22 +799,61 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       );
       if (!mounted || generation != _recentlyUpdatedGeneration) return;
       final data = result.data;
-      if (data != null) {
-        setState(() => _recentlyUpdatedNovels = List.unmodifiable(data.novels));
-      }
+      setState(() {
+        _recentlyUpdatedLoadingMore = false;
+        _recentlyUpdatedLoadMoreFailed = append && data == null;
+        if (data == null) return;
+        _recentlyUpdatedNovels = append
+            ? _appendUniqueNovels(_recentlyUpdatedNovels, data.novels)
+            : List.unmodifiable(data.novels);
+        _recentlyUpdatedPageIndex = data.pageIndex;
+        _recentlyUpdatedTotalPages = data.totalPages;
+      });
     } on Object {
-      // Keep the last verified/cache-restored discovery feed.
+      if (!mounted || generation != _recentlyUpdatedGeneration) return;
+      setState(() {
+        _recentlyUpdatedLoadingMore = false;
+        _recentlyUpdatedLoadMoreFailed = append;
+      });
     }
+  }
+
+  static List<CatalogNovel> _appendUniqueNovels(
+    List<CatalogNovel> current,
+    List<CatalogNovel> incoming,
+  ) {
+    final seen = {for (final novel in current) novel.id};
+    return List.unmodifiable([
+      ...current,
+      for (final novel in incoming)
+        if (seen.add(novel.id)) novel,
+    ]);
+  }
+
+  Future<void> _refreshDiscoveryFeeds() async {
+    await Future.wait([_refreshRecentlyUpdated(), _refreshMostClicked()]);
+  }
+
+  Future<void> _loadMoreDiscovery(CatalogSort sort) {
+    return sort == CatalogSort.mostClicked
+        ? _refreshMostClicked(append: true)
+        : _refreshRecentlyUpdated(append: true);
   }
 
   static bool _isPlainRecentlyUpdated(CatalogCriteria criteria) {
     return criteria.search.trim().isEmpty &&
-        criteria.source == null &&
+        _usesAllCatalogSources(criteria.sources) &&
         criteria.publicationState == null &&
         criteria.contentLevel == CatalogContentLevel.all &&
         criteria.translationSource == null &&
         criteria.exactTag == null &&
         criteria.sort == CatalogSort.recentlyUpdated;
+  }
+
+  static bool _usesAllCatalogSources(List<String> sources) {
+    final selected = sources.toSet();
+    return selected.length == catalogSourceValues.length &&
+        selected.containsAll(catalogSourceValues);
   }
 
   Future<RankingPageView> _loadRankings(RankingsQuery query) async {
@@ -1579,12 +1676,28 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         onCatalogLoadMoreRequested: widget.contentCoordinator == null
             ? null
             : _loadMoreCatalog,
+        onDiscoveryRefreshRequested: widget.contentCoordinator == null
+            ? null
+            : _refreshDiscoveryFeeds,
+        onDiscoveryLoadMoreRequested: widget.contentCoordinator == null
+            ? null
+            : _loadMoreDiscovery,
         catalogHasMore:
             _catalogPageIndex >= 0 &&
             _catalogPageIndex + 1 < _catalogTotalPages,
         catalogLoading: _catalogLoading,
         catalogLoadingMore: _catalogLoadingMore,
         catalogLoadMoreFailed: _catalogLoadMoreFailed,
+        recentlyUpdatedHasMore:
+            _recentlyUpdatedPageIndex >= 0 &&
+            _recentlyUpdatedPageIndex + 1 < _recentlyUpdatedTotalPages,
+        recentlyUpdatedLoadingMore: _recentlyUpdatedLoadingMore,
+        recentlyUpdatedLoadMoreFailed: _recentlyUpdatedLoadMoreFailed,
+        mostClickedHasMore:
+            _mostClickedPageIndex >= 0 &&
+            _mostClickedPageIndex + 1 < _mostClickedTotalPages,
+        mostClickedLoadingMore: _mostClickedLoadingMore,
+        mostClickedLoadMoreFailed: _mostClickedLoadMoreFailed,
         mostClickedNovels: _mostClickedNovels,
         recentlyUpdatedNovels: _recentlyUpdatedNovels,
         rankingsLoader: widget.contentCoordinator == null

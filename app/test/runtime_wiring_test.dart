@@ -86,6 +86,24 @@ void main() {
         coordinator.queries.map((query) => query.sort),
         containsAll([0, 1]),
       );
+      final discoveryFooter = find.byKey(
+        const ValueKey('load-next-catalog-page'),
+      );
+      await tester.scrollUntilVisible(
+        discoveryFooter,
+        500,
+        scrollable: find.byType(Scrollable).first,
+      );
+      if (discoveryFooter.evaluate().isNotEmpty) {
+        await tester.tap(discoveryFooter);
+      }
+      await tester.pumpAndSettle();
+      expect(
+        coordinator.queries.any((query) => query.sort == 0 && query.page == 1),
+        isTrue,
+      );
+      expect(find.text('目录第二页'), findsWidgets);
+
       await tester.tap(find.byKey(const ValueKey('open-rankings-button')));
       await tester.pumpAndSettle();
       expect(find.text('服务排行第一'), findsWidgets);
@@ -208,7 +226,22 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('filter-source-Syosetu')));
     await tester.pumpAndSettle();
-    expect(coordinator.queries.last.providers, const ['syosetu']);
+    expect(coordinator.queries.last.providers, isNot(contains('syosetu')));
+    expect(
+      coordinator.queries.last.providers,
+      containsAll(const [
+        'kakuyomu',
+        'novelup',
+        'hameln',
+        'pixiv',
+        'alphapolis',
+      ]),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('filter-source-Pixiv')));
+    await tester.pumpAndSettle();
+    expect(coordinator.queries.last.providers, isNot(contains('pixiv')));
+    expect(coordinator.queries.last.providers, isNot(contains('syosetu')));
 
     await tester.tap(find.byKey(const ValueKey('filter-state-ongoing')));
     await tester.pumpAndSettle();

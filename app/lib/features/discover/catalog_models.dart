@@ -37,6 +37,15 @@ enum CatalogContentLevel {
 
 enum CatalogAvailability { available, authenticationRequired, offline }
 
+const catalogSourceValues = <String>[
+  'Kakuyomu',
+  'Syosetu',
+  'Novelup',
+  'Hameln',
+  'Pixiv',
+  'Alphapolis',
+];
+
 /// Package-neutral criteria for the Web Novel catalog.
 ///
 /// Values intentionally use the labels already presented by the feature UI;
@@ -45,16 +54,28 @@ enum CatalogAvailability { available, authenticationRequired, offline }
 class CatalogCriteria {
   const CatalogCriteria({
     this.search = '',
-    this.source,
+    String? source,
+    List<String>? sources,
     this.publicationState,
     this.contentLevel = CatalogContentLevel.all,
     this.translationSource,
     this.exactTag,
     this.sort = CatalogSort.recentlyUpdated,
-  });
+  }) : assert(source == null || sources == null),
+       _source = source,
+       _sources = sources;
 
   final String search;
-  final String? source;
+  final String? _source;
+  final List<String>? _sources;
+
+  /// Selected catalog sources. An omitted source filter means every source,
+  /// matching the website's default checked state.
+  List<String> get sources =>
+      _sources ?? (_source == null ? catalogSourceValues : <String>[_source]);
+
+  /// Compatibility view for callers that only understand a single source.
+  String? get source => sources.length == 1 ? sources.single : null;
   final NovelPublicationState? publicationState;
   final CatalogContentLevel contentLevel;
   final String? translationSource;
@@ -65,7 +86,7 @@ class CatalogCriteria {
   bool operator ==(Object other) =>
       other is CatalogCriteria &&
       other.search == search &&
-      other.source == source &&
+      setEquals(other.sources.toSet(), sources.toSet()) &&
       other.publicationState == publicationState &&
       other.contentLevel == contentLevel &&
       other.translationSource == translationSource &&
@@ -75,7 +96,7 @@ class CatalogCriteria {
   @override
   int get hashCode => Object.hash(
     search,
-    source,
+    Object.hashAllUnordered(sources.toSet()),
     publicationState,
     contentLevel,
     translationSource,

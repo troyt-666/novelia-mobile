@@ -89,11 +89,19 @@ class NoveliaShell extends StatefulWidget {
     this.onCatalogCriteriaRequested,
     this.onCatalogSearchRequested,
     this.onCatalogLoadMoreRequested,
+    this.onDiscoveryRefreshRequested,
+    this.onDiscoveryLoadMoreRequested,
     this.catalogTotalCount,
     this.catalogHasMore = false,
     this.catalogLoading = false,
     this.catalogLoadingMore = false,
     this.catalogLoadMoreFailed = false,
+    this.recentlyUpdatedHasMore = false,
+    this.recentlyUpdatedLoadingMore = false,
+    this.recentlyUpdatedLoadMoreFailed = false,
+    this.mostClickedHasMore = false,
+    this.mostClickedLoadingMore = false,
+    this.mostClickedLoadMoreFailed = false,
     this.rankingsLoader,
     this.mostClickedNovels = const [],
     this.recentlyUpdatedNovels = const [],
@@ -150,11 +158,19 @@ class NoveliaShell extends StatefulWidget {
   /// [onCatalogCriteriaRequested].
   final FutureOr<void> Function(String query)? onCatalogSearchRequested;
   final FutureOr<void> Function()? onCatalogLoadMoreRequested;
+  final FutureOr<void> Function()? onDiscoveryRefreshRequested;
+  final FutureOr<void> Function(CatalogSort sort)? onDiscoveryLoadMoreRequested;
   final int? catalogTotalCount;
   final bool catalogHasMore;
   final bool catalogLoading;
   final bool catalogLoadingMore;
   final bool catalogLoadMoreFailed;
+  final bool recentlyUpdatedHasMore;
+  final bool recentlyUpdatedLoadingMore;
+  final bool recentlyUpdatedLoadMoreFailed;
+  final bool mostClickedHasMore;
+  final bool mostClickedLoadingMore;
+  final bool mostClickedLoadMoreFailed;
   final RankingsLoader? rankingsLoader;
   final List<CatalogNovel> mostClickedNovels;
   final List<CatalogNovel> recentlyUpdatedNovels;
@@ -207,6 +223,16 @@ class _NoveliaShellState extends State<NoveliaShell> {
   }
 
   void _selectDestination(int value) {
+    if (value == _destination) {
+      if (value == 0 && widget.onDiscoveryRefreshRequested != null) {
+        unawaited(
+          Future<void>.sync(
+            widget.onDiscoveryRefreshRequested!,
+          ).catchError((_) {}),
+        );
+      }
+      return;
+    }
     setState(() => _destination = value);
     widget.onDestinationChanged?.call(value);
   }
@@ -756,6 +782,14 @@ class _NoveliaShellState extends State<NoveliaShell> {
                 requestedPosition: continuedRead.position,
               ),
         mostClickedNovels: widget.mostClickedNovels,
+        onRefreshRequested: widget.onDiscoveryRefreshRequested,
+        onDiscoveryLoadMoreRequested: widget.onDiscoveryLoadMoreRequested,
+        recentlyUpdatedHasMore: widget.recentlyUpdatedHasMore,
+        recentlyUpdatedLoadingMore: widget.recentlyUpdatedLoadingMore,
+        recentlyUpdatedLoadMoreFailed: widget.recentlyUpdatedLoadMoreFailed,
+        mostClickedHasMore: widget.mostClickedHasMore,
+        mostClickedLoadingMore: widget.mostClickedLoadingMore,
+        mostClickedLoadMoreFailed: widget.mostClickedLoadMoreFailed,
         rankingsLoader: widget.rankingsLoader,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
