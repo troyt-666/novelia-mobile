@@ -250,9 +250,16 @@ jobs:
         run: |
           set -euo pipefail
           tag="${RELEASE_TAG//\//-}"
-          macos_app="$(find app/build/macos/Build/Products/Release -type d -name '*.app' -print -prune | head -n 1)"
-          test -n "$macos_app"
+          macos_app="app/build/macos/Build/Products/Release/jfzreader.app"
           test -d "$macos_app"
+          info_plist="$macos_app/Contents/Info.plist"
+          app_release="$(sed -n 's/^version:[[:space:]]*//p' app/pubspec.yaml)"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")" = \
+            "io.github.troyt666.jfzreader"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")" = \
+            "${app_release%+*}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")" = \
+            "${app_release##*+}"
 
           rm -rf dmg-root dist
           mkdir -p dmg-root dist

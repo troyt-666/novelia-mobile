@@ -91,6 +91,18 @@ void main() {
     expect(workflow, contains('generate-update-site.sh'));
     expect(workflow, contains('SPARKLE_PRIVATE_KEY'));
     expect(workflow, contains('macos.sparkle-signature'));
+    expect(
+      workflow,
+      contains('app/build/macos/Build/Products/Release/jfzreader.app'),
+    );
+    expect(
+      workflow,
+      isNot(
+        contains(
+          "find app/build/macos/Build/Products/Release -type d -name '*.app'",
+        ),
+      ),
+    );
     expect(workflow, contains('Sparkle-2.9.2.tar.xz'));
     expect(
       workflow,
