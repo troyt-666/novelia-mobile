@@ -2,10 +2,56 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SelectedContent;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/features/reader/reader_screen.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
+
+void _expectReaderKeyboardMapping() {
+  expect(
+    readerNavigationDirectionForKey(
+      LogicalKeyboardKey.arrowUp,
+      ReaderLayoutMode.scroll,
+    ),
+    ReaderLoadDirection.before,
+  );
+  expect(
+    readerNavigationDirectionForKey(
+      LogicalKeyboardKey.arrowDown,
+      ReaderLayoutMode.scroll,
+    ),
+    ReaderLoadDirection.after,
+  );
+  expect(
+    readerNavigationDirectionForKey(
+      LogicalKeyboardKey.arrowLeft,
+      ReaderLayoutMode.pages,
+    ),
+    ReaderLoadDirection.before,
+  );
+  expect(
+    readerNavigationDirectionForKey(
+      LogicalKeyboardKey.arrowRight,
+      ReaderLayoutMode.pages,
+    ),
+    ReaderLoadDirection.after,
+  );
+  expect(
+    readerNavigationDirectionForKey(
+      LogicalKeyboardKey.arrowLeft,
+      ReaderLayoutMode.scroll,
+    ),
+    isNull,
+  );
+  expect(
+    readerNavigationDirectionForKey(
+      LogicalKeyboardKey.arrowDown,
+      ReaderLayoutMode.pages,
+    ),
+    isNull,
+  );
+}
 
 NovelChapter _windowChapter(int number, {int blockCount = 6}) {
   return NovelChapter(
@@ -47,14 +93,14 @@ ReaderNovel _windowNovel(List<NovelChapter> chapters) {
   );
 }
 
-ReaderNovel _oversizedBlockNovel() {
+ReaderNovel _oversizedBlockNovel({String id = 'oversized-block-novel'}) {
   final chinese = List.filled(120, '这一段文字会跨越多个横向页面，用来验证分页不会退化成垂直滚动。').join();
   final japanese = List.filled(
     120,
     'この段落は複数の横ページにまたがり、縦スクロールへ戻らないことを確認します。',
   ).join();
   return ReaderNovel(
-    id: 'oversized-block-novel',
+    id: id,
     chineseTitle: '超长段落',
     japaneseTitle: '長い段落',
     author: '测试作者',
@@ -195,6 +241,60 @@ void main() {
     }
     expect(reached(), isTrue, reason: '阅读器未触发预期的边界请求');
   }
+
+  test('reader keyboard arrows follow the active layout axis', () {
+    _expectReaderKeyboardMapping();
+  });
+
+  testWidgets('direction keys turn the network reader on its active axis', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      novel: _oversizedBlockNovel(id: 'keyboard-vertical-novel'),
+      viewSize: const Size(430, 600),
+    );
+    final vertical = _readerScrollable(tester).position;
+    final verticalStart = vertical.pixels;
+    expect(vertical.maxScrollExtent, greaterThan(0));
+    final verticalKeyboard = tester.widget<KeyboardListener>(
+      find.byKey(const ValueKey('reader-keyboard-navigation')),
+    );
+    expect(verticalKeyboard.focusNode.hasFocus, isTrue);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(vertical.pixels, verticalStart);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(vertical.pixels, greaterThan(verticalStart));
+
+    await pumpReader(
+      tester,
+      novel: _oversizedBlockNovel(id: 'keyboard-horizontal-novel'),
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+      viewSize: const Size(430, 600),
+    );
+    final horizontal = _readerScrollable(tester).position;
+    final horizontalStart = horizontal.pixels;
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(horizontal.pixels, horizontalStart);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 280));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(horizontal.pixels, greaterThan(horizontalStart));
+  });
 
   testWidgets('renders Chinese first with Japanese underneath', (tester) async {
     await pumpReader(tester);

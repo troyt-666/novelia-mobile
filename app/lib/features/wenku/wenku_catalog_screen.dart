@@ -17,6 +17,7 @@ class WenkuCatalogScreen extends StatefulWidget {
 class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
   final _searchController = TextEditingController();
   var _items = const <WenkuNovelSummary>[];
+  var _level = WenkuCatalogLevel.all;
   var _loading = true;
   Object? _failure;
   var _generation = 0;
@@ -41,7 +42,10 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
     });
     try {
       final page = await widget.gateway.listNovels(
-        WenkuCatalogQuery(search: search ?? _searchController.text.trim()),
+        WenkuCatalogQuery(
+          search: search ?? _searchController.text.trim(),
+          level: _level,
+        ),
       );
       if (mounted && generation == _generation) {
         setState(() => _items = page.items);
@@ -77,7 +81,7 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
               sliver: SliverToBoxAdapter(
                 child: SearchBar(
                   key: const ValueKey('wenku-search-field'),
@@ -97,6 +101,39 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
                   ],
                   onChanged: (_) => setState(() {}),
                   onSubmitted: _load,
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              sliver: SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('分级', style: Theme.of(context).textTheme.labelLarge),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final level in WenkuCatalogLevel.values) ...[
+                            ChoiceChip(
+                              key: ValueKey('wenku-level-${level.name}'),
+                              label: Text(level.label),
+                              selected: _level == level,
+                              onSelected: (_) {
+                                if (_level == level) return;
+                                setState(() => _level = level);
+                                unawaited(_load());
+                              },
+                            ),
+                            if (level != WenkuCatalogLevel.values.last)
+                              const SizedBox(width: 8),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

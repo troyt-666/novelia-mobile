@@ -11,6 +11,21 @@ import '../../core/model/reader_models.dart';
 typedef ReaderBookmarkChanged =
     void Function(ReadingPosition position, bool bookmarked);
 
+@visibleForTesting
+ReaderLoadDirection? readerNavigationDirectionForKey(
+  LogicalKeyboardKey key,
+  ReaderLayoutMode layoutMode,
+) {
+  if (layoutMode == ReaderLayoutMode.scroll) {
+    if (key == LogicalKeyboardKey.arrowUp) return ReaderLoadDirection.before;
+    if (key == LogicalKeyboardKey.arrowDown) return ReaderLoadDirection.after;
+    return null;
+  }
+  if (key == LogicalKeyboardKey.arrowLeft) return ReaderLoadDirection.before;
+  if (key == LogicalKeyboardKey.arrowRight) return ReaderLoadDirection.after;
+  return null;
+}
+
 abstract interface class ReaderOrientationController {
   Future<void> apply(ReaderOrientationPreference preference);
 
@@ -95,6 +110,9 @@ class _ReaderScreenState extends State<ReaderScreen>
   final Map<String, BuildContext> _mountedItemContexts = {};
   final _verticalScrollController = ScrollController();
   final _pageController = PageController();
+  final _keyboardFocusNode = FocusNode(
+    debugLabel: 'reader-keyboard-navigation',
+  );
   final _viewportKey = GlobalKey(debugLabel: 'reader-viewport');
   final _anchorBlockId = RestorableStringN(null);
   late final RestorableInt _modeIndex;
@@ -422,6 +440,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     WidgetsBinding.instance.removeObserver(this);
     _verticalScrollController.dispose();
     _pageController.dispose();
+    _keyboardFocusNode.dispose();
     _anchorBlockId.dispose();
     _modeIndex.dispose();
     _sourceIndex.dispose();
@@ -1133,6 +1152,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    if (!_keyboardFocusNode.hasFocus) _keyboardFocusNode.requestFocus();
     if (_selectionActive) return;
     if (_tapPointer != null) return;
     _tapPointer = event.pointer;
@@ -1191,6 +1211,19 @@ class _ReaderScreenState extends State<ReaderScreen>
             : ReaderLoadDirection.after,
       ),
     );
+  }
+
+  void _handleKeyEvent(KeyEvent event) {
+    if (!mounted || _selectionActive) return;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return;
+    }
+    final direction = readerNavigationDirectionForKey(
+      event.logicalKey,
+      _settings.layoutMode,
+    );
+    if (direction == null) return;
+    unawaited(_turnPage(direction));
   }
 
   Future<void> _turnPage(ReaderLoadDirection direction) async {
@@ -2186,57 +2219,67 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
     }
 
-    return Scaffold(
-      backgroundColor: readerBackground,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: Semantics(
-              label: _settings.layoutMode == ReaderLayoutMode.pages
-                  ? '分页阅读区域'
-                  : '滚动阅读区域',
-              onIncrease: () => unawaited(_turnPage(ReaderLoadDirection.after)),
-              onDecrease: () =>
-                  unawaited(_turnPage(ReaderLoadDirection.before)),
-              child: Listener(
-                key: const ValueKey('reader-center-tap-area'),
-                behavior: HitTestBehavior.translucent,
-                onPointerDown: _handlePointerDown,
-                onPointerUp: _handlePointerUp,
-                onPointerCancel: _handlePointerCancel,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    final expectedAxis =
-                        _settings.layoutMode == ReaderLayoutMode.pages
-                        ? Axis.horizontal
-                        : Axis.vertical;
-                    if (notification.metrics.axis != expectedAxis) {
+    return KeyboardListener(
+      key: const ValueKey('reader-keyboard-navigation'),
+      focusNode: _keyboardFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        backgroundColor: readerBackground,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: Semantics(
+                label: _settings.layoutMode == ReaderLayoutMode.pages
+                    ? '分页阅读区域'
+                    : '滚动阅读区域',
+                onIncrease: () =>
+                    unawaited(_turnPage(ReaderLoadDirection.after)),
+                onDecrease: () =>
+                    unawaited(_turnPage(ReaderLoadDirection.before)),
+                child: Listener(
+                  key: const ValueKey('reader-center-tap-area'),
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _handlePointerDown,
+                  onPointerUp: _handlePointerUp,
+                  onPointerCancel: _handlePointerCancel,
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      final expectedAxis =
+                          _settings.layoutMode == ReaderLayoutMode.pages
+                          ? Axis.horizontal
+                          : Axis.vertical;
+                      if (notification.metrics.axis != expectedAxis) {
+                        return false;
+                      }
+                      _handleScrollMetrics(notification.metrics);
+                      _handleReaderScroll(notification);
+                      if (!_restoring &&
+                          !_preservingDynamicAnchor &&
+                          (notification is ScrollEndNotification ||
+                              notification is ScrollUpdateNotification)) {
+                        _captureAnchor(
+                          notify: notification is ScrollEndNotification,
+                        );
+                      }
                       return false;
-                    }
-                    _handleScrollMetrics(notification.metrics);
-                    _handleReaderScroll(notification);
-                    if (!_restoring &&
-                        !_preservingDynamicAnchor &&
-                        (notification is ScrollEndNotification ||
-                            notification is ScrollUpdateNotification)) {
-                      _captureAnchor(
-                        notify: notification is ScrollEndNotification,
-                      );
-                    }
-                    return false;
-                  },
-                  child: SelectionArea(
-                    key: const ValueKey('reader-selection-area'),
-                    onSelectionChanged: _handleSelectionChanged,
-                    child: KeyedSubtree(
-                      key: const ValueKey('reader-stream'),
-                      child: SizedBox.expand(
-                        key: _viewportKey,
-                        child: RepaintBoundary(
-                          key: const ValueKey('reader-scroll-repaint-boundary'),
-                          child: _settings.layoutMode == ReaderLayoutMode.pages
-                              ? _buildHorizontalReader(foreground)
-                              : _buildVerticalReader(foreground),
+                    },
+                    child: SelectionArea(
+                      key: const ValueKey('reader-selection-area'),
+                      onSelectionChanged: _handleSelectionChanged,
+                      child: KeyedSubtree(
+                        key: const ValueKey('reader-stream'),
+                        child: SizedBox.expand(
+                          key: _viewportKey,
+                          child: RepaintBoundary(
+                            key: const ValueKey(
+                              'reader-scroll-repaint-boundary',
+                            ),
+                            child:
+                                _settings.layoutMode == ReaderLayoutMode.pages
+                                ? _buildHorizontalReader(foreground)
+                                : _buildVerticalReader(foreground),
+                          ),
                         ),
                       ),
                     ),
@@ -2244,53 +2287,53 @@ class _ReaderScreenState extends State<ReaderScreen>
                 ),
               ),
             ),
-          ),
-          _ReaderTopChrome(
-            visible: _chromeVisible,
-            title: widget.novel.chineseTitle,
-            chapterTitle: currentChapter?.chineseTitle ?? '',
-            onBack: () => Navigator.maybePop(context),
-            background: readerColors.chrome,
-            foreground: foreground,
-          ),
-          _ReaderBottomChrome(
-            visible: _chromeVisible,
-            mode: _settings.readingMode,
-            source: _settings.translationSource,
-            bookmarked: currentBookmark,
-            catalog: catalog,
-            activeChapterIndex: currentCatalogIndex < 0
-                ? 0
-                : currentCatalogIndex,
-            chapterProgress: chapterProgress,
-            onChapterSelected: _openCatalogIndex,
-            onCatalog: () => _runChromeAction(_showCatalog),
-            onMode: () => _runChromeAction(_toggleMode),
-            onSource: () => _runChromeAction(_showTranslationSources),
-            onSettings: () => _runChromeAction(_showSettings),
-            onBookmark: () => _runChromeAction(_toggleBookmark),
-            background: readerColors.chrome,
-            foreground: foreground,
-          ),
-          if (_catalogLoading || _catalogLoadError != null)
-            _ReaderCatalogLoadOverlay(
-              loading: _catalogLoading,
-              error: _catalogLoadError,
-              chapter: _catalogRetryEntry,
-              onDismiss: _dismissCatalogError,
-              onRetry: _catalogRetryEntry == null
-                  ? null
-                  : () => unawaited(_openCatalogEntry(_catalogRetryEntry!)),
+            _ReaderTopChrome(
+              visible: _chromeVisible,
+              title: widget.novel.chineseTitle,
+              chapterTitle: currentChapter?.chineseTitle ?? '',
+              onBack: () => Navigator.maybePop(context),
+              background: readerColors.chrome,
+              foreground: foreground,
             ),
-          if (_restoring)
-            Positioned.fill(
-              child: ColoredBox(
-                key: const ValueKey('reader-restoring'),
-                color: readerBackground,
-                child: const _ReaderSkeleton(),
+            _ReaderBottomChrome(
+              visible: _chromeVisible,
+              mode: _settings.readingMode,
+              source: _settings.translationSource,
+              bookmarked: currentBookmark,
+              catalog: catalog,
+              activeChapterIndex: currentCatalogIndex < 0
+                  ? 0
+                  : currentCatalogIndex,
+              chapterProgress: chapterProgress,
+              onChapterSelected: _openCatalogIndex,
+              onCatalog: () => _runChromeAction(_showCatalog),
+              onMode: () => _runChromeAction(_toggleMode),
+              onSource: () => _runChromeAction(_showTranslationSources),
+              onSettings: () => _runChromeAction(_showSettings),
+              onBookmark: () => _runChromeAction(_toggleBookmark),
+              background: readerColors.chrome,
+              foreground: foreground,
+            ),
+            if (_catalogLoading || _catalogLoadError != null)
+              _ReaderCatalogLoadOverlay(
+                loading: _catalogLoading,
+                error: _catalogLoadError,
+                chapter: _catalogRetryEntry,
+                onDismiss: _dismissCatalogError,
+                onRetry: _catalogRetryEntry == null
+                    ? null
+                    : () => unawaited(_openCatalogEntry(_catalogRetryEntry!)),
               ),
-            ),
-        ],
+            if (_restoring)
+              Positioned.fill(
+                child: ColoredBox(
+                  key: const ValueKey('reader-restoring'),
+                  color: readerBackground,
+                  child: const _ReaderSkeleton(),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

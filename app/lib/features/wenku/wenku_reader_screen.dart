@@ -1,13 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import 'wenku_epub_document.dart';
+
+@visibleForTesting
+String? wenkuReaderActionForKey(LogicalKeyboardKey key) {
+  if (key == LogicalKeyboardKey.arrowLeft) return 'previous';
+  if (key == LogicalKeyboardKey.arrowRight) return 'next';
+  return null;
+}
 
 class WenkuReaderScreen extends StatefulWidget {
   const WenkuReaderScreen({
@@ -35,16 +42,30 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   var _localFraction = 0.0;
   var _overallProgress = 0.0;
   var _fontSize = 18.0;
+  var _palette = WenkuEpubPalette.automatic;
+  var _japaneseOpacity = .68;
   var _loading = true;
   var _controlsVisible = true;
   var _fontMenuVisible = false;
   var _turningPage = false;
+  Brightness? _lastBrightness;
   String? _pendingFragment;
 
   @override
   void initState() {
     super.initState();
     _initialize();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final brightness = Theme.of(context).brightness;
+    final changed = _lastBrightness != null && _lastBrightness != brightness;
+    _lastBrightness = brightness;
+    if (changed && _palette == WenkuEpubPalette.automatic) {
+      unawaited(_applyAppearance());
+    }
   }
 
   void _initialize() {
@@ -171,6 +192,8 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
         dark: Theme.of(context).brightness == Brightness.dark,
         fontSize: _fontSize,
         japaneseFirst: widget.order == WenkuBilingualOrder.japaneseFirst,
+        palette: _palette,
+        japaneseOpacity: _japaneseOpacity,
       );
       await controller.loadHtmlString(html);
     } on Object catch (error) {
@@ -190,6 +213,37 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
     } else {
       await controller.runJavaScript('readerSetFraction($_localFraction);');
     }
+  }
+
+  WenkuEpubColors _resolvedColors() => _palette.resolve(
+    systemDark: Theme.of(context).brightness == Brightness.dark,
+  );
+
+  Future<void> _applyAppearance() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final colors = _resolvedColors();
+    try {
+      await controller.runJavaScript(
+        'readerSetAppearance('
+        '${jsonEncode(colors.background)},'
+        '${jsonEncode(colors.foreground)},'
+        '$_japaneseOpacity);',
+      );
+    } on Object {
+      // A theme change may race a spine replacement. The next document load
+      // receives the same values in its initial CSS.
+    }
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final action = wenkuReaderActionForKey(event.logicalKey);
+    if (action == null) return KeyEventResult.ignored;
+    unawaited(action == 'next' ? _next() : _previous());
+    return KeyEventResult.handled;
   }
 
   Future<void> _next() async {
@@ -269,6 +323,16 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
     await _loadSpine(fraction: _localFraction);
   }
 
+  void _setPalette(WenkuEpubPalette palette) {
+    setState(() => _palette = palette);
+    unawaited(_applyAppearance());
+  }
+
+  void _setJapaneseOpacity(double opacity) {
+    setState(() => _japaneseOpacity = opacity);
+    unawaited(_applyAppearance());
+  }
+
   Future<void> _seek(double value) async {
     final document = _document;
     if (document == null) return;
@@ -285,108 +349,66 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Scaffold(
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (_failure != null)
-            Positioned.fill(
-              child: _ReaderFailure(
-                details: _failureDetails,
-                onRetry: _initialize,
-              ),
-            )
-          else ...[
-            if (_controller != null)
-              Positioned.fill(child: WebViewWidget(controller: _controller!)),
-            if (_loading)
+    final readerColors = _resolvedColors();
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        backgroundColor: _colorFromHex(readerColors.background),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_failure != null)
               Positioned.fill(
-                child: ColoredBox(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? const Color(0xff171613)
-                      : const Color(0xfffbf8f1),
-                  child: const Center(child: CircularProgressIndicator()),
+                child: _ReaderFailure(
+                  details: _failureDetails,
+                  onRetry: _initialize,
                 ),
-              ),
-          ],
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: IgnorePointer(
-              ignoring: !_controlsVisible,
-              child: AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 160),
-                child: SafeArea(
-                  bottom: false,
-                  child: Material(
-                    color: colors.surfaceContainer.withValues(alpha: .96),
-                    child: SizedBox(
-                      height: 64,
-                      child: Row(
-                        children: [
-                          const BackButton(),
-                          Expanded(
-                            child: Text(
-                              widget.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: '目录',
-                            onPressed: _showContents,
-                            icon: const Icon(Icons.toc),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                      ),
-                    ),
+              )
+            else ...[
+              if (_controller != null)
+                Positioned.fill(child: WebViewWidget(controller: _controller!)),
+              if (_loading)
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: _colorFromHex(readerColors.background),
+                    child: const Center(child: CircularProgressIndicator()),
                   ),
                 ),
-              ),
-            ),
-          ),
-          if (_failure == null)
+            ],
             Positioned(
+              top: 0,
               left: 0,
               right: 0,
-              bottom: 0,
               child: IgnorePointer(
                 ignoring: !_controlsVisible,
                 child: AnimatedOpacity(
                   opacity: _controlsVisible ? 1 : 0,
                   duration: const Duration(milliseconds: 160),
                   child: SafeArea(
-                    top: false,
+                    bottom: false,
                     child: Material(
                       color: colors.surfaceContainer.withValues(alpha: .96),
                       child: SizedBox(
                         height: 64,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Slider(
-                                  value: _overallProgress,
-                                  onChanged: (value) =>
-                                      setState(() => _overallProgress = value),
-                                  onChangeEnd: _seek,
-                                ),
+                        child: Row(
+                          children: [
+                            const BackButton(),
+                            Expanded(
+                              child: Text(
+                                widget.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleLarge,
                               ),
-                              Text('${(_overallProgress * 100).round()}%'),
-                              IconButton(
-                                tooltip: '字号',
-                                onPressed: () => setState(
-                                  () => _fontMenuVisible = !_fontMenuVisible,
-                                ),
-                                icon: const Icon(Icons.text_fields),
-                              ),
-                            ],
-                          ),
+                            ),
+                            IconButton(
+                              tooltip: '目录',
+                              onPressed: _showContents,
+                              icon: const Icon(Icons.toc),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                         ),
                       ),
                     ),
@@ -394,32 +416,94 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
                 ),
               ),
             ),
-          if (_fontMenuVisible && _failure == null)
-            Positioned.fill(
-              child: WenkuReaderFontSizeOverlay(
-                currentFontSize: _fontSize,
-                onDismiss: () => setState(() => _fontMenuVisible = false),
-                onSelected: _setFontSize,
+            if (_failure == null)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 160),
+                    child: SafeArea(
+                      top: false,
+                      child: Material(
+                        color: colors.surfaceContainer.withValues(alpha: .96),
+                        child: SizedBox(
+                          height: 64,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Slider(
+                                    value: _overallProgress,
+                                    onChanged: (value) => setState(
+                                      () => _overallProgress = value,
+                                    ),
+                                    onChangeEnd: _seek,
+                                  ),
+                                ),
+                                Text('${(_overallProgress * 100).round()}%'),
+                                IconButton(
+                                  key: const ValueKey(
+                                    'wenku-reader-settings-button',
+                                  ),
+                                  tooltip: '阅读设置',
+                                  onPressed: () => setState(
+                                    () => _fontMenuVisible = !_fontMenuVisible,
+                                  ),
+                                  icon: const Icon(Icons.text_fields),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
-        ],
+            if (_fontMenuVisible && _failure == null)
+              Positioned.fill(
+                child: WenkuReaderSettingsOverlay(
+                  currentFontSize: _fontSize,
+                  palette: _palette,
+                  japaneseOpacity: _japaneseOpacity,
+                  onDismiss: () => setState(() => _fontMenuVisible = false),
+                  onFontSizeSelected: _setFontSize,
+                  onPaletteSelected: _setPalette,
+                  onJapaneseOpacitySelected: _setJapaneseOpacity,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
 @visibleForTesting
-class WenkuReaderFontSizeOverlay extends StatelessWidget {
-  const WenkuReaderFontSizeOverlay({
+class WenkuReaderSettingsOverlay extends StatelessWidget {
+  const WenkuReaderSettingsOverlay({
     required this.currentFontSize,
+    required this.palette,
+    required this.japaneseOpacity,
     required this.onDismiss,
-    required this.onSelected,
+    required this.onFontSizeSelected,
+    required this.onPaletteSelected,
+    required this.onJapaneseOpacitySelected,
     super.key,
   });
 
   final double currentFontSize;
+  final WenkuEpubPalette palette;
+  final double japaneseOpacity;
   final VoidCallback onDismiss;
-  final ValueChanged<double> onSelected;
+  final ValueChanged<double> onFontSizeSelected;
+  final ValueChanged<WenkuEpubPalette> onPaletteSelected;
+  final ValueChanged<double> onJapaneseOpacitySelected;
 
   @override
   Widget build(BuildContext context) {
@@ -429,7 +513,7 @@ class WenkuReaderFontSizeOverlay extends StatelessWidget {
         Positioned.fill(
           child: Semantics(
             button: true,
-            label: '关闭字号菜单',
+            label: '关闭阅读设置',
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: onDismiss,
@@ -445,29 +529,82 @@ class WenkuReaderFontSizeOverlay extends StatelessWidget {
             color: colors.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(12),
             clipBehavior: Clip.antiAlias,
-            child: SizedBox(
-              width: 168,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final option in const <(double, String)>[
-                    (15, '小字号'),
-                    (18, '标准字号'),
-                    (22, '大字号'),
-                    (26, '特大字号'),
-                  ])
-                    ListTile(
-                      dense: true,
-                      leading: Icon(
-                        currentFontSize == option.$1
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_unchecked,
-                        size: 20,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * .72,
+              ),
+              child: SizedBox(
+                width: 292,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '阅读设置',
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      title: Text(option.$2),
-                      onTap: () => onSelected(option.$1),
-                    ),
-                ],
+                      const SizedBox(height: 14),
+                      Text('背景', style: Theme.of(context).textTheme.labelLarge),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 7,
+                        runSpacing: 4,
+                        children: [
+                          for (final option in WenkuEpubPalette.values)
+                            ChoiceChip(
+                              key: ValueKey(
+                                'wenku-reader-palette-${option.name}',
+                              ),
+                              label: Text(option.label),
+                              selected: palette == option,
+                              onSelected: (_) => onPaletteSelected(option),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        '日文原文',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      SegmentedButton<double>(
+                        key: const ValueKey('wenku-reader-japanese-opacity'),
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(value: .45, label: Text('弱')),
+                          ButtonSegment(value: .68, label: Text('标准')),
+                          ButtonSegment(value: .9, label: Text('清晰')),
+                        ],
+                        selected: {japaneseOpacity},
+                        onSelectionChanged: (value) =>
+                            onJapaneseOpacitySelected(value.single),
+                      ),
+                      const SizedBox(height: 12),
+                      const Divider(),
+                      Text('字号', style: Theme.of(context).textTheme.labelLarge),
+                      for (final option in const <(double, String)>[
+                        (15, '小字号'),
+                        (18, '标准字号'),
+                        (22, '大字号'),
+                        (26, '特大字号'),
+                      ])
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            currentFontSize == option.$1
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_unchecked,
+                            size: 20,
+                          ),
+                          title: Text(option.$2),
+                          onTap: () => onFontSizeSelected(option.$1),
+                        ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -476,6 +613,9 @@ class WenkuReaderFontSizeOverlay extends StatelessWidget {
     );
   }
 }
+
+Color _colorFromHex(String value) =>
+    Color(int.parse(value.substring(1), radix: 16) | 0xff000000);
 
 String _failureMessage(Object error) {
   if (error is NoveliaGatewayException) return error.message;

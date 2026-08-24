@@ -22,6 +22,8 @@ void main() {
       dark: false,
       fontSize: 18,
       japaneseFirst: true,
+      palette: WenkuEpubPalette.sepia,
+      japaneseOpacity: .9,
     );
     expect(html, contains('<ruby>鉄<rt>てつ</rt></ruby>'));
     expect(html, contains('p[style*="opacity"]'));
@@ -36,6 +38,11 @@ void main() {
     expect(html, contains('break-inside: avoid-column !important'));
     expect(html, contains('Content-Security-Policy'));
     expect(html, contains('readerNext'));
+    expect(html, contains('--reader-background: #f4ecd8'));
+    expect(html, contains('--reader-japanese-opacity: 0.90'));
+    expect(html, contains('window.readerSetAppearance'));
+    expect(html, contains("event.key === 'ArrowLeft'"));
+    expect(html, contains("event.key === 'ArrowRight'"));
     expect(
       html,
       contains(

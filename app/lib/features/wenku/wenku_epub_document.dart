@@ -7,6 +7,48 @@ import 'package:xml/xml.dart';
 
 import '../../gateway/novelia/novelia_gateway.dart';
 
+enum WenkuEpubPalette {
+  automatic,
+  paper,
+  sepia,
+  eyeCare,
+  lowLight,
+  dark,
+  black,
+}
+
+extension WenkuEpubPaletteStyle on WenkuEpubPalette {
+  String get label => switch (this) {
+    WenkuEpubPalette.automatic => '自动',
+    WenkuEpubPalette.paper => '纸张',
+    WenkuEpubPalette.sepia => '米黄',
+    WenkuEpubPalette.eyeCare => '护眼',
+    WenkuEpubPalette.lowLight => '低光',
+    WenkuEpubPalette.dark => '深色',
+    WenkuEpubPalette.black => '纯黑',
+  };
+
+  WenkuEpubColors resolve({required bool systemDark}) => switch (this) {
+    WenkuEpubPalette.automatic =>
+      systemDark
+          ? const WenkuEpubColors('#171613', '#eee7da')
+          : const WenkuEpubColors('#fbf8f1', '#292621'),
+    WenkuEpubPalette.paper => const WenkuEpubColors('#fbf8f1', '#292621'),
+    WenkuEpubPalette.sepia => const WenkuEpubColors('#f4ecd8', '#3a3024'),
+    WenkuEpubPalette.eyeCare => const WenkuEpubColors('#dce8d2', '#263126'),
+    WenkuEpubPalette.lowLight => const WenkuEpubColors('#d8d2c4', '#282622'),
+    WenkuEpubPalette.dark => const WenkuEpubColors('#171613', '#eee7da'),
+    WenkuEpubPalette.black => const WenkuEpubColors('#050505', '#dedbd4'),
+  };
+}
+
+class WenkuEpubColors {
+  const WenkuEpubColors(this.background, this.foreground);
+
+  final String background;
+  final String foreground;
+}
+
 class WenkuEpubTocEntry {
   const WenkuEpubTocEntry({
     required this.title,
@@ -166,6 +208,8 @@ class WenkuEpubDocument {
     required bool dark,
     required double fontSize,
     required bool japaneseFirst,
+    WenkuEpubPalette palette = WenkuEpubPalette.automatic,
+    double japaneseOpacity = .68,
   }) {
     if (index < 0 || index >= _spinePaths.length) {
       throw RangeError.index(index, _spinePaths, 'index');
@@ -238,8 +282,9 @@ class WenkuEpubDocument {
 
     final html = document.toXmlString(pretty: false);
     final style = _readerCss(
-      dark: dark,
+      colors: palette.resolve(systemDark: dark),
       fontSize: fontSize,
+      japaneseOpacity: japaneseOpacity,
       publicationCss: _publicationCss,
     );
     final additions =
@@ -370,12 +415,13 @@ class WenkuEpubDocument {
 }
 
 String _readerCss({
-  required bool dark,
+  required WenkuEpubColors colors,
   required double fontSize,
+  required double japaneseOpacity,
   required String publicationCss,
 }) {
-  final background = dark ? '#171613' : '#fbf8f1';
-  final foreground = dark ? '#eee7da' : '#292621';
+  final background = colors.background;
+  final foreground = colors.foreground;
   const pagination = '''
 html {
   width: 100vw !important; height: 100vh !important;
@@ -399,13 +445,16 @@ $publicationCss
 html {
   --reader-inline-padding: clamp(28px, 6vw, 72px);
   --reader-block-padding: clamp(60px, 8vh, 84px);
+  --reader-background: $background;
+  --reader-foreground: $foreground;
+  --reader-japanese-opacity: ${japaneseOpacity.clamp(0.35, 1).toStringAsFixed(2)};
   writing-mode: horizontal-tb !important;
   -webkit-writing-mode: horizontal-tb !important;
   direction: ltr !important;
-  background: $background !important;
+  background: var(--reader-background) !important;
 }
 body {
-  box-sizing: border-box; background: $background !important; color: $foreground !important;
+  box-sizing: border-box; background: var(--reader-background) !important; color: var(--reader-foreground) !important;
   font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif !important;
   font-size: ${fontSize.toStringAsFixed(1)}px !important; line-height: 1.9 !important; letter-spacing: .015em;
   padding: var(--reader-block-padding) var(--reader-inline-padding) !important;
@@ -452,7 +501,7 @@ body:not(.reader-image-only) .reader-visual-block img,
 body:not(.reader-image-only) .reader-visual-block svg {
   max-width: 100% !important; max-height: 100% !important;
 }
-p[style*="opacity"], .wenku-jp { opacity: .68 !important; font-family: "Yu Mincho", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif !important; font-size: .94em; }
+p[style*="opacity"], .wenku-jp { opacity: var(--reader-japanese-opacity) !important; font-family: "Yu Mincho", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif !important; font-size: .94em; }
 .wenku-pair-first { margin: 1.2em 0 .3em !important; }
 .wenku-pair-second { margin: .3em 0 1.2em !important; }
 ruby { ruby-position: over; } rt { font-size: .52em; font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif; }
@@ -549,6 +598,14 @@ String _readerScript({required bool japaneseFirst}) {
     scrollToPage(logicalPage, smooth);
   };
   const sendAction = action => ReaderBridge.postMessage(JSON.stringify({action}));
+  window.readerSetAppearance = (background, foreground, originalOpacity) => {
+    root.style.setProperty('--reader-background', String(background));
+    root.style.setProperty('--reader-foreground', String(foreground));
+    root.style.setProperty(
+      '--reader-japanese-opacity',
+      String(Math.max(.35, Math.min(1, Number(originalOpacity) || .68)))
+    );
+  };
   const applyPendingLocation = () => {
     if (!layoutReady || !pendingLocation) return;
     const location = pendingLocation;
@@ -594,6 +651,19 @@ String _readerScript({required bool japaneseFirst}) {
     moveToPage(logicalPage, false);
   };
   window.readerProgress = () => JSON.stringify(metrics());
+  window.addEventListener('keydown', event => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target;
+    if (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)/.test(target?.tagName || '')) return;
+    const action = event.key === 'ArrowLeft'
+      ? 'previous'
+      : event.key === 'ArrowRight'
+        ? 'next'
+        : null;
+    if (!action) return;
+    event.preventDefault();
+    sendAction(action);
+  });
   document.querySelectorAll('p[style*="opacity"]').forEach(original => {
     original.classList.add('wenku-jp', originalIsFirst ? 'wenku-pair-first' : 'wenku-pair-second');
     const translation = originalIsFirst ? original.nextElementSibling : original.previousElementSibling;

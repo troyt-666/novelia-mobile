@@ -29,26 +29,40 @@ extension WenkuBilingualOrderCode on WenkuBilingualOrder {
   };
 }
 
+enum WenkuCatalogLevel {
+  all(0, '全部小说'),
+  lightNovel(1, '轻小说'),
+  lightLiterature(2, '轻文学'),
+  literature(3, '文学'),
+  nonfiction(4, '非小说'),
+  r18Male(5, 'R18男性向'),
+  r18Female(6, 'R18女性向');
+
+  const WenkuCatalogLevel(this.serviceCode, this.label);
+
+  final int serviceCode;
+  final String label;
+}
+
 class WenkuCatalogQuery {
   const WenkuCatalogQuery({
     this.page = 0,
     this.pageSize = 20,
     this.search = '',
-    this.level = 1,
+    this.level = WenkuCatalogLevel.all,
   });
 
   final int page;
   final int pageSize;
   final String search;
 
-  /// Signed-out readers start with general light novels only.
-  final int level;
+  final WenkuCatalogLevel level;
 
   Map<String, String> toQueryParameters() => {
     'page': '$page',
     'pageSize': '$pageSize',
     'query': search,
-    'level': '$level',
+    'level': '${level.serviceCode}',
   };
 }
 

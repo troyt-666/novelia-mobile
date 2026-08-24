@@ -10,6 +10,20 @@ import 'package:jfzreader/gateway/novelia/novelia_wenku_gateway.dart';
 void main() {
   const codec = WenkuJsonCodec();
 
+  test('encodes every upstream Wenku catalog level', () {
+    expect(
+      [
+        for (final level in WenkuCatalogLevel.values)
+          WenkuCatalogQuery(level: level).toQueryParameters()['level'],
+      ],
+      ['0', '1', '2', '3', '4', '5', '6'],
+    );
+    expect(
+      [for (final level in WenkuCatalogLevel.values) level.label],
+      ['全部小说', '轻小说', '轻文学', '文学', '非小说', 'R18男性向', 'R18女性向'],
+    );
+  });
+
   test('decodes Wenku catalog and translation coverage independently', () {
     final page = codec.decodeNovelPage({
       'items': [
