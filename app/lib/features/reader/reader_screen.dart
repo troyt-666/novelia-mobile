@@ -130,6 +130,8 @@ class _ReaderScreenState extends State<ReaderScreen>
   late final RestorableDouble _readingWidth;
   late final RestorableInt _columnLayoutIndex;
   late final RestorableInt _orientationIndex;
+  late final RestorableBool _textSelectionEnabled;
+  late final RestorableBool _tapPageTurnEnabled;
   final Set<String> _bookmarks = {};
   final Map<String, ReadingPosition> _bookmarkPositions = {};
   final Set<String> _mountedBlockIds = {};
@@ -196,6 +198,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     _readingWidth = RestorableDouble(_settings.readingWidth);
     _columnLayoutIndex = RestorableInt(_settings.columnLayout.index);
     _orientationIndex = RestorableInt(_settings.orientationPreference.index);
+    _textSelectionEnabled = RestorableBool(_settings.textSelectionEnabled);
+    _tapPageTurnEnabled = RestorableBool(_settings.tapPageTurnEnabled);
     _orientationController =
         widget.orientationController ??
         const SystemReaderOrientationController();
@@ -371,6 +375,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     registerForRestoration(_readingWidth, 'reading-width');
     registerForRestoration(_columnLayoutIndex, 'column-layout');
     registerForRestoration(_orientationIndex, 'orientation-preference');
+    registerForRestoration(_textSelectionEnabled, 'text-selection-enabled');
+    registerForRestoration(_tapPageTurnEnabled, 'tap-page-turn-enabled');
 
     _anchorBlockId.value ??= widget.initialPosition?.blockId;
     _settings = _settings.copyWith(
@@ -390,6 +396,8 @@ class _ReaderScreenState extends State<ReaderScreen>
       columnLayout: ReaderColumnLayout.values[_columnLayoutIndex.value],
       orientationPreference:
           ReaderOrientationPreference.values[_orientationIndex.value],
+      textSelectionEnabled: _textSelectionEnabled.value,
+      tapPageTurnEnabled: _tapPageTurnEnabled.value,
     );
     _scheduleInitialRestore();
   }
@@ -457,6 +465,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     _readingWidth.dispose();
     _columnLayoutIndex.dispose();
     _orientationIndex.dispose();
+    _textSelectionEnabled.dispose();
+    _tapPageTurnEnabled.dispose();
     super.dispose();
   }
 
@@ -1115,6 +1125,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         settings.orientationPreference != _settings.orientationPreference;
     setState(() {
       _settings = settings;
+      if (!settings.textSelectionEnabled) _selectionActive = false;
       _restoring = true;
       _modeIndex.value = settings.readingMode.index;
       _sourceIndex.value = settings.translationSource.index;
@@ -1131,6 +1142,8 @@ class _ReaderScreenState extends State<ReaderScreen>
       _readingWidth.value = settings.readingWidth;
       _columnLayoutIndex.value = settings.columnLayout.index;
       _orientationIndex.value = settings.orientationPreference.index;
+      _textSelectionEnabled.value = settings.textSelectionEnabled;
+      _tapPageTurnEnabled.value = settings.tapPageTurnEnabled;
     });
     if (orientationChanged) {
       await _orientationController.apply(settings.orientationPreference);
@@ -1204,6 +1217,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _showChrome();
       return;
     }
+    if (!_settings.tapPageTurnEnabled) return;
     unawaited(
       _turnPage(
         point.dx < size.width * 0.25
@@ -2219,6 +2233,19 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
     }
 
+    final readerStream = KeyedSubtree(
+      key: const ValueKey('reader-stream'),
+      child: SizedBox.expand(
+        key: _viewportKey,
+        child: RepaintBoundary(
+          key: const ValueKey('reader-scroll-repaint-boundary'),
+          child: _settings.layoutMode == ReaderLayoutMode.pages
+              ? _buildHorizontalReader(foreground)
+              : _buildVerticalReader(foreground),
+        ),
+      ),
+    );
+
     return KeyboardListener(
       key: const ValueKey('reader-keyboard-navigation'),
       focusNode: _keyboardFocusNode,
@@ -2264,25 +2291,13 @@ class _ReaderScreenState extends State<ReaderScreen>
                       }
                       return false;
                     },
-                    child: SelectionArea(
-                      key: const ValueKey('reader-selection-area'),
-                      onSelectionChanged: _handleSelectionChanged,
-                      child: KeyedSubtree(
-                        key: const ValueKey('reader-stream'),
-                        child: SizedBox.expand(
-                          key: _viewportKey,
-                          child: RepaintBoundary(
-                            key: const ValueKey(
-                              'reader-scroll-repaint-boundary',
-                            ),
-                            child:
-                                _settings.layoutMode == ReaderLayoutMode.pages
-                                ? _buildHorizontalReader(foreground)
-                                : _buildVerticalReader(foreground),
-                          ),
-                        ),
-                      ),
-                    ),
+                    child: _settings.textSelectionEnabled
+                        ? SelectionArea(
+                            key: const ValueKey('reader-selection-area'),
+                            onSelectionChanged: _handleSelectionChanged,
+                            child: readerStream,
+                          )
+                        : readerStream,
                   ),
                 ),
               ),
@@ -4105,6 +4120,28 @@ class _ReaderSettingsSheetState extends State<_ReaderSettingsSheet> {
                   },
                 ),
                 const SizedBox(height: 22),
+                _SectionLabel('交互'),
+                SwitchListTile(
+                  key: const ValueKey('settings-text-selection'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('允许选择文本'),
+                  subtitle: const Text('关闭后，长按或拖动不会选中文字'),
+                  value: _draft.textSelectionEnabled,
+                  onChanged: (value) {
+                    _update(_draft.copyWith(textSelectionEnabled: value));
+                  },
+                ),
+                SwitchListTile(
+                  key: const ValueKey('settings-tap-page-turn'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('点击两侧翻页'),
+                  subtitle: const Text('关闭后仍可滑动、拖动或使用键盘翻页'),
+                  value: _draft.tapPageTurnEnabled,
+                  onChanged: (value) {
+                    _update(_draft.copyWith(tapPageTurnEnabled: value));
+                  },
+                ),
+                const SizedBox(height: 10),
                 _SectionLabel('页面配色'),
                 const SizedBox(height: 10),
                 Wrap(

@@ -341,6 +341,34 @@ void main() {
     expect(_readerScrollable(tester).position.pixels, greaterThan(300));
   });
 
+  testWidgets('reader interaction settings disable selection and edge taps', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      initialSettings: const ReaderSettings(
+        layoutMode: ReaderLayoutMode.pages,
+        textSelectionEnabled: false,
+        tapPageTurnEnabled: false,
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('reader-selection-area')), findsNothing);
+    final position = _readerScrollable(tester).position;
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    expect(position.pixels, 0);
+
+    await tester.drag(
+      find.byKey(const ValueKey('reader-stream')),
+      const Offset(-300, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(300));
+  });
+
   testWidgets('renders normalized illustration blocks as images, not URLs', (
     tester,
   ) async {
@@ -669,6 +697,24 @@ void main() {
       findsOneWidget,
     );
     expect(_readerScrollable(tester).position.axis, Axis.horizontal);
+  });
+
+  testWidgets('interaction switches persist through the reader callback', (
+    tester,
+  ) async {
+    final changes = <ReaderSettings>[];
+    await pumpReader(tester, onSettingsChanged: changes.add);
+
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-text-selection')));
+    await tester.tap(find.byKey(const ValueKey('settings-tap-page-turn')));
+    await tester.tap(find.byKey(const ValueKey('settings-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changes.single.textSelectionEnabled, isFalse);
+    expect(changes.single.tapPageTurnEnabled, isFalse);
+    expect(find.byKey(const ValueKey('reader-selection-area')), findsNothing);
   });
 
   testWidgets('reader chrome reports semantic progress and changes chapters', (

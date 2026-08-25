@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 6;
+  static const int currentSchemaVersion = 7;
   static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -98,6 +98,12 @@ final class NoveliaDatabase {
       _transaction(database, () {
         _migrateVersion5To6(database);
         database.userVersion = 6;
+      });
+    }
+    if (database.userVersion == 6) {
+      _transaction(database, () {
+        _migrateVersion6To7(database);
+        database.userVersion = 7;
       });
     }
   }
@@ -356,6 +362,25 @@ final class NoveliaDatabase {
       'orientation_preference':
           'ALTER TABLE app_settings ADD COLUMN orientation_preference TEXT '
           "NOT NULL DEFAULT 'followDevice';",
+    };
+
+    for (final MapEntry(key: column, value: statement) in additions.entries) {
+      if (!existingColumns.contains(column)) database.execute(statement);
+    }
+  }
+
+  static void _migrateVersion6To7(Database database) {
+    final existingColumns = database
+        .select('PRAGMA table_info(app_settings);')
+        .map((row) => row['name'] as String)
+        .toSet();
+    const additions = <String, String>{
+      'text_selection_enabled':
+          'ALTER TABLE app_settings ADD COLUMN text_selection_enabled '
+          'INTEGER NOT NULL DEFAULT 1 CHECK (text_selection_enabled IN (0, 1));',
+      'tap_page_turn_enabled':
+          'ALTER TABLE app_settings ADD COLUMN tap_page_turn_enabled '
+          'INTEGER NOT NULL DEFAULT 1 CHECK (tap_page_turn_enabled IN (0, 1));',
     };
 
     for (final MapEntry(key: column, value: statement) in additions.entries) {

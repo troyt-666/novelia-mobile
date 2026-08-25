@@ -70,7 +70,7 @@ void main() {
       addTearDown(repository.close);
       final settings = repository.appSettings()!.readerSettings;
 
-      expect(repository.schemaVersion, 6);
+      expect(repository.schemaVersion, 7);
       expect(settings.layoutMode, ReaderLayoutMode.scroll);
       expect(settings.palette, ReaderPalette.automatic);
       expect(settings.fontFamily, ReaderFontFamily.systemSans);
@@ -82,6 +82,8 @@ void main() {
         settings.orientationPreference,
         ReaderOrientationPreference.followDevice,
       );
+      expect(settings.textSelectionEnabled, isTrue);
+      expect(settings.tapPageTurnEnabled, isTrue);
     });
   });
 
@@ -157,6 +159,14 @@ void main() {
       expect(
         repository.appSettings()!.readerSettings.palette,
         ReaderPalette.sepia,
+      );
+      expect(
+        repository.appSettings()!.readerSettings.textSelectionEnabled,
+        isFalse,
+      );
+      expect(
+        repository.appSettings()!.readerSettings.tapPageTurnEnabled,
+        isFalse,
       );
       expect(repository.appSettings()!.cacheLimitBytes, 64 * 1024 * 1024);
       expect(repository.passesIntegrityCheck, isTrue);
@@ -524,6 +534,8 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
         readingWidth: 680,
         columnLayout: ReaderColumnLayout.singleColumn,
         orientationPreference: ReaderOrientationPreference.portrait,
+        textSelectionEnabled: false,
+        tapPageTurnEnabled: false,
       ),
       themePreference: ThemePreference.dark,
       notifyNewChapters: true,

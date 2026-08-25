@@ -18,6 +18,8 @@ void main() {
         settings.orientationPreference,
         ReaderOrientationPreference.followDevice,
       );
+      expect(settings.textSelectionEnabled, isTrue);
+      expect(settings.tapPageTurnEnabled, isTrue);
     });
 
     test('reader settings copy all new layout and appearance fields', () {
@@ -30,6 +32,8 @@ void main() {
         pageMargin: 32,
         columnLayout: ReaderColumnLayout.twoColumns,
         orientationPreference: ReaderOrientationPreference.landscape,
+        textSelectionEnabled: false,
+        tapPageTurnEnabled: false,
       );
 
       expect(settings.layoutMode, ReaderLayoutMode.pages);
@@ -43,6 +47,8 @@ void main() {
         settings.orientationPreference,
         ReaderOrientationPreference.landscape,
       );
+      expect(settings.textSelectionEnabled, isFalse);
+      expect(settings.tapPageTurnEnabled, isFalse);
       expect(settings.translationSource, TranslationSource.sakura);
     });
 

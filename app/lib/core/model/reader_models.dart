@@ -51,6 +51,8 @@ class ReaderSettings {
     this.readingWidth = 720,
     this.columnLayout = ReaderColumnLayout.automatic,
     this.orientationPreference = ReaderOrientationPreference.followDevice,
+    this.textSelectionEnabled = true,
+    this.tapPageTurnEnabled = true,
   });
 
   final ReadingMode readingMode;
@@ -68,6 +70,8 @@ class ReaderSettings {
   final double readingWidth;
   final ReaderColumnLayout columnLayout;
   final ReaderOrientationPreference orientationPreference;
+  final bool textSelectionEnabled;
+  final bool tapPageTurnEnabled;
 
   ReaderSettings copyWith({
     ReadingMode? readingMode,
@@ -85,6 +89,8 @@ class ReaderSettings {
     double? readingWidth,
     ReaderColumnLayout? columnLayout,
     ReaderOrientationPreference? orientationPreference,
+    bool? textSelectionEnabled,
+    bool? tapPageTurnEnabled,
   }) {
     return ReaderSettings(
       readingMode: readingMode ?? this.readingMode,
@@ -103,6 +109,8 @@ class ReaderSettings {
       columnLayout: columnLayout ?? this.columnLayout,
       orientationPreference:
           orientationPreference ?? this.orientationPreference,
+      textSelectionEnabled: textSelectionEnabled ?? this.textSelectionEnabled,
+      tapPageTurnEnabled: tapPageTurnEnabled ?? this.tapPageTurnEnabled,
     );
   }
 }
