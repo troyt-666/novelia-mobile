@@ -15,6 +15,7 @@ class DiscoverScreen extends StatefulWidget {
     required this.onOpenNovel,
     required this.onOpenRankings,
     required this.catalogAvailability,
+    this.onOpenWenku,
     this.continuedNovel,
     this.continuedProgress,
     this.onContinueReading,
@@ -48,6 +49,7 @@ class DiscoverScreen extends StatefulWidget {
   final CatalogAvailability catalogAvailability;
   final ValueChanged<CatalogNovel> onOpenNovel;
   final VoidCallback onOpenRankings;
+  final VoidCallback? onOpenWenku;
   final CatalogNovel? continuedNovel;
   final double? continuedProgress;
   final VoidCallback? onContinueReading;
@@ -444,17 +446,29 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   ),
                 ),
                 if (showDiscovery)
-                  FilledButton.tonalIcon(
-                    key: const ValueKey('open-rankings-button'),
-                    onPressed: () {
-                      widget.onOpenRankings();
-                      setState(() {
-                        _showingRankings = true;
-                        _rankingsOpened = true;
-                      });
-                    },
-                    icon: const Icon(Icons.leaderboard_outlined),
-                    label: const Text('排行'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      if (widget.onOpenWenku != null)
+                        FilledButton.tonalIcon(
+                          key: const ValueKey('open-wenku-button'),
+                          onPressed: widget.onOpenWenku,
+                          icon: const Icon(Icons.auto_stories_outlined),
+                          label: const Text('文库'),
+                        ),
+                      FilledButton.tonalIcon(
+                        key: const ValueKey('open-rankings-button'),
+                        onPressed: () {
+                          widget.onOpenRankings();
+                          setState(() {
+                            _showingRankings = true;
+                            _rankingsOpened = true;
+                          });
+                        },
+                        icon: const Icon(Icons.leaderboard_outlined),
+                        label: const Text('排行'),
+                      ),
+                    ],
                   ),
               ],
             ),

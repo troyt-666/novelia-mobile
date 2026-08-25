@@ -16,6 +16,8 @@ import '../account/account_screen.dart';
 import '../account/remote_novel_list_screen.dart';
 import '../novel_details/novel_details_loader_screen.dart';
 import '../novel_details/novel_details_screen.dart';
+import '../wenku/wenku_catalog_screen.dart';
+import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import 'download_management_screen.dart';
 import 'library_screen.dart';
 import 'reader_launch_loader_screen.dart';
@@ -50,6 +52,7 @@ class NoveliaShell extends StatefulWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     required this.catalogAvailability,
+    this.wenkuGateway,
     this.discoveryAvailability,
     this.appVersion = const AppVersion.unavailable(),
     this.novelDetailsLoader,
@@ -125,6 +128,7 @@ class NoveliaShell extends StatefulWidget {
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final CatalogAvailability catalogAvailability;
+  final NoveliaWenkuGateway? wenkuGateway;
   final CatalogAvailability? discoveryAvailability;
   final NovelDetailsLoader? novelDetailsLoader;
   final ReaderLaunchLoader? readerLaunchLoader;
@@ -753,6 +757,17 @@ class _NoveliaShellState extends State<NoveliaShell> {
 
   void _openRankings() {}
 
+  Future<void> _openWenku() async {
+    final gateway = widget.wenkuGateway;
+    if (gateway == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => WenkuCatalogScreen(gateway: gateway),
+        settings: const RouteSettings(name: '/wenku'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_restoringInitialReader) {
@@ -799,6 +814,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
         rankingsLoader: widget.rankingsLoader,
         onOpenNovel: _openNovel,
         onOpenRankings: _openRankings,
+        onOpenWenku: widget.wenkuGateway == null ? null : _openWenku,
         onTagSelected: _openTag,
       ),
       DiscoverScreen(
