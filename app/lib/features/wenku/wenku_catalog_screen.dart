@@ -19,7 +19,11 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
   var _items = const <WenkuNovelSummary>[];
   var _level = WenkuCatalogLevel.all;
   var _loading = true;
+  var _loadingMore = false;
+  var _pageIndex = -1;
+  var _pageCount = 1;
   Object? _failure;
+  Object? _loadMoreFailure;
   var _generation = 0;
 
   @override
@@ -38,17 +42,24 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
     final generation = ++_generation;
     setState(() {
       _loading = true;
+      _loadingMore = false;
       _failure = null;
+      _loadMoreFailure = null;
     });
     try {
       final page = await widget.gateway.listNovels(
         WenkuCatalogQuery(
+          page: 0,
           search: search ?? _searchController.text.trim(),
           level: _level,
         ),
       );
       if (mounted && generation == _generation) {
-        setState(() => _items = page.items);
+        setState(() {
+          _items = page.items;
+          _pageIndex = 0;
+          _pageCount = page.pageCount;
+        });
       }
     } on Object catch (error) {
       if (mounted && generation == _generation) {
@@ -57,6 +68,45 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading ||
+        _loadingMore ||
+        _pageIndex < 0 ||
+        _pageIndex + 1 >= _pageCount) {
+      return;
+    }
+    final generation = _generation;
+    final targetPage = _pageIndex + 1;
+    setState(() {
+      _loadingMore = true;
+      _loadMoreFailure = null;
+    });
+    try {
+      final page = await widget.gateway.listNovels(
+        WenkuCatalogQuery(
+          page: targetPage,
+          search: _searchController.text.trim(),
+          level: _level,
+        ),
+      );
+      if (mounted && generation == _generation) {
+        setState(() {
+          _items = List.unmodifiable([..._items, ...page.items]);
+          _pageIndex = targetPage;
+          _pageCount = page.pageCount;
+        });
+      }
+    } on Object catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() => _loadMoreFailure = error);
+      }
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _loadingMore = false);
       }
     }
   }
@@ -153,7 +203,7 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
               )
             else if (_items.isEmpty)
               const SliverFillRemaining(child: Center(child: Text('没有找到文库小说')))
-            else
+            else ...[
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
                 sliver: SliverList.separated(
@@ -186,6 +236,38 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
                   },
                 ),
               ),
+              if (_pageIndex + 1 < _pageCount)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+                  sliver: SliverToBoxAdapter(
+                    child: Center(
+                      child: FilledButton.tonalIcon(
+                        key: const ValueKey('wenku-load-more-button'),
+                        onPressed: _loadingMore ? null : _loadMore,
+                        icon: _loadingMore
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Icon(
+                                _loadMoreFailure == null
+                                    ? Icons.expand_more
+                                    : Icons.refresh,
+                              ),
+                        label: Text(
+                          _loadingMore
+                              ? '正在载入…'
+                              : _loadMoreFailure == null
+                              ? '载入更多'
+                              : '载入失败，点击重试',
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ],
         ),
       ),

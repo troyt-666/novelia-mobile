@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
+import 'wenku_epub_document.dart';
 
 typedef WenkuEpubRootDirectory = Future<Directory> Function();
 
@@ -20,7 +21,7 @@ class WenkuEpubStore {
     if (!await target.exists()) return null;
     try {
       final bytes = await target.readAsBytes();
-      if (_looksLikeEpub(bytes)) return bytes;
+      if (_isReadableEpub(bytes)) return bytes;
       await target.delete();
     } on FileSystemException {
       // A stale or concurrently replaced cache entry is a cache miss.
@@ -29,7 +30,7 @@ class WenkuEpubStore {
   }
 
   Future<File> save(WenkuEpubRequest request, Uint8List bytes) async {
-    if (!_looksLikeEpub(bytes)) {
+    if (!_isReadableEpub(bytes)) {
       throw const NoveliaGatewayException(
         NoveliaGatewayFailureKind.invalidResponse,
         'The downloaded file was not an EPUB archive.',
@@ -64,7 +65,7 @@ class WenkuEpubStore {
     return target;
   }
 
-  static bool _looksLikeEpub(Uint8List bytes) {
+  static bool _isReadableEpub(Uint8List bytes) {
     if (bytes.length < 64 ||
         bytes[0] != 0x50 ||
         bytes[1] != 0x4b ||
@@ -72,8 +73,11 @@ class WenkuEpubStore {
         bytes[3] != 0x04) {
       return false;
     }
-    final probeLength = bytes.length.clamp(0, 4096);
-    final probe = String.fromCharCodes(bytes.sublist(0, probeLength));
-    return probe.contains('mimetype');
+    try {
+      WenkuEpubDocument.parse(bytes);
+      return true;
+    } on Object {
+      return false;
+    }
   }
 }

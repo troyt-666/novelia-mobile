@@ -441,7 +441,7 @@ body {
 }
 ''';
   return '''
-$publicationCss
+${_cssForStyleElement(publicationCss)}
 html {
   --reader-inline-padding: clamp(28px, 6vw, 72px);
   --reader-block-padding: clamp(60px, 8vh, 84px);
@@ -529,6 +529,9 @@ body.reader-image-only img, body.reader-image-only svg {
 a { color: inherit; }
 ''';
 }
+
+String _cssForStyleElement(String css) =>
+    css.replaceAll(RegExp(r'</style', caseSensitive: false), r'<\/style');
 
 String _readerScript({required bool japaneseFirst}) {
   final originalIsFirst = japaneseFirst ? 'true' : 'false';

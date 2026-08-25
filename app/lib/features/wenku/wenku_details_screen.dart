@@ -85,7 +85,7 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
       final cachedBytes = await widget.store.load(request);
       if (!mounted) return;
       if (cachedBytes != null) {
-        await _openReader(cachedBytes);
+        await _openReader(cachedBytes, order: request.order);
         return;
       }
 
@@ -112,7 +112,7 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
       await widget.store.save(request, bytes);
       downloadCancellation.throwIfCancelled();
       if (!mounted) return;
-      await _openReader(bytes);
+      await _openReader(bytes, order: request.order);
     } on WenkuEpubDownloadCancelledException {
       // Cancellation is an expected user action, not a failed download.
     } on Object catch (error) {
@@ -134,12 +134,15 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
     }
   }
 
-  Future<void> _openReader(Uint8List bytes) => Navigator.of(context).push<void>(
+  Future<void> _openReader(
+    Uint8List bytes, {
+    required WenkuBilingualOrder order,
+  }) => Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) => WenkuReaderScreen(
         epubBytes: bytes,
         title: _novel?.chineseTitle ?? widget.summary.chineseTitle,
-        order: _order,
+        order: order,
       ),
       settings: RouteSettings(name: '/wenku/${widget.summary.id}/reader'),
     ),
@@ -215,8 +218,9 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
               ButtonSegment(value: order, label: Text(order.label)),
           ],
           selected: {_order},
-          onSelectionChanged: (selection) =>
-              setState(() => _order = selection.single),
+          onSelectionChanged: _activeVolumeId != null
+              ? null
+              : (selection) => setState(() => _order = selection.single),
         ),
         const SizedBox(height: 26),
         Text(

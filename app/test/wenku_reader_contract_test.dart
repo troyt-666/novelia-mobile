@@ -78,6 +78,24 @@ void main() {
     expect(imageHtml, contains('overflow: hidden !important'));
   });
 
+  test('publication CSS cannot escape the reader style element', () {
+    final document = WenkuEpubDocument.parse(
+      _fixtureEpub(
+        css: '.safe { color: red; }</style><script>attack()</script><style>',
+      ),
+    );
+
+    final html = document.htmlForSpine(
+      1,
+      dark: false,
+      fontSize: 18,
+      japaneseFirst: true,
+    );
+
+    expect(html, isNot(contains('</style><script>attack()')));
+    expect(html, contains(r'<\/style><script>attack()'));
+  });
+
   test('saved EPUB is reused by a fresh store instance', () async {
     final root = await Directory.systemTemp.createTemp('wenku-store-test-');
     addTearDown(() => root.delete(recursive: true));
@@ -88,14 +106,7 @@ void main() {
       providers: [WenkuTranslationProvider.sakura],
       filename: 'volume-1.epub',
     );
-    final bytes = Uint8List.fromList([
-      0x50,
-      0x4b,
-      0x03,
-      0x04,
-      ...'mimetype'.codeUnits,
-      ...List<int>.filled(80, 0),
-    ]);
+    final bytes = _fixtureEpub();
 
     await WenkuEpubStore(rootDirectory: () async => root).save(request, bytes);
     final restored = await WenkuEpubStore(
@@ -104,9 +115,30 @@ void main() {
 
     expect(restored, bytes);
   });
+
+  test('truncated cached EPUB is evicted instead of reused', () async {
+    final root = await Directory.systemTemp.createTemp('wenku-store-test-');
+    addTearDown(() => root.delete(recursive: true));
+    const request = WenkuEpubRequest(
+      novelId: 'novel-1',
+      volumeId: 'volume-1.epub',
+      order: WenkuBilingualOrder.chineseFirst,
+      providers: [WenkuTranslationProvider.sakura],
+      filename: 'volume-1.epub',
+    );
+    final bytes = _fixtureEpub();
+    final store = WenkuEpubStore(rootDirectory: () async => root);
+    final cached = await store.save(request, bytes);
+    await cached.writeAsBytes(bytes.sublist(0, bytes.length ~/ 2), flush: true);
+
+    expect(await store.load(request), isNull);
+    expect(await cached.exists(), isFalse);
+  });
 }
 
-Uint8List _fixtureEpub() {
+Uint8List _fixtureEpub({
+  String css = '.publisher-class { letter-spacing: .1em; }',
+}) {
   final archive = Archive()
     ..addFile(
       ArchiveFile.noCompress(
@@ -150,12 +182,7 @@ Uint8List _fixtureEpub() {
         '''<html xmlns="http://www.w3.org/1999/xhtml"><body><nav><ol><li><a href="text/chapter.xhtml#start">第一章</a></li></ol></nav></body></html>''',
       ),
     )
-    ..addFile(
-      ArchiveFile.string(
-        'OEBPS/style/book.css',
-        '.publisher-class { letter-spacing: .1em; }',
-      ),
-    )
+    ..addFile(ArchiveFile.string('OEBPS/style/book.css', css))
     ..addFile(
       ArchiveFile.string(
         'OEBPS/text/chapter.xhtml',
