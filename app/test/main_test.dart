@@ -468,6 +468,84 @@ void main() {
     expect(_readerScrollable(tester).position.pixels, greaterThan(40));
   });
 
+  testWidgets('restored deep position stays stable on the first scroll', (
+    tester,
+  ) async {
+    final chapters = [
+      for (var number = 1; number <= 36; number++)
+        _windowChapter(number, blockCount: 6),
+    ];
+    final targetChapter = chapters[29];
+    final targetBlock = targetChapter.blocks[3];
+    await pumpReader(
+      tester,
+      novel: _windowNovel(chapters),
+      initialPosition: ReadingPosition(
+        chapterId: targetChapter.id,
+        blockId: targetBlock.id,
+        intraBlockOffset: 180,
+      ),
+      viewSize: const Size(430, 720),
+    );
+
+    final target = find.byKey(ValueKey('block-${targetBlock.id}-chinese'));
+    expect(target, findsOneWidget);
+    final beforeTop = tester.getTopLeft(target).dy;
+    final scrollable = _readerScrollable(tester).position;
+    scrollable.jumpTo(scrollable.pixels + 40);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(target, findsOneWidget);
+    expect(tester.getTopLeft(target).dy, closeTo(beforeTop - 40, 2));
+  });
+
+  testWidgets('catalog jump in a long loaded novel lands deterministically', (
+    tester,
+  ) async {
+    final chapters = [
+      for (var number = 1; number <= 36; number++)
+        _windowChapter(number, blockCount: 6),
+    ];
+    final initialChapter = chapters[29];
+    final targetChapter = chapters[8];
+    await pumpReader(
+      tester,
+      novel: _windowNovel(chapters),
+      initialPosition: ReadingPosition(
+        chapterId: initialChapter.id,
+        blockId: initialChapter.blocks[3].id,
+      ),
+      viewSize: const Size(430, 720),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('catalog-button')));
+    await tester.pumpAndSettle();
+    final targetTile = find.byKey(
+      ValueKey('catalog-chapter-${targetChapter.id}'),
+    );
+    await tester.scrollUntilVisible(
+      targetTile,
+      320,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('chapter-catalog-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(targetTile);
+    await tester.pumpAndSettle();
+
+    final chapterTitle = find.byKey(
+      ValueKey('chapter-boundary-${targetChapter.id}'),
+    );
+    expect(chapterTitle, findsOneWidget);
+    expect(tester.getRect(chapterTitle).top, inInclusiveRange(70, 150));
+    expect(
+      find.byKey(ValueKey('block-${targetChapter.blocks.first.id}-chinese')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('an unread chapter opens on its title before the first block', (
     tester,
   ) async {
@@ -650,6 +728,60 @@ void main() {
 
       expect(afterResize.chapterId, beforeResize.chapterId);
       expect(afterResize.blockId, beforeResize.blockId);
+    },
+  );
+
+  testWidgets(
+    'scroll mode preserves its semantic anchor across desktop and fold widths',
+    (tester) async {
+      final bookmarkChanges = <(ReadingPosition, bool)>[];
+      final chapter = _windowChapter(1, blockCount: 24);
+      final targetBlock = chapter.blocks[12];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([chapter]),
+        initialPosition: ReadingPosition(
+          chapterId: chapter.id,
+          blockId: targetBlock.id,
+          intraBlockOffset: 250,
+        ),
+        onBookmarkChanged: (position, bookmarked) {
+          bookmarkChanges.add((position, bookmarked));
+        },
+        viewSize: const Size(430, 800),
+      );
+
+      InkWell bookmarkAction() => tester.widget<InkWell>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('bookmark-button')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
+      bookmarkAction().onTap!();
+      await tester.pump();
+
+      tester.view.physicalSize = const Size(1200, 760);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      bookmarkAction().onTap!();
+      await tester.pump();
+
+      tester.view.physicalSize = const Size(673, 840);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      bookmarkAction().onTap!();
+      await tester.pump();
+
+      expect(bookmarkChanges, hasLength(3));
+      expect(bookmarkChanges.map((change) => change.$1.chapterId).toSet(), {
+        chapter.id,
+      });
+      expect(bookmarkChanges.map((change) => change.$1.blockId).toSet(), {
+        targetBlock.id,
+      });
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -1088,22 +1220,30 @@ void main() {
     expect(tester.getTopLeft(restoredBlock).dy, inInclusiveRange(0, 932));
   });
 
-  testWidgets('restoration never reports its internal jump as user progress', (
-    tester,
-  ) async {
-    final reported = <ReadingPosition>[];
-    await pumpReader(
-      tester,
-      initialPosition: const ReadingPosition(
-        chapterId: 'chapter-3',
-        blockId: 'c3-0',
-      ),
-      onPositionChanged: reported.add,
-    );
+  testWidgets(
+    'restoration and a late native resize do not report synthetic progress',
+    (tester) async {
+      final reported = <ReadingPosition>[];
+      await pumpReader(
+        tester,
+        initialPosition: const ReadingPosition(
+          chapterId: 'chapter-3',
+          blockId: 'c3-0',
+        ),
+        onPositionChanged: reported.add,
+      );
 
-    expect(find.byKey(const ValueKey('block-c3-0-japanese')), findsOneWidget);
-    expect(reported, isEmpty);
-  });
+      expect(find.byKey(const ValueKey('block-c3-0-japanese')), findsOneWidget);
+      expect(reported, isEmpty);
+
+      tester.view.physicalSize = const Size(1200, 760);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('block-c3-0-japanese')), findsOneWidget);
+      expect(reported, isEmpty);
+    },
+  );
 
   testWidgets('removed saved block returns to its chapter top', (tester) async {
     await pumpReader(

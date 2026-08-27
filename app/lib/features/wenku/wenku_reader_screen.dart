@@ -534,7 +534,10 @@ class WenkuReaderSettingsOverlay extends StatelessWidget {
                 maxHeight: MediaQuery.sizeOf(context).height * .72,
               ),
               child: SizedBox(
-                width: 292,
+                width: (MediaQuery.sizeOf(context).width - 24).clamp(
+                  0.0,
+                  292.0,
+                ),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
                   child: Column(

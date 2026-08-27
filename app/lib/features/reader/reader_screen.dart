@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart'
+    show PointerScrollEvent, PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
     show ScrollCacheExtent, ScrollDirection, SelectedContent;
@@ -139,6 +141,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   late ReaderSettings _settings;
   bool _chromeVisible = true;
   bool _restoring = true;
+  bool _waitingForUserScrollAfterJump = true;
   bool _adjustingWindow = false;
   bool _preservingDynamicAnchor = false;
   bool _beforeLoading = false;
@@ -420,16 +423,24 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   void didChangeMetrics() {
     if (!mounted || _restoring) return;
-    final anchor = _captureAnchor(notify: false, updateUi: false);
-    final position = anchor == null ? null : _lastPosition;
+    final position = _waitingForUserScrollAfterJump
+        ? _lastPosition
+        : (_captureAnchor(notify: false, updateUi: false) == null
+              ? null
+              : _lastPosition);
     if (position == null) return;
     final generation = ++_metricsRelayoutGeneration;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted || generation != _metricsRelayoutGeneration) return;
+      _waitingForUserScrollAfterJump = true;
+      _preservingDynamicAnchor = true;
       await _jumpToStableId(
         'block:${position.blockId}',
         intraBlockOffset: position.intraBlockOffset,
       );
+      if (mounted && generation == _metricsRelayoutGeneration) {
+        _preservingDynamicAnchor = false;
+      }
     });
   }
 
@@ -666,7 +677,11 @@ class _ReaderScreenState extends State<ReaderScreen>
     });
   }
 
-  void _handleScrollMetrics(ScrollMetrics metrics) {
+  void _handleScrollMetrics(
+    ScrollMetrics metrics, {
+    required bool movingTowardBefore,
+    required bool movingTowardAfter,
+  }) {
     if (_restoring || _preservingDynamicAnchor) return;
 
     if (metrics.extentBefore > _boundaryRearmExtent) {
@@ -676,7 +691,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _afterRequestArmed = true;
     }
 
-    if (metrics.extentBefore < _boundaryTriggerExtent) {
+    if (movingTowardBefore && metrics.extentBefore < _boundaryTriggerExtent) {
       if (_windowStart > 0) {
         _extendWindowBackward();
       } else if (_beforeRequestArmed) {
@@ -684,7 +699,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         unawaited(_requestAdjacent(ReaderLoadDirection.before));
       }
     }
-    if (metrics.extentAfter < _boundaryTriggerExtent) {
+    if (movingTowardAfter && metrics.extentAfter < _boundaryTriggerExtent) {
       if (_windowEnd < _items.length) {
         _extendWindowForward();
       } else if (_afterRequestArmed) {
@@ -1125,6 +1140,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         settings.orientationPreference != _settings.orientationPreference;
     setState(() {
       _settings = settings;
+      _waitingForUserScrollAfterJump = true;
       if (!settings.textSelectionEnabled) _selectionActive = false;
       _restoring = true;
       _modeIndex.value = settings.readingMode.index;
@@ -1165,6 +1181,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    _waitingForUserScrollAfterJump = false;
     if (!_keyboardFocusNode.hasFocus) _keyboardFocusNode.requestFocus();
     if (_selectionActive) return;
     if (_tapPointer != null) return;
@@ -1176,6 +1193,12 @@ class _ReaderScreenState extends State<ReaderScreen>
   void _handlePointerCancel(PointerCancelEvent event) {
     if (event.pointer == _tapPointer) {
       _clearTapCandidate();
+    }
+  }
+
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent && event.scrollDelta != Offset.zero) {
+      _waitingForUserScrollAfterJump = false;
     }
   }
 
@@ -1244,6 +1267,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (_turningPage || _restoring || !_activeScrollController.hasClients) {
       return;
     }
+    _waitingForUserScrollAfterJump = false;
     _turningPage = true;
     try {
       final controller = _activeScrollController;
@@ -1373,7 +1397,20 @@ class _ReaderScreenState extends State<ReaderScreen>
         .where((chapter) => chapter.id == entry.id && chapter.blocks.isNotEmpty)
         .firstOrNull;
     if (loadedChapter != null) {
-      await _jumpToLoadedPosition(loadedChapter, position);
+      final navigationGeneration = ++_windowGeneration;
+      setState(() {
+        _beforeLoading = false;
+        _afterLoading = false;
+        _beforeLoadError = null;
+        _afterLoadError = null;
+        _catalogLoadError = null;
+        _catalogRetryEntry = null;
+      });
+      await _jumpToLoadedPosition(
+        loadedChapter,
+        position,
+        navigationGeneration: navigationGeneration,
+      );
       return;
     }
     final dataSource = widget.chapterDataSource;
@@ -1427,8 +1464,12 @@ class _ReaderScreenState extends State<ReaderScreen>
           .where((chapter) => chapter.id == entry.id)
           .first;
       await WidgetsBinding.instance.endOfFrame;
-      if (!mounted) return;
-      await _jumpToLoadedPosition(selected, position);
+      if (!mounted || requestGeneration != _windowGeneration) return;
+      await _jumpToLoadedPosition(
+        selected,
+        position,
+        navigationGeneration: requestGeneration,
+      );
     } catch (error) {
       if (!mounted || requestGeneration != _windowGeneration) return;
       setState(() {
@@ -1441,11 +1482,15 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   Future<void> _jumpToLoadedPosition(
     NovelChapter chapter,
-    ReadingPosition? requested,
-  ) async {
-    setState(() => _restoring = true);
+    ReadingPosition? requested, {
+    required int navigationGeneration,
+  }) async {
+    setState(() {
+      _restoring = true;
+      _waitingForUserScrollAfterJump = true;
+    });
     await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
+    if (!mounted || navigationGeneration != _windowGeneration) return;
     final requestedBlock = requested?.chapterId == chapter.id
         ? chapter.blocks
               .where((block) => block.id == requested!.blockId)
@@ -1458,8 +1503,9 @@ class _ReaderScreenState extends State<ReaderScreen>
       intraBlockOffset: requestedBlock == null
           ? 0
           : requested!.intraBlockOffset,
+      alignment: requestedBlock == null ? 0.16 : 0,
     );
-    if (!mounted) return;
+    if (!mounted || navigationGeneration != _windowGeneration) return;
     final targetBlock = requestedBlock ?? chapter.blocks.firstOrNull;
     if (targetBlock != null) {
       _anchorBlockId.value = targetBlock.id;
@@ -2270,6 +2316,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                   onPointerDown: _handlePointerDown,
                   onPointerUp: _handlePointerUp,
                   onPointerCancel: _handlePointerCancel,
+                  onPointerSignal: _handlePointerSignal,
                   child: NotificationListener<ScrollNotification>(
                     onNotification: (notification) {
                       final expectedAxis =
@@ -2279,9 +2326,32 @@ class _ReaderScreenState extends State<ReaderScreen>
                       if (notification.metrics.axis != expectedAxis) {
                         return false;
                       }
-                      _handleScrollMetrics(notification.metrics);
+                      // A restored or catalog-selected window intentionally
+                      // starts close to its semantic anchor. Do not prepend
+                      // older items merely because the reader continues
+                      // forward from that position.
+                      final movingTowardBefore = switch (notification) {
+                        ScrollUpdateNotification(:final scrollDelta) =>
+                          (scrollDelta ?? 0) < 0,
+                        OverscrollNotification(:final overscroll) =>
+                          overscroll < 0,
+                        _ => false,
+                      };
+                      final movingTowardAfter = switch (notification) {
+                        ScrollUpdateNotification(:final scrollDelta) =>
+                          (scrollDelta ?? 0) > 0,
+                        OverscrollNotification(:final overscroll) =>
+                          overscroll > 0,
+                        _ => false,
+                      };
+                      _handleScrollMetrics(
+                        notification.metrics,
+                        movingTowardBefore: movingTowardBefore,
+                        movingTowardAfter: movingTowardAfter,
+                      );
                       _handleReaderScroll(notification);
                       if (!_restoring &&
+                          !_waitingForUserScrollAfterJump &&
                           !_preservingDynamicAnchor &&
                           (notification is ScrollEndNotification ||
                               notification is ScrollUpdateNotification)) {

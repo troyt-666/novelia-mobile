@@ -83,6 +83,33 @@ void main() {
     expect(opacity, .9);
   });
 
+  testWidgets('reader settings fit a narrow resized pane', (tester) async {
+    tester.view.physicalSize = const Size(280, 520);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WenkuReaderSettingsOverlay(
+            currentFontSize: 18,
+            palette: WenkuEpubPalette.automatic,
+            japaneseOpacity: .68,
+            onDismiss: () {},
+            onFontSizeSelected: (_) {},
+            onPaletteSelected: (_) {},
+            onJapaneseOpacitySelected: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('阅读设置'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('eye-care palette uses a green background with dark readable text', () {
     final colors = WenkuEpubPalette.eyeCare.resolve(systemDark: false);
 

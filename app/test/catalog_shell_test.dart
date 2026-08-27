@@ -107,6 +107,36 @@ void main() {
     expect(find.byKey(const ValueKey('settings-theme-mode')), findsOneWidget);
   });
 
+  testWidgets('shell adapts between phone, fold, and desktop widths', (
+    tester,
+  ) async {
+    await pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shell-navigation-bar')), findsOneWidget);
+    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+
+    tester.view.physicalSize = const Size(673, 840);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shell-navigation-bar')), findsOneWidget);
+    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+
+    tester.view.physicalSize = const Size(1280, 800);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shell-navigation-rail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('shell-navigation-bar')), findsNothing);
+    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+
+    tester.view.physicalSize = const Size(430, 932);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shell-navigation-bar')), findsOneWidget);
+    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('reselecting Discovery refreshes its feed', (tester) async {
     var refreshCount = 0;
     await pumpShell(
