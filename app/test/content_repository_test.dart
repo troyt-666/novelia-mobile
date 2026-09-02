@@ -4,7 +4,6 @@ import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
-import 'package:jfzreader/core/offline/offline_repository.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
@@ -36,7 +35,7 @@ void main() {
     expect(repository.schemaVersion, NoveliaDatabase.currentSchemaVersion);
     expect(repository.recentSearches(), ['旧搜索']);
     expect(repository.listCachedNovels(), isEmpty);
-    repository.upsertChapterPayload(_completePayload(t0));
+    _cachePayload(repository, _completePayload(t0));
     expect(
       repository.chapterPayload(novelId: 'novel', chapterId: 'c2'),
       isNotNull,
@@ -113,7 +112,7 @@ void main() {
         addTearDown(repository.close);
         final payload = _completePayload(t0);
 
-        repository.upsertChapterPayload(payload);
+        _cachePayload(repository, payload);
 
         final restored = repository.chapterPayload(
           novelId: 'novel',
@@ -140,15 +139,17 @@ void main() {
     test('selects latest revision per chapter in stable chapter order', () {
       final repository = SqliteOfflineRepository.openInMemory();
       addTearDown(repository.close);
-      repository.upsertChapterPayload(_completePayload(t0));
-      repository.upsertChapterPayload(
+      _cachePayload(repository, _completePayload(t0));
+      _cachePayload(
+        repository,
         _completePayload(
           t0.add(const Duration(minutes: 1)),
           id: 'payload-new',
           revision: 'r3',
         ),
       );
-      repository.upsertChapterPayload(
+      _cachePayload(
+        repository,
         _completePayload(
           t0,
           id: 'payload-c1',
@@ -163,10 +164,9 @@ void main() {
         'r3',
       );
       expect(
-        repository.listChapterPayloads('novel').map((item) => item.chapterId),
-        ['c1', 'c2'],
+        repository.chapterPayload(novelId: 'novel', chapterId: 'c1')!.revision,
+        'r1',
       );
-      expect(repository.listChapterPayloads('novel').last.revision, 'r3');
     });
 
     test(
@@ -176,7 +176,7 @@ void main() {
         addTearDown(database.close);
         final repository = SqliteOfflineRepository.fromDatabase(database);
         addTearDown(repository.close);
-        repository.upsertChapterPayload(_completePayload(t0));
+        _cachePayload(repository, _completePayload(t0));
 
         database.execute(
           'UPDATE cached_chapter_payloads SET translations_json = ? '
@@ -263,9 +263,7 @@ void main() {
       () {
         final sqlite = SqliteOfflineRepository.openInMemory();
         addTearDown(sqlite.close);
-        _expectSkippedCacheCopy(sqlite, persistDownload: true);
-
-        _expectSkippedCacheCopy(InMemoryOfflineRepository());
+        _expectSkippedCacheCopy(sqlite);
       },
     );
 
@@ -369,12 +367,8 @@ void main() {
           ),
         );
 
-        final removal = repository.removeCachedNovel('novel');
+        repository.removeCachedNovel('novel');
 
-        expect(removal.removedCacheCopyCount, 1);
-        expect(removal.removedPayloadCount, 1);
-        expect(removal.retainedProtectedPayloadCount, 1);
-        expect(removal.retainedDownloadManifest, isTrue);
         expect(repository.novelDetail('novel'), isNotNull);
         expect(repository.copyById('cache-copy'), isNull);
         expect(
@@ -518,10 +512,7 @@ DownloadTask _storingTask(SqliteOfflineRepository repository, DateTime now) {
   return task;
 }
 
-void _expectSkippedCacheCopy(
-  dynamic repository, {
-  bool persistDownload = false,
-}) {
+void _expectSkippedCacheCopy(SqliteOfflineRepository repository) {
   final payload = _completePayload(DateTime.utc(2026, 8, 17, 12));
   final cache = _copyFor(
     payload,
@@ -533,34 +524,33 @@ void _expectSkippedCacheCopy(
     id: 'download-copy',
     kind: OfflineCopyKind.offlineDownload,
   );
-  if (persistDownload) {
-    final sqlite = repository as SqliteOfflineRepository;
-    final task = _storingTask(sqlite, payload.fetchedAt);
-    sqlite.commitDownloadedChapter(
-      taskId: task.id,
-      payload: payload,
-      copy: download,
-      now: payload.fetchedAt.add(const Duration(seconds: 4)),
-    );
-  } else {
-    final memory = repository as InMemoryOfflineRepository;
-    memory.saveIntent(
-      NovelDownloadIntent(
-        id: 'intent',
-        novelId: 'novel',
-        translationSource: TranslationSource.sakura,
-        createdAt: payload.fetchedAt,
-      ),
-    );
-    memory.upsertChapterPayload(payload);
-    memory.saveCopy(download);
-  }
+  final task = _storingTask(repository, payload.fetchedAt);
+  repository.commitDownloadedChapter(
+    taskId: task.id,
+    payload: payload,
+    copy: download,
+    now: payload.fetchedAt.add(const Duration(seconds: 4)),
+  );
   repository.cacheChapterPayload(payload: payload, copy: cache);
   expect(repository.listCopies(kind: OfflineCopyKind.cacheCopy), isEmpty);
   expect(repository.chapterPayloadById(payload.id), isNotNull);
   expect(
     repository.listCopies(kind: OfflineCopyKind.offlineDownload),
     isNotEmpty,
+  );
+}
+
+void _cachePayload(
+  SqliteOfflineRepository repository,
+  CachedChapterPayload payload,
+) {
+  repository.cacheChapterPayload(
+    payload: payload,
+    copy: _copyFor(
+      payload,
+      id: 'cache::${payload.chapterId}::sakura',
+      kind: OfflineCopyKind.cacheCopy,
+    ),
   );
 }
 

@@ -101,14 +101,6 @@ class LibraryProtectedDownload {
       )
       .length;
 
-  int get permanentFailureCount => chapters
-      .where(
-        (chapter) =>
-            chapter.taskState == DownloadTaskState.failed &&
-            chapter.failure?.retryable != true,
-      )
-      .length;
-
   int get completedChapterCount => countWithState(DownloadTaskState.stored);
 
   bool get isComplete =>

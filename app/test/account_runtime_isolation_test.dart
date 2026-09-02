@@ -12,6 +12,8 @@ import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
 import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 import 'package:jfzreader/main.dart';
 
+import 'support/fixture_content_coordinator.dart';
+
 void main() {
   testWidgets('signed-out restoration clears only account history outbox', (
     tester,
@@ -35,6 +37,7 @@ void main() {
     await tester.pumpWidget(
       NoveliaReaderApp(
         repository: repository,
+        contentCoordinator: const FixtureContentCoordinator(),
         accountSessionController: controller,
       ),
     );
@@ -68,6 +71,7 @@ void main() {
     await tester.pumpWidget(
       NoveliaReaderApp(
         repository: repository,
+        contentCoordinator: const FixtureContentCoordinator(),
         accountSessionController: controller,
         accountGateway: history,
       ),
@@ -109,6 +113,7 @@ void main() {
     await tester.pumpWidget(
       NoveliaReaderApp(
         repository: repository,
+        contentCoordinator: const FixtureContentCoordinator(),
         accountSessionController: controller,
         accountGateway: history,
       ),

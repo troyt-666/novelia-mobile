@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
-import 'package:jfzreader/core/offline/offline_repository.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
@@ -19,7 +19,7 @@ void main() {
     test(
       'keeps catalog/detail body-free and atomically caches a chapter read',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         final gateway = _FakeGateway(
           catalogPage: NoveliaPage(items: [_outline()], pageCount: 1),
           details: _details(),
@@ -88,7 +88,7 @@ void main() {
     test(
       'caps an over-reported ranking counter at the original total',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         final gateway = _FakeGateway(
           catalogPage: NoveliaPage(
             items: [_outline(totalChapters: 190, youdaoChapters: 191)],
@@ -122,7 +122,7 @@ void main() {
       'falls back through normalized outline, detail, and chapter cache',
       () async {
         const cacheAdapter = NoveliaContentCacheAdapter();
-        final store = _MemoryStore();
+        final store = _openStore();
         store.upsertNovelOutline(
           cacheAdapter.cacheOutline(_outline(), fetchedAt: now),
         );
@@ -252,7 +252,7 @@ void main() {
     test(
       'revokes a previously general novel after a restricted detail',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         final gateway = _FakeGateway(
           catalogPage: NoveliaPage(items: [_outline()], pageCount: 1),
           details: _details(chapterIds: const ['c1']),
@@ -306,7 +306,7 @@ void main() {
     );
 
     test('a restricted catalog reclassification stays denied', () async {
-      final store = _MemoryStore();
+      final store = _openStore();
       final gateway = _FakeGateway(
         catalogPage: NoveliaPage(items: [_outline()], pageCount: 1),
         details: _details(),
@@ -350,7 +350,7 @@ void main() {
     test(
       'persists a restricted marker when an intent retains the manifest',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           NovelDownloadIntent(
             id: 'retained-intent',
@@ -419,7 +419,7 @@ void main() {
     test(
       'announces a chapter cache only after the atomic write succeeds',
       () async {
-        final store = _FailingChapterCacheStore();
+        final store = _openStore();
         final gateway = _FakeGateway(
           catalogPage: NoveliaPage(items: [_outline()], pageCount: 1),
           details: _details(chapterIds: const ['c1']),
@@ -441,6 +441,7 @@ void main() {
         final detail = await coordinator.loadDetails(
           catalog.data!.novels.single,
         );
+        store.close();
 
         final chapter = await coordinator.loadChapter(
           detail.data!,
@@ -449,7 +450,6 @@ void main() {
 
         expect(chapter.availability, CatalogAvailability.available);
         expect(callbackCount, 0);
-        expect(store.listCopies(kind: OfflineCopyKind.cacheCopy), isEmpty);
       },
     );
 
@@ -468,7 +468,6 @@ void main() {
                 content: 'do not expose',
                 hidden: true,
                 createdAt: now,
-                replyCount: 0,
                 replies: const [],
               ),
             ],
@@ -506,7 +505,7 @@ void main() {
     test(
       'reconciles future chapters and stores pending Japanese atomically',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           NovelDownloadIntent(
             id: 'intent',
@@ -544,7 +543,14 @@ void main() {
           isTrue,
         );
         expect(gateway.chapterCalls, ['c1', 'c2']);
-        expect(store.listChapterPayloads(_key.stableId), hasLength(2));
+        expect(
+          store.chapterPayload(novelId: _key.stableId, chapterId: 'c1'),
+          isNotNull,
+        );
+        expect(
+          store.chapterPayload(novelId: _key.stableId, chapterId: 'c2'),
+          isNotNull,
+        );
         final pendingCopy = store
             .listCopies(kind: OfflineCopyKind.offlineDownload)
             .singleWhere((copy) => copy.chapterId == 'c2');
@@ -563,7 +569,7 @@ void main() {
     test(
       'permanently fails a mismatched selected translation revision',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           ChapterDownloadIntent(
             id: 'intent',
@@ -592,7 +598,10 @@ void main() {
         expect(failed.state, DownloadTaskState.failed);
         expect(failed.failure!.kind, DownloadFailureKind.validation);
         expect(failed.failure!.retryable, isFalse);
-        expect(store.listChapterPayloads(_key.stableId), isEmpty);
+        expect(
+          store.chapterPayload(novelId: _key.stableId, chapterId: 'c1'),
+          isNull,
+        );
         expect(store.listCopies(), isEmpty);
 
         final second = await coordinator.synchronizeIntent('intent');
@@ -605,7 +614,7 @@ void main() {
     test(
       'refreshes a stored pending copy to complete without reopening task',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           ChapterDownloadIntent(
             id: 'intent',
@@ -660,7 +669,7 @@ void main() {
     test(
       'refreshes the Japanese revision and stores mismatch as invalid',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           ChapterDownloadIntent(
             id: 'intent',
@@ -730,7 +739,7 @@ void main() {
       'rotates bounded refreshes so candidates beyond the limit run',
       () async {
         const chapterIds = ['c0', 'c1', 'c2', 'c3', 'c4'];
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           NovelDownloadIntent(
             id: 'intent',
@@ -776,7 +785,7 @@ void main() {
     test(
       'pause during fetch stops cooperatively and later resume continues',
       () async {
-        final store = _MemoryStore();
+        final store = _openStore();
         store.saveIntent(
           NovelDownloadIntent(
             id: 'intent',
@@ -828,7 +837,7 @@ void main() {
     );
 
     test('pause stops pending-translation refreshes cooperatively', () async {
-      final store = _MemoryStore();
+      final store = _openStore();
       store.saveIntent(
         NovelDownloadIntent(
           id: 'intent',
@@ -1074,14 +1083,8 @@ class _FakeGateway implements NoveliaGateway {
   }
 }
 
-class _MemoryStore extends InMemoryOfflineRepository {}
-
-class _FailingChapterCacheStore extends _MemoryStore {
-  @override
-  void cacheChapterPayload({
-    required CachedChapterPayload payload,
-    required OfflineChapterCopy copy,
-  }) {
-    throw StateError('simulated atomic cache failure');
-  }
+SqliteOfflineRepository _openStore() {
+  final store = SqliteOfflineRepository.openInMemory();
+  addTearDown(store.close);
+  return store;
 }

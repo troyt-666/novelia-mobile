@@ -225,22 +225,3 @@ class CachedChapterPayload {
     return translations[source];
   }
 }
-
-class ContentCacheRemovalSummary {
-  const ContentCacheRemovalSummary({
-    required this.novelId,
-    required this.removedCacheCopyCount,
-    required this.removedPayloadCount,
-    required this.retainedProtectedPayloadCount,
-    required this.retainedDownloadManifest,
-  });
-
-  final String novelId;
-  final int removedCacheCopyCount;
-  final int removedPayloadCount;
-  final int retainedProtectedPayloadCount;
-
-  /// Whether an existing outline/detail/TOC was retained for a download intent
-  /// or protected chapter copy.
-  final bool retainedDownloadManifest;
-}

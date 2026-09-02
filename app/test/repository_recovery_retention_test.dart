@@ -9,128 +9,104 @@ import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/core/offline/offline_repository.dart';
 
 void main() {
-  final factories = <({String name, _Harness Function() create})>[
-    (
-      name: 'memory',
-      create: () {
-        final repository = InMemoryOfflineRepository();
-        return _Harness(repository, repository);
-      },
-    ),
-    (
-      name: 'sqlite',
-      create: () {
-        final repository = SqliteOfflineRepository.openInMemory();
-        return _Harness(repository, repository, repository.close);
-      },
-    ),
-  ];
+  group('sqlite repository', () {
+    test('atomically requeues every recoverable task with clean counters', () {
+      final harness = _openHarness();
+      addTearDown(harness.close);
+      final repository = harness.offline;
+      final tasks = _seedTaskStates(repository);
+      final priorRevisions = {
+        for (final task in repository.listTasks()) task.id: task.revision,
+      };
 
-  for (final factory in factories) {
-    group('${factory.name} repository', () {
-      test(
-        'atomically requeues every recoverable task with clean counters',
-        () {
-          final harness = factory.create();
-          addTearDown(harness.close);
-          final repository = harness.offline;
-          final tasks = _seedTaskStates(repository);
-          final priorRevisions = {
-            for (final task in repository.listTasks()) task.id: task.revision,
-          };
-
-          final recovered = repository.requeueInterruptedTasks(
-            intentId: _intentId,
-            now: _t0.add(const Duration(minutes: 1)),
-          );
-
-          expect(recovered.map((task) => task.chapterId).toSet(), {
-            'active',
-            'retryable',
-            'paused',
-          });
-          for (final task in recovered) {
-            expect(task.state, DownloadTaskState.queued);
-            expect(task.bytesReceived, 0);
-            expect(task.totalBytes, isNull);
-            expect(task.failure, isNull);
-            expect(task.storedCopyId, isNull);
-            expect(task.revision, priorRevisions[task.id]! + 1);
-          }
-          expect(
-            repository.taskById(tasks['permanent']!.id)!.state,
-            DownloadTaskState.failed,
-          );
-          expect(
-            repository.taskById(tasks['queued']!.id)!.revision,
-            priorRevisions[tasks['queued']!.id],
-          );
-        },
+      final recovered = repository.requeueInterruptedTasks(
+        intentId: _intentId,
+        now: _t0.add(const Duration(minutes: 1)),
       );
 
-      test('does not restart tasks belonging to a disabled intent', () {
-        final harness = factory.create();
-        addTearDown(harness.close);
-        final repository = harness.offline;
-        _saveIntent(repository, enabled: false);
-        final queued = repository
-            .reconcileIntent(
-              intentId: _intentId,
-              knownChapterIds: const [],
-              now: _t0,
-            )
-            .toList();
-        expect(queued, isEmpty);
-
-        // Seed before disabling so the paused task represents an intentional
-        // paused intent rather than an interrupted enabled one.
-        repository.saveIntent(_intent(enabled: true));
-        final task = repository
-            .reconcileIntent(
-              intentId: _intentId,
-              knownChapterIds: const ['paused'],
-              now: _t0,
-            )
-            .single;
-        final fetching = task.beginFetching(_t0, expectedBytes: 80);
-        repository.saveTask(fetching);
-        repository.pauseIntent(_intentId, _t0.add(const Duration(seconds: 1)));
-
-        expect(
-          repository.requeueInterruptedTasks(
-            intentId: _intentId,
-            now: _t0.add(const Duration(seconds: 2)),
-          ),
-          isEmpty,
-        );
-        expect(repository.taskById(task.id)!.state, DownloadTaskState.paused);
+      expect(recovered.map((task) => task.chapterId).toSet(), {
+        'active',
+        'retryable',
+        'paused',
       });
-
-      test('cache removal retains manifest and protected payload', () {
-        final harness = factory.create();
-        addTearDown(harness.close);
-        _seedProtectedNovel(harness);
-
-        final removal = harness.content.removeCachedNovel(_novelId);
-
-        expect(removal.retainedDownloadManifest, isTrue);
-        expect(removal.retainedProtectedPayloadCount, 1);
-        expect(
-          harness.content.listCachedNovels().map((novel) => novel.id),
-          contains(_novelId),
-        );
-        final detail = harness.content.novelDetail(_novelId)!;
-        expect(detail.sections.single.chapters.single.id, _chapterId);
-        final copy = harness.offline
-            .listCopies(kind: OfflineCopyKind.offlineDownload)
-            .single;
-        expect(
-          harness.content.chapterPayloadById(copy.payloadId!)!.japaneseBlocks,
-          const ['原文', ''],
-        );
-      });
+      for (final task in recovered) {
+        expect(task.state, DownloadTaskState.queued);
+        expect(task.bytesReceived, 0);
+        expect(task.totalBytes, isNull);
+        expect(task.failure, isNull);
+        expect(task.storedCopyId, isNull);
+        expect(task.revision, priorRevisions[task.id]! + 1);
+      }
+      expect(
+        repository.taskById(tasks['permanent']!.id)!.state,
+        DownloadTaskState.failed,
+      );
+      expect(
+        repository.taskById(tasks['queued']!.id)!.revision,
+        priorRevisions[tasks['queued']!.id],
+      );
     });
-  }
+
+    test('does not restart tasks belonging to a disabled intent', () {
+      final harness = _openHarness();
+      addTearDown(harness.close);
+      final repository = harness.offline;
+      _saveIntent(repository, enabled: false);
+      final queued = repository
+          .reconcileIntent(
+            intentId: _intentId,
+            knownChapterIds: const [],
+            now: _t0,
+          )
+          .toList();
+      expect(queued, isEmpty);
+
+      // Seed before disabling so the paused task represents an intentional
+      // paused intent rather than an interrupted enabled one.
+      repository.saveIntent(_intent(enabled: true));
+      final task = repository
+          .reconcileIntent(
+            intentId: _intentId,
+            knownChapterIds: const ['paused'],
+            now: _t0,
+          )
+          .single;
+      final fetching = task.beginFetching(_t0, expectedBytes: 80);
+      repository.saveTask(fetching);
+      repository.pauseIntent(_intentId, _t0.add(const Duration(seconds: 1)));
+
+      expect(
+        repository.requeueInterruptedTasks(
+          intentId: _intentId,
+          now: _t0.add(const Duration(seconds: 2)),
+        ),
+        isEmpty,
+      );
+      expect(repository.taskById(task.id)!.state, DownloadTaskState.paused);
+    });
+
+    test('cache removal retains manifest and protected payload', () {
+      final harness = _openHarness();
+      addTearDown(harness.close);
+      _seedProtectedNovel(harness);
+
+      harness.content.removeCachedNovel(_novelId);
+
+      expect(
+        harness.content.listCachedNovels().map((novel) => novel.id),
+        contains(_novelId),
+      );
+      final detail = harness.content.novelDetail(_novelId)!;
+      expect(detail.sections.single.chapters.single.id, _chapterId);
+      final copy = harness.offline
+          .listCopies(kind: OfflineCopyKind.offlineDownload)
+          .single;
+      expect(
+        harness.content.chapterPayloadById(copy.payloadId!)!.japaneseBlocks,
+        const ['原文', ''],
+      );
+    });
+  });
 
   test('SQLite restart recovery survives two file close/reopen boundaries', () {
     final directory = Directory.systemTemp.createTempSync(
@@ -187,8 +163,7 @@ void main() {
         if (directory.existsSync()) directory.deleteSync(recursive: true);
       });
       _seedProtectedNovel(_Harness(repository, repository));
-      final removal = repository.removeCachedNovel(_novelId);
-      expect(removal.retainedDownloadManifest, isTrue);
+      repository.removeCachedNovel(_novelId);
       repository.close();
 
       repository = SqliteOfflineRepository.openFile(path);
@@ -218,6 +193,11 @@ class _Harness {
   final void Function()? _onClose;
 
   void close() => _onClose?.call();
+}
+
+_Harness _openHarness() {
+  final repository = SqliteOfflineRepository.openInMemory();
+  return _Harness(repository, repository, repository.close);
 }
 
 NovelDownloadIntent _intent({bool enabled = true}) {

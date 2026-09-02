@@ -35,10 +35,7 @@ class NoveliaJsonCodec {
       authors: _list(root['authors'], 'authors')
           .map((author) {
             final value = _map(author, 'author');
-            return NoveliaAuthor(
-              name: _string(value['name'], 'author.name'),
-              link: _safeWebUri(_optionalString(value['link'])),
-            );
+            return NoveliaAuthor(name: _string(value['name'], 'author.name'));
           })
           .toList(growable: false),
       publicationType: _optionalString(root['type']),
@@ -164,7 +161,6 @@ class NoveliaJsonCodec {
             NoveliaGatewayFailureKind.invalidResponse,
             'A Novel Comment was missing its creation time.',
           )),
-      replyCount: _integerOrZero(value['numReplies'], 'comment.numReplies'),
       replies: _optionalList(value['replies'], 'comment.replies')
           .map(
             (reply) =>
@@ -255,15 +251,6 @@ class NoveliaJsonCodec {
     if (value == null) return null;
     final seconds = _integer(value, field);
     return DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true);
-  }
-
-  static Uri? _safeWebUri(String? value) {
-    if (value == null) return null;
-    final uri = Uri.tryParse(value);
-    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
-      return null;
-    }
-    return uri;
   }
 }
 

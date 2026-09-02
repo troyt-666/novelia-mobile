@@ -171,10 +171,9 @@ class NoveliaNovelOutline {
 }
 
 class NoveliaAuthor {
-  const NoveliaAuthor({required this.name, this.link});
+  const NoveliaAuthor({required this.name});
 
   final String name;
-  final Uri? link;
 }
 
 class NoveliaTocEntry {
@@ -278,7 +277,6 @@ class NoveliaComment {
     required this.content,
     required this.hidden,
     required this.createdAt,
-    required this.replyCount,
     required this.replies,
   });
 
@@ -287,7 +285,6 @@ class NoveliaComment {
   final String content;
   final bool hidden;
   final DateTime createdAt;
-  final int replyCount;
   final List<NoveliaComment> replies;
 }
 

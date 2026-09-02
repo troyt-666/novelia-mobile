@@ -57,7 +57,6 @@ class LocalAppSettings {
   LocalAppSettings({
     required this.readerSettings,
     required this.themePreference,
-    required this.notifyNewChapters,
     required this.cacheLimitBytes,
     required this.updatedAt,
   }) {
@@ -68,7 +67,6 @@ class LocalAppSettings {
 
   final ReaderSettings readerSettings;
   final ThemePreference themePreference;
-  final bool notifyNewChapters;
   final int cacheLimitBytes;
   final DateTime updatedAt;
 }
@@ -80,11 +78,7 @@ abstract interface class LocalStateRepository {
 
   List<LocalReadingProgress> listReadingProgress();
 
-  void removeReadingProgress(String novelId);
-
   void saveBookmark(LocalBookmark bookmark);
-
-  LocalBookmark? bookmarkById(String id);
 
   List<LocalBookmark> listBookmarks({String? novelId});
 
@@ -94,16 +88,12 @@ abstract interface class LocalStateRepository {
 
   LastRouteState? lastRoute();
 
-  void clearLastRoute();
-
   /// Replaces the local, device-only catalog query history in display order.
   ///
   /// Implementations keep at most eight trimmed, non-empty, unique queries.
   void saveRecentSearches(List<String> queries);
 
   List<String> recentSearches();
-
-  void clearRecentSearches();
 
   void saveAppSettings(LocalAppSettings settings);
 

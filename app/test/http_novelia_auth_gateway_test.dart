@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/account/account_models.dart';
 import 'package:jfzreader/gateway/novelia/http_novelia_auth_gateway.dart';
-import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
 
 void main() {
   test('HTTP auth gateway carries and rotates only response cookies', () async {
@@ -71,61 +70,6 @@ void main() {
       '/api/v1/auth/logout',
     ]);
   });
-
-  test(
-    'debug trace describes invalid refresh without exposing secrets',
-    () async {
-      final trace = <String>[];
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(() => server.close(force: true));
-      final serving = server.listen((request) async {
-        if (request.uri.path.endsWith('/auth/login')) {
-          await utf8.decoder.bind(request).join();
-          request.response.cookies.add(Cookie('refresh', 'secret-cookie'));
-          request.response.write('ok');
-        } else {
-          request.response.headers.contentType = ContentType.json;
-          request.response.write(jsonEncode({'accessToken': 'secret-token'}));
-        }
-        await request.response.close();
-      });
-      addTearDown(serving.cancel);
-      final gateway = HttpNoveliaAuthGateway(
-        baseUri: Uri.parse(
-          'http://${server.address.address}:${server.port}/api/v1/',
-        ),
-        debugDiagnosticSink: trace.add,
-      );
-      addTearDown(gateway.close);
-
-      await expectLater(
-        gateway.login(username: 'alice', password: 'secret-password'),
-        throwsA(
-          isA<NoveliaAuthException>()
-              .having(
-                (error) => error.kind,
-                'kind',
-                NoveliaAuthFailureKind.invalidResponse,
-              )
-              .having(
-                (error) => error.diagnosticCode,
-                'diagnostic code',
-                'refresh_invalid_access_token',
-              ),
-        ),
-      );
-
-      final combined = trace.join('\n');
-      expect(combined, contains('"operation":"login"'));
-      expect(combined, contains('"operation":"refresh"'));
-      expect(combined, contains('"kind":"json_object"'));
-      expect(combined, contains('"accessToken":"string"'));
-      expect(combined, contains('"cookieNames":["refresh"]'));
-      expect(combined, isNot(contains('secret-cookie')));
-      expect(combined, isNot(contains('secret-token')));
-      expect(combined, isNot(contains('secret-password')));
-    },
-  );
 }
 
 String _token(String username, {required Duration expiresIn}) {

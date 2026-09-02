@@ -6,18 +6,12 @@ class ReaderAccountProfile {
   const ReaderAccountProfile({
     required this.username,
     required this.role,
-    required this.issuedAt,
-    required this.createdAt,
     required this.expiresAt,
   });
 
   final String username;
   final String role;
-  final DateTime issuedAt;
-  final DateTime createdAt;
   final DateTime expiresAt;
-
-  bool isExpiredAt(DateTime now) => !expiresAt.isAfter(now.toUtc());
 }
 
 class StoredAccountSession {
@@ -121,18 +115,12 @@ ReaderAccountProfile decodeNoveliaAccessToken(String token) {
   final username = decoded['sub'];
   final role = decoded['role'];
   final expiresAt = _epochSeconds(decoded['exp'], 'exp');
-  final issuedAt = _epochSeconds(decoded['iat'], 'iat');
-  final createdAt = decoded['crat'] == null
-      ? issuedAt
-      : _epochSeconds(decoded['crat'], 'crat');
   if (username is! String || username.trim().isEmpty || role is! String) {
     throw const FormatException('Access token identity claims are invalid.');
   }
   return ReaderAccountProfile(
     username: username,
     role: role,
-    issuedAt: issuedAt,
-    createdAt: createdAt,
     expiresAt: expiresAt,
   );
 }

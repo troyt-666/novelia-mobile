@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'dart:io';
 
 import '../../core/account/account_models.dart';
@@ -14,7 +13,6 @@ class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
     this.appId = 'n',
     this.requestTimeout = const Duration(seconds: 15),
     this.maximumResponseBytes = 64 * 1024,
-    this.debugDiagnosticSink,
   }) : baseUri = baseUri ?? Uri.parse('https://auth.novelia.cc/api/v1/'),
        _client = client ?? HttpClient(),
        _ownsClient = client == null;
@@ -23,7 +21,6 @@ class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
   final String appId;
   final Duration requestTimeout;
   final int maximumResponseBytes;
-  final void Function(String message)? debugDiagnosticSink;
   final HttpClient _client;
   final bool _ownsClient;
 
@@ -74,16 +71,7 @@ class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
     final accessToken = utf8.decode(response.body).trim();
     try {
       decodeNoveliaAccessToken(accessToken);
-    } on FormatException catch (error) {
-      assert(() {
-        _debugTrace({
-          'event': 'token_validation_failed',
-          'operation': _AuthOperation.refresh.name,
-          'reason': error.message,
-          'body': _describeBody(response.body),
-        });
-        return true;
-      }());
+    } on FormatException {
       throw NoveliaAuthException(
         NoveliaAuthFailureKind.invalidResponse,
         'Refresh returned an invalid access token.',
@@ -168,19 +156,6 @@ class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
         body.addAll(chunk);
       }
       final responseCookies = List<Cookie>.unmodifiable(response.cookies);
-      assert(() {
-        _debugTrace({
-          'event': 'response',
-          'operation': operation.name,
-          'status': response.statusCode,
-          'contentType': response.headers.contentType?.toString(),
-          'cookieNames':
-              responseCookies.map((cookie) => cookie.name).toSet().toList()
-                ..sort(),
-          'body': _describeBody(body),
-        });
-        return true;
-      }());
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw _statusFailure(response.statusCode, operation);
       }
@@ -268,96 +243,6 @@ class HttpNoveliaAuthGateway implements NoveliaAuthGateway {
         .map((entry) => '${entry.key}=${entry.value}')
         .join('; ');
   }
-
-  void _debugTrace(Map<String, Object?> fields) {
-    final message = jsonEncode(fields);
-    if (debugDiagnosticSink case final sink?) {
-      sink(message);
-    } else {
-      developer.log(message, name: 'novelia.auth');
-      stderr.writeln('novelia.auth $message');
-    }
-  }
-
-  static Map<String, Object?> _describeBody(List<int> body) {
-    final text = utf8.decode(body, allowMalformed: true).trim();
-    final description = <String, Object?>{
-      'bytes': body.length,
-      'characters': text.length,
-    };
-    if (text.isEmpty) {
-      description['kind'] = 'empty';
-      return description;
-    }
-    Object? decoded;
-    try {
-      decoded = jsonDecode(text);
-    } on FormatException {
-      description['kind'] = 'text';
-      description.addAll(_describePossibleToken(text));
-      return description;
-    }
-    if (decoded is Map) {
-      description['kind'] = 'json_object';
-      description['fields'] = _fieldTypes(decoded);
-      return description;
-    }
-    if (decoded is List) {
-      description['kind'] = 'json_array';
-      description['items'] = decoded.length;
-      description['itemTypes'] = decoded.map(_valueType).toSet().toList()
-        ..sort();
-      return description;
-    }
-    if (decoded is String) {
-      description['kind'] = 'json_string';
-      description['decodedCharacters'] = decoded.length;
-      description.addAll(_describePossibleToken(decoded.trim()));
-      return description;
-    }
-    description['kind'] = 'json_${_valueType(decoded)}';
-    return description;
-  }
-
-  static Map<String, Object?> _describePossibleToken(String value) {
-    final segments = value.split('.');
-    final description = <String, Object?>{'tokenSegments': segments.length};
-    if (segments.length != 3 || segments.any((segment) => segment.isEmpty)) {
-      return description;
-    }
-    try {
-      final payload = jsonDecode(
-        utf8.decode(base64Url.decode(base64Url.normalize(segments[1]))),
-      );
-      description['jwtPayloadType'] = _valueType(payload);
-      if (payload is Map) description['jwtClaims'] = _fieldTypes(payload);
-    } on Object {
-      description['jwtPayloadType'] = 'malformed';
-    }
-    return description;
-  }
-
-  static Map<String, String> _fieldTypes(Map<Object?, Object?> value) {
-    final fields = <String, String>{};
-    for (final entry in value.entries) {
-      fields[entry.key.toString()] = _valueType(entry.value);
-    }
-    return Map.fromEntries(
-      fields.entries.toList()
-        ..sort((left, right) => left.key.compareTo(right.key)),
-    );
-  }
-
-  static String _valueType(Object? value) => switch (value) {
-    null => 'null',
-    String() => 'string',
-    bool() => 'boolean',
-    int() => 'integer',
-    double() => 'number',
-    List() => 'array',
-    Map() => 'object',
-    _ => value.runtimeType.toString(),
-  };
 }
 
 enum _AuthOperation { login, refresh, logout }

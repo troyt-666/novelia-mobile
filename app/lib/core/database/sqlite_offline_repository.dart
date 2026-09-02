@@ -208,32 +208,16 @@ final class SqliteOfflineRepository
   }
 
   @override
-  OfflineRemovalSummary removeIntent(String intentId, DateTime now) {
+  void removeIntent(String intentId, DateTime now) {
     _checkOpen();
-    return _transaction(() {
+    _transaction(() {
       _requireIntent(intentId);
-      var removedTasks = 0;
       for (final task in _listTasks(intentId: intentId)) {
         if (task.state != DownloadTaskState.removed) {
           _updateTask(task.remove(now));
-          removedTasks += 1;
         }
       }
 
-      final copyStats = _database
-          .select(
-            '''
-        SELECT COUNT(*) AS copy_count,
-               COALESCE(SUM(original_bytes + COALESCE(translation_bytes, 0)), 0)
-                 AS freed_bytes
-          FROM offline_chapter_copies
-         WHERE copy_kind = ? AND intent_id = ?;
-      ''',
-            [OfflineCopyKind.offlineDownload.name, intentId],
-          )
-          .single;
-      final removedCopyCount = _int(copyStats['copy_count']);
-      final freedBytes = _int(copyStats['freed_bytes']);
       final affectedPayloadIds = _database
           .select(
             'SELECT payload_id FROM offline_chapter_copies '
@@ -252,13 +236,6 @@ final class SqliteOfflineRepository
       _database.execute('DELETE FROM download_intents WHERE id = ?;', [
         intentId,
       ]);
-
-      return OfflineRemovalSummary(
-        intentId: intentId,
-        removedTaskCount: removedTasks,
-        removedCopyCount: removedCopyCount,
-        freedBytes: freedBytes,
-      );
     });
   }
 
@@ -361,31 +338,6 @@ final class SqliteOfflineRepository
   }
 
   @override
-  DownloadProgressSummary progressSummary({String? intentId}) {
-    _checkOpen();
-    return DownloadProgressSummary.fromTasks(_listTasks(intentId: intentId));
-  }
-
-  @override
-  List<NovelDownloadProgressSummary> progressByNovel() {
-    _checkOpen();
-    final groups = <String, List<DownloadTask>>{};
-    for (final task in _listTasks()) {
-      final key = '${task.novelId}\u0000${task.translationSource.name}';
-      groups.putIfAbsent(key, () => []).add(task);
-    }
-    final keys = groups.keys.toList()..sort();
-    return List.unmodifiable([
-      for (final key in keys)
-        NovelDownloadProgressSummary(
-          novelId: groups[key]!.first.novelId,
-          translationSource: groups[key]!.first.translationSource,
-          progress: DownloadProgressSummary.fromTasks(groups[key]!),
-        ),
-    ]);
-  }
-
-  @override
   OfflineChapterCopy? copyById(String id) {
     _checkOpen();
     return _copyById(id);
@@ -441,25 +393,6 @@ final class SqliteOfflineRepository
           )
           .map(_copyFromRow),
     );
-  }
-
-  @override
-  void saveCopy(OfflineChapterCopy copy) {
-    _checkOpen();
-    _transaction(() {
-      if (copy.kind == OfflineCopyKind.offlineDownload) {
-        final intent = _requireIntent(copy.intentId!);
-        if (intent.novelId != copy.novelId) {
-          throw StateError('Copy ${copy.id} targets a different novel.');
-        }
-      }
-      _validateCopyPayloadReference(copy);
-      final previousPayloadId = _copyById(copy.id)?.payloadId;
-      _upsertCopy(copy);
-      if (previousPayloadId != null && previousPayloadId != copy.payloadId) {
-        _deletePayloadIfUnreferenced(previousPayloadId);
-      }
-    });
   }
 
   @override
@@ -613,35 +546,6 @@ final class SqliteOfflineRepository
   }
 
   @override
-  List<CachedChapterPayload> listChapterPayloads(String novelId) {
-    _checkOpen();
-    return List.unmodifiable(
-      _database
-          .select(
-            '''
-            SELECT payload.*
-              FROM cached_chapter_payloads AS payload
-             WHERE payload.novel_id = ?
-               AND NOT EXISTS (
-                 SELECT 1
-                   FROM cached_chapter_payloads AS newer
-                  WHERE newer.novel_id = payload.novel_id
-                    AND newer.chapter_id = payload.chapter_id
-                    AND (
-                      newer.fetched_at_us > payload.fetched_at_us OR
-                      (newer.fetched_at_us = payload.fetched_at_us AND
-                       newer.payload_id > payload.payload_id)
-                    )
-               )
-             ORDER BY payload.chapter_index, payload.payload_id;
-            ''',
-            [novelId],
-          )
-          .map(_payloadFromRow),
-    );
-  }
-
-  @override
   void upsertNovelOutline(CachedNovelOutline outline) {
     _checkOpen();
     _upsertNovelOutline(outline);
@@ -704,12 +608,6 @@ final class SqliteOfflineRepository
         }
       }
     });
-  }
-
-  @override
-  void upsertChapterPayload(CachedChapterPayload payload) {
-    _checkOpen();
-    _upsertChapterPayload(payload);
   }
 
   @override
@@ -862,46 +760,20 @@ final class SqliteOfflineRepository
   }
 
   @override
-  ContentCacheRemovalSummary removeCachedNovel(String novelId) {
+  void removeCachedNovel(String novelId) {
     _checkOpen();
-    return _transaction(() {
-      final removedCacheCopyCount = _int(
-        _database.select(
-          'SELECT COUNT(*) AS count FROM offline_chapter_copies '
-          'WHERE novel_id = ? AND copy_kind = ?;',
-          [novelId, OfflineCopyKind.cacheCopy.name],
-        ).single['count'],
-      );
-      final protectedPayloadCount = _int(
-        _database.select(
-          'SELECT COUNT(DISTINCT payload_id) AS count '
-          'FROM offline_chapter_copies WHERE novel_id = ? '
-          'AND copy_kind = ? AND payload_id IS NOT NULL;',
-          [novelId, OfflineCopyKind.offlineDownload.name],
-        ).single['count'],
-      );
-      final manifestState = _database
-          .select(
-            '''
-            SELECT
-              EXISTS(
-                SELECT 1 FROM cached_novels WHERE id = ?
-              ) AS has_manifest,
-              (
-                EXISTS(
-                  SELECT 1 FROM offline_chapter_copies
-                   WHERE novel_id = ? AND copy_kind = ?
-                ) OR EXISTS(
-                  SELECT 1 FROM download_intents WHERE novel_id = ?
-                )
-              ) AS preserve_manifest;
-            ''',
-            [novelId, novelId, OfflineCopyKind.offlineDownload.name, novelId],
-          )
-          .single;
-      final preserveManifest = _int(manifestState['preserve_manifest']) == 1;
-      final retainedDownloadManifest =
-          preserveManifest && _int(manifestState['has_manifest']) == 1;
+    _transaction(() {
+      final preserveManifest =
+          _database.select(
+            'SELECT EXISTS('
+            'SELECT 1 FROM offline_chapter_copies '
+            'WHERE novel_id = ? AND copy_kind = ?'
+            ') OR EXISTS('
+            'SELECT 1 FROM download_intents WHERE novel_id = ?'
+            ') AS preserve_manifest;',
+            [novelId, OfflineCopyKind.offlineDownload.name, novelId],
+          ).single['preserve_manifest'] ==
+          1;
       _database.execute(
         'DELETE FROM offline_chapter_copies '
         'WHERE novel_id = ? AND copy_kind = ?;',
@@ -917,14 +789,6 @@ final class SqliteOfflineRepository
         'WHERE copy.payload_id = payload.payload_id '
         'AND copy.copy_kind = ?);',
         [novelId, OfflineCopyKind.offlineDownload.name],
-      );
-      final removedPayloadCount = _database.updatedRows;
-      return ContentCacheRemovalSummary(
-        novelId: novelId,
-        removedCacheCopyCount: removedCacheCopyCount,
-        removedPayloadCount: removedPayloadCount,
-        retainedProtectedPayloadCount: protectedPayloadCount,
-        retainedDownloadManifest: retainedDownloadManifest,
       );
     });
   }
@@ -1048,14 +912,6 @@ final class SqliteOfflineRepository
   }
 
   @override
-  void removeReadingProgress(String novelId) {
-    _checkOpen();
-    _database.execute('DELETE FROM reading_progress WHERE novel_id = ?;', [
-      novelId,
-    ]);
-  }
-
-  @override
   void saveBookmark(LocalBookmark bookmark) {
     _checkOpen();
     if (bookmark.id.isEmpty) throw ArgumentError.value(bookmark.id, 'id');
@@ -1081,15 +937,6 @@ final class SqliteOfflineRepository
         _timestamp(bookmark.createdAt),
       ],
     );
-  }
-
-  @override
-  LocalBookmark? bookmarkById(String id) {
-    _checkOpen();
-    final rows = _database.select('SELECT * FROM bookmarks WHERE id = ?;', [
-      id,
-    ]);
-    return rows.isEmpty ? null : _bookmarkFromRow(rows.single);
   }
 
   @override
@@ -1165,12 +1012,6 @@ final class SqliteOfflineRepository
   }
 
   @override
-  void clearLastRoute() {
-    _checkOpen();
-    _database.execute('DELETE FROM last_route_state WHERE singleton_id = 1;');
-  }
-
-  @override
   void saveRecentSearches(List<String> queries) {
     _checkOpen();
     final normalized = <String>[];
@@ -1204,12 +1045,6 @@ final class SqliteOfflineRepository
           )
           .map((row) => _string(row['query'])),
     );
-  }
-
-  @override
-  void clearRecentSearches() {
-    _checkOpen();
-    _database.execute('DELETE FROM recent_searches;');
   }
 
   @override
@@ -1268,7 +1103,7 @@ final class SqliteOfflineRepository
         _boolean(reader.textSelectionEnabled),
         _boolean(reader.tapPageTurnEnabled),
         settings.themePreference.name,
-        _boolean(settings.notifyNewChapters),
+        0,
         settings.cacheLimitBytes,
         _timestamp(settings.updatedAt),
       ],
@@ -1336,7 +1171,6 @@ final class SqliteOfflineRepository
         row['theme_preference'],
         'theme_preference',
       ),
-      notifyNewChapters: _int(row['notify_new_chapters']) == 1,
       cacheLimitBytes: _int(row['cache_limit_bytes']),
       updatedAt: _dateTime(row['updated_at_us']),
     );

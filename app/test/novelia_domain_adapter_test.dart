@@ -97,7 +97,6 @@ void main() {
               content: 'must not leak',
               hidden: true,
               createdAt: DateTime.utc(2026, 8, 17),
-              replyCount: 1,
               replies: [
                 NoveliaComment(
                   id: 'reply',
@@ -105,7 +104,6 @@ void main() {
                   content: 'also secret',
                   hidden: true,
                   createdAt: DateTime.utc(2026, 8, 17, 1),
-                  replyCount: 0,
                   replies: const [],
                 ),
               ],

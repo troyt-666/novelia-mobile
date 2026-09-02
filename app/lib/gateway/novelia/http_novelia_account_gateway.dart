@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'dart:io';
 
 import '../../core/account/account_sync_models.dart';
@@ -17,7 +16,6 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
     this.requestTimeout = const Duration(seconds: 20),
     this.maximumResponseBytes = 2 * 1024 * 1024,
     this.codec = const NoveliaJsonCodec(),
-    this.debugDiagnosticSink,
   }) : baseUri = baseUri ?? Uri.parse('https://n.novelia.cc/api/'),
        _client = client ?? HttpClient(),
        _ownsClient = client == null;
@@ -27,7 +25,6 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
   final Duration requestTimeout;
   final int maximumResponseBytes;
   final NoveliaJsonCodec codec;
-  final void Function(String message)? debugDiagnosticSink;
   final HttpClient _client;
   final bool _ownsClient;
 
@@ -259,16 +256,6 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
         }
         body.addAll(chunk);
       }
-      assert(() {
-        _debugTrace({
-          'event': 'response',
-          'operation': _operationName(method, relativePath),
-          'status': response.statusCode,
-          'contentType': response.headers.contentType?.toString(),
-          'body': _describeBody(body),
-        });
-        return true;
-      }());
       return _AccountResponse(statusCode: response.statusCode, body: body);
     } on NoveliaGatewayException {
       rethrow;
@@ -329,81 +316,6 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
     if (value.trim().isEmpty) throw ArgumentError.value(value, 'identifier');
     return Uri.encodeComponent(value);
   }
-
-  void _debugTrace(Map<String, Object?> fields) {
-    final message = jsonEncode(fields);
-    if (debugDiagnosticSink case final sink?) {
-      sink(message);
-    } else {
-      developer.log(message, name: 'novelia.account');
-      stderr.writeln('novelia.account $message');
-    }
-  }
-
-  static String _operationName(String method, String path) {
-    if (path == 'user/favored') return 'list_favorite_folders';
-    if (path == 'user/favored-web') return 'create_favorite_folder';
-    if (method == 'GET' && path.startsWith('user/favored-web/')) {
-      return 'list_favorite_novels';
-    }
-    if (path.startsWith('user/favored-web/')) {
-      return method == 'DELETE' ? 'unfavorite_novel' : 'favorite_novel';
-    }
-    if (method == 'GET' && path == 'user/read-history') {
-      return 'list_read_history';
-    }
-    if (path.startsWith('user/read-history/')) return 'update_read_history';
-    return 'account_request';
-  }
-
-  static Map<String, Object?> _describeBody(List<int> body) {
-    final text = utf8.decode(body, allowMalformed: true).trim();
-    if (text.isEmpty) return const {'kind': 'empty'};
-    Object? decoded;
-    try {
-      decoded = jsonDecode(text);
-    } on FormatException {
-      return const {'kind': 'text'};
-    }
-    return {'kind': 'json', 'schema': _jsonSchema(decoded, depth: 0)};
-  }
-
-  static Object _jsonSchema(Object? value, {required int depth}) {
-    if (depth >= 4) return _valueType(value);
-    if (value is Map) {
-      final entries = <String, Object>{};
-      for (final entry in value.entries) {
-        entries[entry.key.toString()] = _jsonSchema(
-          entry.value,
-          depth: depth + 1,
-        );
-      }
-      return Map.fromEntries(
-        entries.entries.toList()
-          ..sort((left, right) => left.key.compareTo(right.key)),
-      );
-    }
-    if (value is List) {
-      return <String, Object>{
-        'type': 'array',
-        'item': value.isEmpty
-            ? 'unknown'
-            : _jsonSchema(value.first, depth: depth + 1),
-      };
-    }
-    return _valueType(value);
-  }
-
-  static String _valueType(Object? value) => switch (value) {
-    null => 'null',
-    String() => 'string',
-    bool() => 'boolean',
-    int() => 'integer',
-    double() => 'number',
-    List() => 'array',
-    Map() => 'object',
-    _ => value.runtimeType.toString(),
-  };
 
   static Object? _decodeJson(List<int> body, String label) {
     try {

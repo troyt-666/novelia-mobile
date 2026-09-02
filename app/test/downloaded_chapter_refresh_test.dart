@@ -7,306 +7,331 @@ import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/core/offline/offline_repository.dart';
 
 void main() {
-  final factories = <String, _Harness Function()>{
-    'SQLite': () {
+  group('SQLite protected chapter refresh', () {
+    late _Harness harness;
+    final t0 = DateTime.utc(2026, 8, 18);
+
+    setUp(() {
       final repository = SqliteOfflineRepository.openInMemory();
-      return _Harness(repository, repository, repository.close);
-    },
-    'in-memory': () {
-      final repository = InMemoryOfflineRepository();
-      return _Harness(repository, repository, () {});
-    },
-  };
+      harness = _Harness(repository, repository, repository.close);
+    });
+    tearDown(() => harness.close());
 
-  for (final factory in factories.entries) {
-    group('${factory.key} protected chapter refresh', () {
-      late _Harness harness;
-      final t0 = DateTime.utc(2026, 8, 18);
+    test('atomically upgrades Translation Pending to complete', () {
+      final stored = _storeInitial(harness, t0);
+      final taskBefore = harness.offline.taskById(stored.taskId)!;
+      final complete = _payload(
+        id: 'payload-r2',
+        revision: 'r2',
+        etag: 'etag-r2',
+        fetchedAt: t0.add(const Duration(hours: 1)),
+        japaneseBlocks: const ['新しい原文', ''],
+        availability: TranslationAvailability.complete,
+        translationBlocks: const ['新译文', ''],
+      );
+      final replacement = _replacementCopy(
+        stored.copy,
+        complete,
+        originalBytes: 240,
+        translationBytes: 180,
+      );
 
-      setUp(() => harness = factory.value());
-      tearDown(() => harness.close());
+      harness.content.refreshDownloadedChapter(
+        taskId: stored.taskId,
+        payload: complete,
+        copy: replacement,
+      );
 
-      test('atomically upgrades Translation Pending to complete', () {
-        final stored = _storeInitial(harness, t0);
-        final taskBefore = harness.offline.taskById(stored.taskId)!;
-        final complete = _payload(
-          id: 'payload-r2',
-          revision: 'r2',
-          etag: 'etag-r2',
-          fetchedAt: t0.add(const Duration(hours: 1)),
-          japaneseBlocks: const ['新しい原文', ''],
-          availability: TranslationAvailability.complete,
-          translationBlocks: const ['新译文', ''],
-        );
-        final replacement = _replacementCopy(
+      final taskAfter = harness.offline.taskById(stored.taskId)!;
+      _expectTaskUnchanged(taskBefore, taskAfter);
+      final copyAfter = harness.offline.copyById(stored.copy.id)!;
+      expect(copyAfter.payloadId, 'payload-r2');
+      expect(copyAfter.translationBytes, 180);
+      expect(copyAfter.originalBytes, 240);
+      expect(copyAfter.revision, 'r2');
+      expect(copyAfter.etag, 'etag-r2');
+      expect(harness.content.chapterPayloadById('payload-r2')!.japaneseBlocks, [
+        '新しい原文',
+        '',
+      ]);
+      expect(harness.content.chapterPayloadById('payload-r1'), isNull);
+    });
+
+    test('refreshes pending freshness without inventing a translation', () {
+      final stored = _storeInitial(harness, t0);
+      final taskBefore = harness.offline.taskById(stored.taskId)!;
+      final refreshedPending = _payload(
+        id: 'payload-r1',
+        revision: 'r1',
+        etag: 'etag-r1',
+        fetchedAt: t0.add(const Duration(minutes: 15)),
+        japaneseBlocks: const ['原文', ''],
+        availability: TranslationAvailability.pending,
+      );
+      final replacement = _replacementCopy(
+        stored.copy,
+        refreshedPending,
+        originalBytes: 130,
+        translationBytes: null,
+      );
+
+      harness.content.refreshDownloadedChapter(
+        taskId: stored.taskId,
+        payload: refreshedPending,
+        copy: replacement,
+      );
+
+      _expectTaskUnchanged(
+        taskBefore,
+        harness.offline.taskById(stored.taskId)!,
+      );
+      expect(harness.offline.copyById(stored.copy.id)!.hasTranslation, false);
+      expect(
+        harness.content.chapterPayloadById('payload-r1')!.fetchedAt,
+        refreshedPending.fetchedAt,
+      );
+    });
+
+    test('repoints a pending copy when the Japanese revision changes', () {
+      final stored = _storeInitial(harness, t0);
+      final revisedOriginal = _payload(
+        id: 'payload-original-r2',
+        revision: 'original-r2',
+        etag: 'original-etag-r2',
+        fetchedAt: t0.add(const Duration(hours: 2)),
+        japaneseBlocks: const ['改稿された原文'],
+        availability: TranslationAvailability.pending,
+      );
+
+      harness.content.refreshDownloadedChapter(
+        taskId: stored.taskId,
+        payload: revisedOriginal,
+        copy: _replacementCopy(
+          stored.copy,
+          revisedOriginal,
+          originalBytes: 300,
+          translationBytes: null,
+        ),
+      );
+
+      expect(
+        harness.content
+            .chapterPayloadById('payload-original-r2')!
+            .japaneseBlocks,
+        ['改稿された原文'],
+      );
+      expect(harness.content.chapterPayloadById('payload-r1'), isNull);
+      expect(harness.offline.copyById(stored.copy.id)!.revision, 'original-r2');
+    });
+
+    test('can replace an invalid translation with a complete revision', () {
+      final stored = _storeInitial(harness, t0);
+      final invalid = _payload(
+        id: 'payload-invalid',
+        revision: 'invalid-r1',
+        etag: 'invalid-etag',
+        fetchedAt: t0.add(const Duration(minutes: 10)),
+        japaneseBlocks: const ['一', '二'],
+        availability: TranslationAvailability.invalid,
+        translationBlocks: const ['只有一行'],
+      );
+      harness.content.refreshDownloadedChapter(
+        taskId: stored.taskId,
+        payload: invalid,
+        copy: _replacementCopy(
+          stored.copy,
+          invalid,
+          originalBytes: 120,
+          translationBytes: null,
+        ),
+      );
+      final complete = _payload(
+        id: 'payload-valid',
+        revision: 'valid-r2',
+        etag: 'valid-etag',
+        fetchedAt: t0.add(const Duration(minutes: 20)),
+        japaneseBlocks: const ['一', '二'],
+        availability: TranslationAvailability.complete,
+        translationBlocks: const ['一', '二'],
+      );
+
+      harness.content.refreshDownloadedChapter(
+        taskId: stored.taskId,
+        payload: complete,
+        copy: _replacementCopy(
+          harness.offline.copyById(stored.copy.id)!,
+          complete,
+          originalBytes: 120,
+          translationBytes: 80,
+        ),
+      );
+
+      expect(harness.content.chapterPayloadById('payload-invalid'), isNull);
+      expect(harness.offline.copyById(stored.copy.id)!.translationBytes, 80);
+      expect(
+        harness.offline.taskById(stored.taskId)!.state,
+        DownloadTaskState.stored,
+      );
+    });
+
+    test('retains an old payload while another copy still references it', () {
+      final stored = _storeInitial(harness, t0);
+      harness.offline.saveIntent(
+        NovelDownloadIntent(
+          id: 'other-intent',
+          novelId: 'novel',
+          translationSource: TranslationSource.sakura,
+          createdAt: t0,
+        ),
+      );
+      var otherTask = harness.offline
+          .reconcileIntent(
+            intentId: 'other-intent',
+            knownChapterIds: const ['chapter'],
+            now: t0,
+          )
+          .single;
+      otherTask = otherTask.beginFetching(t0);
+      harness.offline.saveTask(otherTask);
+      otherTask = otherTask.beginValidation(t0);
+      harness.offline.saveTask(otherTask);
+      otherTask = otherTask.beginStoring(t0);
+      harness.offline.saveTask(otherTask);
+      final oldPayload = harness.content.chapterPayloadById('payload-r1')!;
+      harness.content.commitDownloadedChapter(
+        taskId: otherTask.id,
+        payload: oldPayload,
+        copy: OfflineChapterCopy(
+          id: 'other-download',
+          novelId: 'novel',
+          chapterId: 'chapter',
+          kind: OfflineCopyKind.offlineDownload,
+          translationSource: TranslationSource.sakura,
+          originalBytes: 100,
+          translationBytes: null,
+          storedAt: t0,
+          intentId: 'other-intent',
+          payloadId: oldPayload.id,
+          revision: oldPayload.revision,
+          etag: oldPayload.etag,
+        ),
+        now: t0,
+      );
+      final complete = _payload(
+        id: 'payload-r2',
+        revision: 'r2',
+        etag: 'etag-r2',
+        fetchedAt: t0.add(const Duration(hours: 1)),
+        japaneseBlocks: const ['原文'],
+        availability: TranslationAvailability.complete,
+        translationBlocks: const ['译文'],
+      );
+
+      harness.content.refreshDownloadedChapter(
+        taskId: stored.taskId,
+        payload: complete,
+        copy: _replacementCopy(
           stored.copy,
           complete,
-          originalBytes: 240,
-          translationBytes: 180,
-        );
+          originalBytes: 120,
+          translationBytes: 90,
+        ),
+      );
 
-        harness.content.refreshDownloadedChapter(
-          taskId: stored.taskId,
-          payload: complete,
-          copy: replacement,
-        );
+      expect(harness.content.chapterPayloadById('payload-r1'), isNotNull);
+      harness.offline.removeIntent('other-intent', t0);
+      expect(harness.content.chapterPayloadById('payload-r1'), isNull);
+      expect(harness.content.chapterPayloadById('payload-r2'), isNotNull);
+    });
 
-        final taskAfter = harness.offline.taskById(stored.taskId)!;
-        _expectTaskUnchanged(taskBefore, taskAfter);
-        final copyAfter = harness.offline.copyById(stored.copy.id)!;
-        expect(copyAfter.payloadId, 'payload-r2');
-        expect(copyAfter.translationBytes, 180);
-        expect(copyAfter.originalBytes, 240);
-        expect(copyAfter.revision, 'r2');
-        expect(copyAfter.etag, 'etag-r2');
-        expect(
-          harness.content.chapterPayloadById('payload-r2')!.japaneseBlocks,
-          ['新しい原文', ''],
-        );
-        expect(harness.content.chapterPayloadById('payload-r1'), isNull);
-      });
-
-      test('refreshes pending freshness without inventing a translation', () {
+    test(
+      'rolls back mismatches without touching task, copy, or other intent',
+      () {
         final stored = _storeInitial(harness, t0);
-        final taskBefore = harness.offline.taskById(stored.taskId)!;
-        final refreshedPending = _payload(
-          id: 'payload-r1',
-          revision: 'r1',
-          etag: 'etag-r1',
-          fetchedAt: t0.add(const Duration(minutes: 15)),
-          japaneseBlocks: const ['原文', ''],
+        harness.offline.saveIntent(
+          NovelDownloadIntent(
+            id: 'other-intent',
+            novelId: 'novel',
+            translationSource: TranslationSource.sakura,
+            createdAt: t0,
+          ),
+        );
+        final unrelatedPayload = _payload(
+          id: 'payload-unrelated',
+          revision: 'unrelated',
+          etag: 'unrelated-etag',
+          fetchedAt: t0,
+          japaneseBlocks: const ['別'],
           availability: TranslationAvailability.pending,
         );
-        final replacement = _replacementCopy(
-          stored.copy,
-          refreshedPending,
-          originalBytes: 130,
+        final cacheCopy = OfflineChapterCopy(
+          id: 'unrelated-cache',
+          novelId: 'novel',
+          chapterId: 'chapter',
+          kind: OfflineCopyKind.cacheCopy,
+          translationSource: TranslationSource.sakura,
+          originalBytes: 10,
           translationBytes: null,
+          storedAt: t0,
+          payloadId: unrelatedPayload.id,
+          revision: unrelatedPayload.revision,
+          etag: unrelatedPayload.etag,
+        );
+        harness.content.cacheChapterPayload(
+          payload: unrelatedPayload,
+          copy: cacheCopy,
+        );
+        final taskBefore = harness.offline.taskById(stored.taskId)!;
+        final copyBefore = harness.offline.copyById(stored.copy.id)!;
+        final mismatchedPayload = _payload(
+          id: 'payload-bad',
+          revision: 'bad',
+          etag: 'bad-etag',
+          fetchedAt: t0.add(const Duration(hours: 1)),
+          japaneseBlocks: const ['原文'],
+          availability: TranslationAvailability.complete,
+          translationBlocks: const ['译文'],
+        );
+        final wrongIntentCopy = OfflineChapterCopy(
+          id: stored.copy.id,
+          novelId: stored.copy.novelId,
+          chapterId: stored.copy.chapterId,
+          kind: OfflineCopyKind.offlineDownload,
+          translationSource: stored.copy.translationSource,
+          originalBytes: 200,
+          translationBytes: 100,
+          storedAt: mismatchedPayload.fetchedAt,
+          intentId: 'other-intent',
+          payloadId: mismatchedPayload.id,
+          revision: mismatchedPayload.revision,
+          etag: mismatchedPayload.etag,
         );
 
-        harness.content.refreshDownloadedChapter(
-          taskId: stored.taskId,
-          payload: refreshedPending,
-          copy: replacement,
+        expect(
+          () => harness.content.refreshDownloadedChapter(
+            taskId: stored.taskId,
+            payload: mismatchedPayload,
+            copy: wrongIntentCopy,
+          ),
+          throwsStateError,
         );
 
         _expectTaskUnchanged(
           taskBefore,
           harness.offline.taskById(stored.taskId)!,
         );
-        expect(harness.offline.copyById(stored.copy.id)!.hasTranslation, false);
+        final copyAfter = harness.offline.copyById(stored.copy.id)!;
+        expect(copyAfter.payloadId, copyBefore.payloadId);
+        expect(copyAfter.intentId, 'intent');
+        expect(harness.content.chapterPayloadById('payload-bad'), isNull);
         expect(
-          harness.content.chapterPayloadById('payload-r1')!.fetchedAt,
-          refreshedPending.fetchedAt,
+          harness.offline.copyById('unrelated-cache')!.payloadId,
+          'payload-unrelated',
         );
-      });
-
-      test('repoints a pending copy when the Japanese revision changes', () {
-        final stored = _storeInitial(harness, t0);
-        final revisedOriginal = _payload(
-          id: 'payload-original-r2',
-          revision: 'original-r2',
-          etag: 'original-etag-r2',
-          fetchedAt: t0.add(const Duration(hours: 2)),
-          japaneseBlocks: const ['改稿された原文'],
-          availability: TranslationAvailability.pending,
-        );
-
-        harness.content.refreshDownloadedChapter(
-          taskId: stored.taskId,
-          payload: revisedOriginal,
-          copy: _replacementCopy(
-            stored.copy,
-            revisedOriginal,
-            originalBytes: 300,
-            translationBytes: null,
-          ),
-        );
-
-        expect(
-          harness.content
-              .chapterPayloadById('payload-original-r2')!
-              .japaneseBlocks,
-          ['改稿された原文'],
-        );
-        expect(harness.content.chapterPayloadById('payload-r1'), isNull);
-        expect(
-          harness.offline.copyById(stored.copy.id)!.revision,
-          'original-r2',
-        );
-      });
-
-      test('can replace an invalid translation with a complete revision', () {
-        final stored = _storeInitial(harness, t0);
-        final invalid = _payload(
-          id: 'payload-invalid',
-          revision: 'invalid-r1',
-          etag: 'invalid-etag',
-          fetchedAt: t0.add(const Duration(minutes: 10)),
-          japaneseBlocks: const ['一', '二'],
-          availability: TranslationAvailability.invalid,
-          translationBlocks: const ['只有一行'],
-        );
-        harness.content.refreshDownloadedChapter(
-          taskId: stored.taskId,
-          payload: invalid,
-          copy: _replacementCopy(
-            stored.copy,
-            invalid,
-            originalBytes: 120,
-            translationBytes: null,
-          ),
-        );
-        final complete = _payload(
-          id: 'payload-valid',
-          revision: 'valid-r2',
-          etag: 'valid-etag',
-          fetchedAt: t0.add(const Duration(minutes: 20)),
-          japaneseBlocks: const ['一', '二'],
-          availability: TranslationAvailability.complete,
-          translationBlocks: const ['一', '二'],
-        );
-
-        harness.content.refreshDownloadedChapter(
-          taskId: stored.taskId,
-          payload: complete,
-          copy: _replacementCopy(
-            harness.offline.copyById(stored.copy.id)!,
-            complete,
-            originalBytes: 120,
-            translationBytes: 80,
-          ),
-        );
-
-        expect(harness.content.chapterPayloadById('payload-invalid'), isNull);
-        expect(harness.offline.copyById(stored.copy.id)!.translationBytes, 80);
-        expect(
-          harness.offline.taskById(stored.taskId)!.state,
-          DownloadTaskState.stored,
-        );
-      });
-
-      test('retains an old payload while another copy still references it', () {
-        final stored = _storeInitial(harness, t0);
-        final cacheCopy = OfflineChapterCopy(
-          id: 'cache-copy',
-          novelId: 'novel',
-          chapterId: 'chapter',
-          kind: OfflineCopyKind.cacheCopy,
-          translationSource: TranslationSource.sakura,
-          originalBytes: 100,
-          translationBytes: null,
-          storedAt: t0,
-          payloadId: 'payload-r1',
-          revision: 'r1',
-          etag: 'etag-r1',
-        );
-        harness.offline.saveCopy(cacheCopy);
-        final complete = _payload(
-          id: 'payload-r2',
-          revision: 'r2',
-          etag: 'etag-r2',
-          fetchedAt: t0.add(const Duration(hours: 1)),
-          japaneseBlocks: const ['原文'],
-          availability: TranslationAvailability.complete,
-          translationBlocks: const ['译文'],
-        );
-
-        harness.content.refreshDownloadedChapter(
-          taskId: stored.taskId,
-          payload: complete,
-          copy: _replacementCopy(
-            stored.copy,
-            complete,
-            originalBytes: 120,
-            translationBytes: 90,
-          ),
-        );
-
-        expect(harness.content.chapterPayloadById('payload-r1'), isNotNull);
-        harness.offline.evictCacheTo(maxBytes: 0);
-        expect(harness.content.chapterPayloadById('payload-r1'), isNull);
-        expect(harness.content.chapterPayloadById('payload-r2'), isNotNull);
-      });
-
-      test(
-        'rolls back mismatches without touching task, copy, or other intent',
-        () {
-          final stored = _storeInitial(harness, t0);
-          harness.offline.saveIntent(
-            NovelDownloadIntent(
-              id: 'other-intent',
-              novelId: 'novel',
-              translationSource: TranslationSource.sakura,
-              createdAt: t0,
-            ),
-          );
-          final cacheCopy = OfflineChapterCopy(
-            id: 'unrelated-cache',
-            novelId: 'novel',
-            chapterId: 'chapter',
-            kind: OfflineCopyKind.cacheCopy,
-            translationSource: TranslationSource.sakura,
-            originalBytes: 10,
-            translationBytes: null,
-            storedAt: t0,
-            payloadId: 'payload-r1',
-            revision: 'r1',
-            etag: 'etag-r1',
-          );
-          harness.offline.saveCopy(cacheCopy);
-          final taskBefore = harness.offline.taskById(stored.taskId)!;
-          final copyBefore = harness.offline.copyById(stored.copy.id)!;
-          final mismatchedPayload = _payload(
-            id: 'payload-bad',
-            revision: 'bad',
-            etag: 'bad-etag',
-            fetchedAt: t0.add(const Duration(hours: 1)),
-            japaneseBlocks: const ['原文'],
-            availability: TranslationAvailability.complete,
-            translationBlocks: const ['译文'],
-          );
-          final wrongIntentCopy = OfflineChapterCopy(
-            id: stored.copy.id,
-            novelId: stored.copy.novelId,
-            chapterId: stored.copy.chapterId,
-            kind: OfflineCopyKind.offlineDownload,
-            translationSource: stored.copy.translationSource,
-            originalBytes: 200,
-            translationBytes: 100,
-            storedAt: mismatchedPayload.fetchedAt,
-            intentId: 'other-intent',
-            payloadId: mismatchedPayload.id,
-            revision: mismatchedPayload.revision,
-            etag: mismatchedPayload.etag,
-          );
-
-          expect(
-            () => harness.content.refreshDownloadedChapter(
-              taskId: stored.taskId,
-              payload: mismatchedPayload,
-              copy: wrongIntentCopy,
-            ),
-            throwsStateError,
-          );
-
-          _expectTaskUnchanged(
-            taskBefore,
-            harness.offline.taskById(stored.taskId)!,
-          );
-          final copyAfter = harness.offline.copyById(stored.copy.id)!;
-          expect(copyAfter.payloadId, copyBefore.payloadId);
-          expect(copyAfter.intentId, 'intent');
-          expect(harness.content.chapterPayloadById('payload-bad'), isNull);
-          expect(
-            harness.offline.copyById('unrelated-cache')!.payloadId,
-            'payload-r1',
-          );
-          expect(harness.offline.intentById('other-intent'), isNotNull);
-        },
-      );
-    });
-  }
+        expect(harness.offline.intentById('other-intent'), isNotNull);
+      },
+    );
+  });
 }
 
 class _Harness {

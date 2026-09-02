@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../discover/catalog_models.dart';
@@ -25,59 +23,49 @@ class ReaderLaunchLoaderScreen extends StatefulWidget {
 }
 
 class _ReaderLaunchLoaderScreenState extends State<ReaderLaunchLoaderScreen> {
-  ReaderLaunchData? _data;
-  Object? _error;
-  var _requestGeneration = 0;
-
-  bool get _isLoading => _data == null && _error == null;
+  late Future<ReaderLaunchData> _future;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    _future = _load();
   }
 
-  Future<void> _load() async {
-    final generation = ++_requestGeneration;
-    if (mounted) {
-      setState(() {
-        _data = null;
-        _error = null;
-      });
-    }
-    try {
-      final data = await widget.load();
-      if (!mounted || generation != _requestGeneration) return;
-      widget.onLoaded(data);
-      if (!mounted || generation != _requestGeneration) return;
-      setState(() => _data = data);
-    } on Object catch (error) {
-      if (!mounted || generation != _requestGeneration) return;
-      setState(() => _error = error);
-    }
+  Future<ReaderLaunchData> _load() async {
+    final data = await widget.load();
+    if (mounted) widget.onLoaded(data);
+    return data;
   }
+
+  void _retry() => setState(() {
+    _future = _load();
+  });
 
   @override
   Widget build(BuildContext context) {
-    final data = _data;
-    if (data != null) {
-      return KeyedSubtree(
-        key: const ValueKey('reader-launch-ready'),
-        child: widget.builder(context, data),
-      );
-    }
-
-    return Scaffold(
-      key: const ValueKey('reader-launch-loader-screen'),
-      appBar: AppBar(),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: _isLoading
-              ? const _ReaderLoadingState()
-              : _ReaderErrorState(onRetry: _load),
-        ),
-      ),
+    return FutureBuilder<ReaderLaunchData>(
+      future: _future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        if (data != null) {
+          return KeyedSubtree(
+            key: const ValueKey('reader-launch-ready'),
+            child: widget.builder(context, data),
+          );
+        }
+        return Scaffold(
+          key: const ValueKey('reader-launch-loader-screen'),
+          appBar: AppBar(),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: snapshot.hasError
+                  ? _ReaderErrorState(onRetry: _retry)
+                  : const _ReaderLoadingState(),
+            ),
+          ),
+        );
+      },
     );
   }
 }

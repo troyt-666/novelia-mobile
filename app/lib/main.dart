@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -24,7 +23,6 @@ import 'features/reader/reader_screen.dart';
 import 'features/shell/download_management_screen.dart';
 import 'features/shell/novelia_shell.dart';
 import 'features/shell/shell_view_models.dart';
-import 'fixtures/catalog_fixture.dart';
 import 'gateway/novelia/http_novelia_gateway.dart';
 import 'gateway/novelia/http_novelia_wenku_gateway.dart';
 import 'gateway/novelia/http_novelia_auth_gateway.dart';
@@ -116,8 +114,8 @@ Future<void> main() async {
 class NoveliaReaderApp extends StatefulWidget {
   const NoveliaReaderApp({
     required this.repository,
+    required this.contentCoordinator,
     this.appVersion = const AppVersion.unavailable(),
-    this.contentCoordinator,
     this.wenkuGateway,
     this.downloadCoordinator,
     this.accountSessionController,
@@ -133,7 +131,7 @@ class NoveliaReaderApp extends StatefulWidget {
 
   final SqliteOfflineRepository repository;
   final AppVersion appVersion;
-  final NoveliaContentCoordinator? contentCoordinator;
+  final NoveliaContentCoordinator contentCoordinator;
   final NoveliaWenkuGateway? wenkuGateway;
   final NoveliaDownloadCoordinator? downloadCoordinator;
   final AccountSessionController? accountSessionController;
@@ -153,7 +151,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     with WidgetsBindingObserver {
   late ThemeMode _themeMode;
   late ReaderSettings _readerSettings;
-  late bool _notifyNewChapters;
   late int _cacheLimitBytes;
   late int _initialDestination;
   late List<String> _initialRecentSearches;
@@ -208,7 +205,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     _themeMode = _themeModeFromPreference(
       settings?.themePreference ?? ThemePreference.system,
     );
-    _notifyNewChapters = settings?.notifyNewChapters ?? false;
     _cacheLimitBytes = settings?.cacheLimitBytes ?? _defaultCacheLimitBytes;
     _initialRecentSearches = _repository.recentSearches();
 
@@ -219,26 +215,18 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     _initialReaderNovelId = restoreReader ? route?.novelId : null;
     _initialReaderPosition = restoreReader ? route?.position : null;
 
-    if (widget.contentCoordinator == null) {
-      _catalogNovels = fixtureCatalogNovels;
-      _recentlyUpdatedNovels = fixtureCatalogNovels;
-      _catalogAvailability = CatalogAvailability.available;
-      _recentlyUpdatedAvailability = CatalogAvailability.available;
-      _mostClickedAvailability = CatalogAvailability.available;
-    } else {
-      _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
-      _catalogNovels = _restoreCachedCatalog();
-      _recentlyUpdatedNovels = _catalogNovels;
-      // Restored rows are useful immediately, but they are not evidence that
-      // the service is currently reachable. A live-origin refresh promotes the
-      // state to available once it actually succeeds.
-      _catalogAvailability = CatalogAvailability.offline;
-      _recentlyUpdatedAvailability = CatalogAvailability.offline;
-      _mostClickedAvailability = CatalogAvailability.offline;
-      unawaited(_refreshCatalog());
-      unawaited(_refreshMostClicked());
-      unawaited(_resumeDownloadIntents());
-    }
+    _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
+    _catalogNovels = _restoreCachedCatalog();
+    _recentlyUpdatedNovels = _catalogNovels;
+    // Restored rows are useful immediately, but they are not evidence that
+    // the service is currently reachable. A live-origin refresh promotes the
+    // state to available once it actually succeeds.
+    _catalogAvailability = CatalogAvailability.offline;
+    _recentlyUpdatedAvailability = CatalogAvailability.offline;
+    _mostClickedAvailability = CatalogAvailability.offline;
+    unawaited(_refreshCatalog());
+    unawaited(_refreshMostClicked());
+    unawaited(_resumeDownloadIntents());
   }
 
   @override
@@ -256,11 +244,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    if (widget.contentCoordinator != null) {
-      unawaited(_refreshCatalog());
-      unawaited(_refreshRecentlyUpdated());
-      unawaited(_refreshMostClicked());
-    }
+    unawaited(_refreshCatalog());
+    unawaited(_refreshRecentlyUpdated());
+    unawaited(_refreshMostClicked());
     if (widget.downloadCoordinator != null) {
       unawaited(_resumeDownloadIntents());
     }
@@ -284,8 +270,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       _favoriteFolderGeneration += 1;
       _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
     }
-    if (widget.contentCoordinator != null &&
-        _catalogCriteria.contentLevel != CatalogContentLevel.general) {
+    if (_catalogCriteria.contentLevel != CatalogContentLevel.general) {
       unawaited(_refreshCatalog(criteria: _catalogCriteria));
     }
     setState(() {});
@@ -532,8 +517,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     CatalogCriteria? criteria,
     bool append = false,
   }) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) return;
     final requestedCriteria = criteria ?? _catalogCriteria;
     final criteriaChanged = requestedCriteria != _catalogCriteria;
     if (append &&
@@ -591,7 +574,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       sort: _sortCodeFor(requestedCriteria.sort),
     );
     try {
-      final result = await coordinator.loadCatalog(query);
+      final result = await widget.contentCoordinator.loadCatalog(query);
       if (!mounted || generation != _catalogLoadGeneration) return;
       final slice = result.data;
       setState(() {
@@ -745,8 +728,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<void> _refreshMostClicked({bool append = false}) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) return;
     if (append &&
         (_mostClickedLoadingMore ||
             _mostClickedPageIndex < 0 ||
@@ -765,7 +746,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       });
     }
     try {
-      final result = await coordinator.loadCatalog(
+      final result = await widget.contentCoordinator.loadCatalog(
         NoveliaCatalogQuery(
           page: targetPage,
           pageSize: base.pageSize,
@@ -798,8 +779,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<void> _refreshRecentlyUpdated({bool append = false}) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) return;
     if (append &&
         (_recentlyUpdatedLoadingMore ||
             _recentlyUpdatedPageIndex < 0 ||
@@ -818,7 +797,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       });
     }
     try {
-      final result = await coordinator.loadCatalog(
+      final result = await widget.contentCoordinator.loadCatalog(
         NoveliaCatalogQuery(
           page: targetPage,
           pageSize: base.pageSize,
@@ -911,14 +890,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<RankingPageView> _loadRankings(RankingsQuery query) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) {
-      throw StateError('No ranking loader is configured.');
-    }
     final providerId = _rankingProviderId(query.source);
     final range = _rankingRange(query.period);
     final kakuyomu = providerId == 'kakuyomu';
-    final result = await coordinator.loadRankings(
+    final result = await widget.contentCoordinator.loadRankings(
       kakuyomu
           ? NoveliaRankingQuery.kakuyomu(
               genre: query.genre ?? '综合',
@@ -998,12 +973,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<CatalogNovel> _loadNovelDetails(CatalogNovel outline) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) {
-      if (outline.readerNovel != null) return outline;
-      throw StateError('No detail loader is configured.');
-    }
-    final result = await coordinator.loadDetails(outline);
+    final result = await widget.contentCoordinator.loadDetails(outline);
     final loaded = result.data;
     if (loaded == null) {
       throw result.failure ?? StateError('Novel details are unavailable.');
@@ -1025,18 +995,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     NovelChapter? selectedChapter,
     ReadingPosition? requestedPosition,
   ) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) {
-      final readerNovel = novel.readerNovel;
-      if (readerNovel == null) {
-        throw StateError('No reader content is configured.');
-      }
-      return ReaderLaunchData(
-        novel: readerNovel,
-        initialPosition: requestedPosition,
-        startAtChapterTitle: requestedPosition == null,
-      );
-    }
     final hydrated = novel.hasChapterCatalog
         ? novel
         : await _loadNovelDetails(novel);
@@ -1047,7 +1005,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
             : null);
     final data =
         await NoveliaReaderWindowFactory(
-          contentCoordinator: coordinator,
+          contentCoordinator: widget.contentCoordinator,
         ).create(
           novel: hydrated,
           selectedChapter: selectedChapter,
@@ -1068,16 +1026,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     CatalogNovel novel,
     int pageNumber,
   ) async {
-    final coordinator = widget.contentCoordinator;
-    if (coordinator == null) {
-      return NovelCommentPage(
-        pageNumber: pageNumber,
-        totalPages: novel.comments.isEmpty ? 0 : 1,
-        totalComments: novel.comments.length,
-        comments: novel.comments,
-      );
-    }
-    final result = await coordinator.loadComments(
+    final result = await widget.contentCoordinator.loadComments(
       novel,
       pageNumber: pageNumber,
     );
@@ -1147,7 +1096,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       LocalAppSettings(
         readerSettings: _readerSettings,
         themePreference: _preferenceFromThemeMode(_themeMode),
-        notifyNewChapters: _notifyNewChapters,
         cacheLimitBytes: _cacheLimitBytes,
         updatedAt: DateTime.now().toUtc(),
       ),
@@ -1247,10 +1195,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<void> _downloadNovel(CatalogNovel novel) async {
-    if (widget.downloadCoordinator == null) {
-      _downloadFixtureNovel(novel);
-      return;
-    }
     final source = _readerSettings.translationSource;
     NovelDownloadIntent? intent;
     for (final candidate in _repository.listIntents()) {
@@ -1337,98 +1281,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     return updated
         .where((candidate) => candidate.groupKey == download.groupKey)
         .firstOrNull;
-  }
-
-  void _downloadFixtureNovel(CatalogNovel novel) {
-    final readerNovel = novel.readerNovel;
-    if (readerNovel == null || readerNovel.chapters.isEmpty) {
-      throw StateError('Novel details must be loaded before downloading.');
-    }
-    final source = _readerSettings.translationSource;
-    final now = DateTime.now().toUtc();
-    final intentId = [
-      'novel',
-      novel.id,
-      source.name,
-    ].map(Uri.encodeComponent).join('::');
-    _repository.saveIntent(
-      NovelDownloadIntent(
-        id: intentId,
-        novelId: novel.id,
-        translationSource: source,
-        createdAt: now,
-      ),
-    );
-    final tasks = _repository.reconcileIntent(
-      intentId: intentId,
-      knownChapterIds: readerNovel.chapters.map((chapter) => chapter.id),
-      now: now,
-    );
-    for (final initialTask in tasks) {
-      final chapter = readerNovel.chapters.firstWhere(
-        (chapter) => chapter.id == initialTask.chapterId,
-      );
-      _storeFixtureChapter(initialTask, chapter, now);
-    }
-  }
-
-  void _storeFixtureChapter(
-    DownloadTask initialTask,
-    NovelChapter chapter,
-    DateTime now,
-  ) {
-    final source = initialTask.translationSource;
-    final originalBytes = chapter.blocks.fold<int>(
-      0,
-      (total, block) => total + utf8.encode(block.japanese).length,
-    );
-    final state = chapter.translationState(source);
-    final translationBytes = state == TranslationState.complete
-        ? chapter.blocks.fold<int>(
-            0,
-            (total, block) =>
-                total + utf8.encode(block.translations[source] ?? '').length,
-          )
-        : null;
-    final totalBytes = originalBytes + (translationBytes ?? 0);
-
-    var task = initialTask.beginFetching(now, expectedBytes: totalBytes);
-    _repository.saveTask(task);
-    task = task.reportFetchProgress(now, bytesReceived: totalBytes);
-    _repository.saveTask(task);
-    task = task.beginValidation(now);
-    _repository.saveTask(task);
-    if (state == TranslationState.invalid) {
-      _repository.saveTask(
-        task.fail(
-          now,
-          const DownloadFailure(
-            kind: DownloadFailureKind.validation,
-            message: 'Translation alignment is invalid.',
-            retryable: false,
-          ),
-        ),
-      );
-      return;
-    }
-    task = task.beginStoring(now);
-    _repository.saveTask(task);
-    _repository.commitStoredTask(
-      taskId: task.id,
-      copy: OfflineChapterCopy(
-        id: 'copy::${task.id}',
-        novelId: task.novelId,
-        chapterId: task.chapterId,
-        kind: OfflineCopyKind.offlineDownload,
-        translationSource: task.translationSource,
-        originalBytes: originalBytes,
-        translationBytes: translationBytes,
-        storedAt: now,
-        intentId: task.intentId,
-        revision: 'fixture-v1',
-      ),
-      now: now,
-    );
   }
 
   Map<String, CatalogNovel> _localNovelsById() {
@@ -1656,6 +1508,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   @override
   Widget build(BuildContext context) {
     final localNovelsById = _localNovelsById();
+    final awaitingInitialReaderCatalog =
+        _initialReaderNovelId != null &&
+        _catalogLoading &&
+        !_catalogNovels.any((novel) => novel.id == _initialReaderNovelId);
     return MaterialApp(
       title: 'JFZ Reader',
       debugShowCheckedModeBanner: false,
@@ -1670,176 +1526,178 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       themeMode: _themeMode,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
-      home: NoveliaShell(
-        wenkuGateway: widget.wenkuGateway,
-        appVersion: widget.appVersion,
-        novels: _catalogNovels,
-        catalogAvailability: _searchAvailability,
-        discoveryAvailability: _discoveryAvailability,
-        continuedReads: _libraryContinuedReads(localNovelsById),
-        protectedDownloads: _libraryDownloads(localNovelsById),
-        bookmarks: _libraryBookmarks(localNovelsById),
-        remoteFavorites: _remoteFavorites,
-        favoriteFolderLoader: widget.accountGateway == null
-            ? null
-            : _loadFavoriteFolderPage,
-        readingHistoryLoader: widget.accountGateway == null
-            ? null
-            : _loadReadingHistoryPage,
-        accountSession:
-            widget.accountSessionController?.snapshot ??
-            const AccountSessionSnapshot.signedOut(),
-        onAccountLogin: widget.accountSessionController == null
-            ? null
-            : ({required username, required password}) => widget
-                  .accountSessionController!
-                  .login(username: username, password: password),
-        onAccountLogout: widget.accountSessionController == null
-            ? null
-            : _logoutAccount,
-        onLoginRequested: widget.accountSessionController?.retry,
-        onHostedAccountHelp: widget.externalLinkLauncher == null
-            ? null
-            : () => widget.externalLinkLauncher!.open(
-                Uri.parse('https://auth.novelia.cc/?app=n'),
+      home: awaitingInitialReaderCatalog
+          ? Scaffold(
+              key: const ValueKey('reader-restore-placeholder'),
+              body: Center(
+                child: Semantics(
+                  label: '正在恢复阅读位置',
+                  child: SizedBox.square(
+                    dimension: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                ),
               ),
-        onReleasesRequested: widget.externalLinkLauncher == null
-            ? null
-            : () => widget.externalLinkLauncher!.open(
-                Uri.parse(defaultReleasesUri),
-              ),
-        onCheckForUpdate: widget.updateChecker == null
-            ? null
-            : () => widget.updateChecker!.check(widget.appVersion),
-        updateInstaller: widget.updateInstaller,
-        onOpenUpdateLink: widget.externalLinkLauncher?.open,
-        onFavoriteToFolderRequested: widget.accountGateway == null
-            ? null
-            : _favoriteNovel,
-        onFavoriteFromFolderRemoveRequested: widget.accountGateway == null
-            ? null
-            : _unfavoriteNovel,
-        onFavoriteFolderCreateRequested: widget.accountGateway == null
-            ? null
-            : _createFavoriteFolder,
-        storageSummary: _repository.storageSummary(),
-        cacheLimitBytes: _cacheLimitBytes,
-        onCacheLimitChanged: _setCacheLimit,
-        onClearReadingCache: _clearReadingCache,
-        initialCatalogCriteria: _catalogCriteria,
-        onCatalogCriteriaRequested: widget.contentCoordinator == null
-            ? null
-            : _applyCatalogCriteria,
-        onCatalogLoadMoreRequested: widget.contentCoordinator == null
-            ? null
-            : _loadMoreCatalog,
-        onDiscoveryRefreshRequested: widget.contentCoordinator == null
-            ? null
-            : _refreshDiscoveryFeeds,
-        onDiscoveryLoadMoreRequested: widget.contentCoordinator == null
-            ? null
-            : _loadMoreDiscovery,
-        catalogHasMore:
-            _catalogPageIndex >= 0 &&
-            _catalogPageIndex + 1 < _catalogTotalPages,
-        catalogLoading: _catalogLoading,
-        catalogLoadingMore: _catalogLoadingMore,
-        catalogLoadMoreFailed: _catalogLoadMoreFailed,
-        recentlyUpdatedHasMore:
-            _recentlyUpdatedPageIndex >= 0 &&
-            _recentlyUpdatedPageIndex + 1 < _recentlyUpdatedTotalPages,
-        recentlyUpdatedLoadingMore: _recentlyUpdatedLoadingMore,
-        recentlyUpdatedLoadMoreFailed: _recentlyUpdatedLoadMoreFailed,
-        mostClickedHasMore:
-            _mostClickedPageIndex >= 0 &&
-            _mostClickedPageIndex + 1 < _mostClickedTotalPages,
-        mostClickedLoadingMore: _mostClickedLoadingMore,
-        mostClickedLoadMoreFailed: _mostClickedLoadMoreFailed,
-        mostClickedNovels: _mostClickedNovels,
-        recentlyUpdatedNovels: _recentlyUpdatedNovels,
-        rankingsLoader: widget.contentCoordinator == null
-            ? null
-            : _loadRankings,
-        novelDetailsLoader: widget.contentCoordinator == null
-            ? null
-            : _loadNovelDetails,
-        readerLaunchLoader: widget.contentCoordinator == null
-            ? null
-            : _loadReaderWindow,
-        commentPageLoader: widget.contentCoordinator == null
-            ? null
-            : _loadCommentPage,
-        onOpenOriginalRequested: widget.externalLinkLauncher == null
-            ? null
-            : (novel) {
-                final uri = novel.originalUrl;
-                if (uri == null) {
-                  throw StateError('The novel has no original-site URL.');
+            )
+          : NoveliaShell(
+              wenkuGateway: widget.wenkuGateway,
+              appVersion: widget.appVersion,
+              novels: _catalogNovels,
+              catalogAvailability: _searchAvailability,
+              discoveryAvailability: _discoveryAvailability,
+              continuedReads: _libraryContinuedReads(localNovelsById),
+              protectedDownloads: _libraryDownloads(localNovelsById),
+              bookmarks: _libraryBookmarks(localNovelsById),
+              remoteFavorites: _remoteFavorites,
+              favoriteFolderLoader: widget.accountGateway == null
+                  ? null
+                  : _loadFavoriteFolderPage,
+              readingHistoryLoader: widget.accountGateway == null
+                  ? null
+                  : _loadReadingHistoryPage,
+              accountSession:
+                  widget.accountSessionController?.snapshot ??
+                  const AccountSessionSnapshot.signedOut(),
+              onAccountLogin: widget.accountSessionController == null
+                  ? null
+                  : ({required username, required password}) => widget
+                        .accountSessionController!
+                        .login(username: username, password: password),
+              onAccountLogout: widget.accountSessionController == null
+                  ? null
+                  : _logoutAccount,
+              onLoginRequested: widget.accountSessionController?.retry,
+              onHostedAccountHelp: widget.externalLinkLauncher == null
+                  ? null
+                  : () => widget.externalLinkLauncher!.open(
+                      Uri.parse('https://auth.novelia.cc/?app=n'),
+                    ),
+              onReleasesRequested: widget.externalLinkLauncher == null
+                  ? null
+                  : () => widget.externalLinkLauncher!.open(
+                      Uri.parse(defaultReleasesUri),
+                    ),
+              onCheckForUpdate: widget.updateChecker == null
+                  ? null
+                  : () => widget.updateChecker!.check(widget.appVersion),
+              updateInstaller: widget.updateInstaller,
+              onOpenUpdateLink: widget.externalLinkLauncher?.open,
+              onFavoriteToFolderRequested: widget.accountGateway == null
+                  ? null
+                  : _favoriteNovel,
+              onFavoriteFromFolderRemoveRequested: widget.accountGateway == null
+                  ? null
+                  : _unfavoriteNovel,
+              onFavoriteFolderCreateRequested: widget.accountGateway == null
+                  ? null
+                  : _createFavoriteFolder,
+              storageSummary: _repository.storageSummary(),
+              cacheLimitBytes: _cacheLimitBytes,
+              onCacheLimitChanged: _setCacheLimit,
+              onClearReadingCache: _clearReadingCache,
+              initialCatalogCriteria: _catalogCriteria,
+              onCatalogCriteriaRequested: _applyCatalogCriteria,
+              onCatalogLoadMoreRequested: _loadMoreCatalog,
+              onDiscoveryRefreshRequested: _refreshDiscoveryFeeds,
+              onDiscoveryLoadMoreRequested: _loadMoreDiscovery,
+              catalogHasMore:
+                  _catalogPageIndex >= 0 &&
+                  _catalogPageIndex + 1 < _catalogTotalPages,
+              catalogLoading: _catalogLoading,
+              catalogLoadingMore: _catalogLoadingMore,
+              catalogLoadMoreFailed: _catalogLoadMoreFailed,
+              recentlyUpdatedHasMore:
+                  _recentlyUpdatedPageIndex >= 0 &&
+                  _recentlyUpdatedPageIndex + 1 < _recentlyUpdatedTotalPages,
+              recentlyUpdatedLoadingMore: _recentlyUpdatedLoadingMore,
+              recentlyUpdatedLoadMoreFailed: _recentlyUpdatedLoadMoreFailed,
+              mostClickedHasMore:
+                  _mostClickedPageIndex >= 0 &&
+                  _mostClickedPageIndex + 1 < _mostClickedTotalPages,
+              mostClickedLoadingMore: _mostClickedLoadingMore,
+              mostClickedLoadMoreFailed: _mostClickedLoadMoreFailed,
+              mostClickedNovels: _mostClickedNovels,
+              recentlyUpdatedNovels: _recentlyUpdatedNovels,
+              rankingsLoader: _loadRankings,
+              novelDetailsLoader: _loadNovelDetails,
+              readerLaunchLoader: _loadReaderWindow,
+              commentPageLoader: _loadCommentPage,
+              onOpenOriginalRequested: widget.externalLinkLauncher == null
+                  ? null
+                  : (novel) {
+                      final uri = novel.originalUrl;
+                      if (uri == null) {
+                        throw StateError('The novel has no original-site URL.');
+                      }
+                      return widget.externalLinkLauncher!.open(uri);
+                    },
+              themeMode: _themeMode,
+              initialDestination: _initialDestination,
+              initialRecentSearches: _initialRecentSearches,
+              initialReaderNovelId: _initialReaderNovelId,
+              initialReaderPosition: _initialReaderPosition,
+              onThemeModeChanged: _setThemeMode,
+              onDestinationChanged: _saveTopLevelRoute,
+              onRecentSearchesChanged: _repository.saveRecentSearches,
+              onReaderOpened: (_, data) {
+                final readerNovel = data.novel;
+                final position = data.initialPosition;
+                if (position != null) {
+                  _saveReaderPosition(
+                    readerNovel,
+                    position,
+                    syncRemoteHistory: false,
+                  );
                 }
-                return widget.externalLinkLauncher!.open(uri);
               },
-        themeMode: _themeMode,
-        initialDestination: _initialDestination,
-        initialRecentSearches: _initialRecentSearches,
-        initialReaderNovelId: _initialReaderNovelId,
-        initialReaderPosition: _initialReaderPosition,
-        onThemeModeChanged: _setThemeMode,
-        onDestinationChanged: _saveTopLevelRoute,
-        onRecentSearchesChanged: _repository.saveRecentSearches,
-        onReaderOpened: (_, data) {
-          final readerNovel = data.novel;
-          final position = data.initialPosition;
-          if (position != null) {
-            _saveReaderPosition(
-              readerNovel,
-              position,
-              syncRemoteHistory: false,
-            );
-          }
-        },
-        onReaderClosed: () {
-          _saveTopLevelRoute(_currentDestination);
-          // Reader callbacks persist progress and bookmarks outside this
-          // widget's state. Rebuild once after the route closes so Library and
-          // Settings immediately project the newly committed local rows.
-          if (mounted) setState(() {});
-        },
-        onDownloadRequested: _downloadNovel,
-        onDownloadManagementRequested: _manageDownload,
-        downloadManagementSnapshotLoader: () =>
-            _libraryDownloads(_localNovelsById()),
-        readerBuilder: (context, data) {
-          final novel = data.novel;
-          // The shell has already resolved explicit chapter selection, saved
-          // progress, and the first-readable-block fallback. Reconsulting the
-          // repository here can override an explicit chapter tap with an older
-          // saved position from a different chapter.
-          final initialPosition = data.initialPosition;
-          final savedBookmarks = _repository.listBookmarks(novelId: novel.id);
-          final bookmarkedBlocks = savedBookmarks
-              .map((bookmark) => bookmark.position.blockId)
-              .toSet();
-          return ReaderScreen(
-            novel: novel,
-            initialPosition: initialPosition,
-            startAtChapterTitle: data.startAtChapterTitle,
-            initialBookmarkedBlockIds: bookmarkedBlocks,
-            initialBookmarks: savedBookmarks
-                .map((bookmark) => bookmark.position)
-                .toList(growable: false),
-            initialSettings: _readerSettings,
-            themeMode: _themeMode,
-            onThemeModeChanged: _setThemeMode,
-            onSettingsChanged: _setReaderSettings,
-            onPositionChanged: (position) =>
-                _saveReaderPosition(novel, position),
-            onExitPosition: (position) => _saveProgressOnly(novel, position),
-            onBookmarkChanged: (position, bookmarked) =>
-                _saveBookmark(novel, position, bookmarked),
-            chapterDataSource: data.dataSource,
-          );
-        },
-      ),
+              onReaderClosed: () {
+                _saveTopLevelRoute(_currentDestination);
+                // Reader callbacks persist progress and bookmarks outside this
+                // widget's state. Rebuild once after the route closes so Library and
+                // Settings immediately project the newly committed local rows.
+                if (mounted) setState(() {});
+              },
+              onDownloadRequested: widget.downloadCoordinator == null
+                  ? null
+                  : _downloadNovel,
+              onDownloadManagementRequested: _manageDownload,
+              downloadManagementSnapshotLoader: () =>
+                  _libraryDownloads(_localNovelsById()),
+              readerBuilder: (context, data) {
+                final novel = data.novel;
+                // The shell has already resolved explicit chapter selection, saved
+                // progress, and the first-readable-block fallback. Reconsulting the
+                // repository here can override an explicit chapter tap with an older
+                // saved position from a different chapter.
+                final initialPosition = data.initialPosition;
+                final savedBookmarks = _repository.listBookmarks(
+                  novelId: novel.id,
+                );
+                final bookmarkedBlocks = savedBookmarks
+                    .map((bookmark) => bookmark.position.blockId)
+                    .toSet();
+                return ReaderScreen(
+                  novel: novel,
+                  initialPosition: initialPosition,
+                  startAtChapterTitle: data.startAtChapterTitle,
+                  initialBookmarkedBlockIds: bookmarkedBlocks,
+                  initialBookmarks: savedBookmarks
+                      .map((bookmark) => bookmark.position)
+                      .toList(growable: false),
+                  initialSettings: _readerSettings,
+                  themeMode: _themeMode,
+                  onThemeModeChanged: _setThemeMode,
+                  onSettingsChanged: _setReaderSettings,
+                  onPositionChanged: (position) =>
+                      _saveReaderPosition(novel, position),
+                  onExitPosition: (position) =>
+                      _saveProgressOnly(novel, position),
+                  onBookmarkChanged: (position, bookmarked) =>
+                      _saveBookmark(novel, position, bookmarked),
+                  chapterDataSource: data.dataSource,
+                );
+              },
+            ),
     );
   }
 

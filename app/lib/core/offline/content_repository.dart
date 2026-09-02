@@ -15,13 +15,9 @@ abstract interface class ContentRepository {
   /// Resolves the exact revision referenced by an Offline Chapter Copy.
   CachedChapterPayload? chapterPayloadById(String payloadId);
 
-  List<CachedChapterPayload> listChapterPayloads(String novelId);
-
   void upsertNovelOutline(CachedNovelOutline outline);
 
   void upsertNovelDetail(CachedNovelDetail detail);
-
-  void upsertChapterPayload(CachedChapterPayload payload);
 
   /// Atomically writes an expendable fetched payload and its Cache Copy.
   void cacheChapterPayload({
@@ -49,5 +45,5 @@ abstract interface class ContentRepository {
   ///
   /// Existing outline/detail/TOC metadata remains while a download intent or
   /// protected copy still needs it for offline discovery and reader launch.
-  ContentCacheRemovalSummary removeCachedNovel(String novelId);
+  void removeCachedNovel(String novelId);
 }

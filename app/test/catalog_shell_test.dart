@@ -269,8 +269,6 @@ void main() {
     final profile = ReaderAccountProfile(
       username: 'reader',
       role: 'member',
-      issuedAt: DateTime.utc(2026, 8, 18),
-      createdAt: DateTime.utc(2026, 1, 1),
       expiresAt: DateTime.utc(2026, 8, 19),
     );
     final favoriteRequests = <(String, int)>[];
@@ -757,8 +755,6 @@ void main() {
     final profile = ReaderAccountProfile(
       username: 'reader',
       role: 'member',
-      issuedAt: DateTime.utc(2026, 8, 18),
-      createdAt: DateTime.utc(2026, 1, 1),
       expiresAt: DateTime.utc(2026, 8, 19),
     );
     CatalogNovel? favorite;
@@ -1225,8 +1221,6 @@ void main() {
         ReaderAccountProfile(
           username: 'alice',
           role: 'member',
-          issuedAt: DateTime.utc(2026, 8, 1),
-          createdAt: DateTime.utc(2026, 8, 1),
           expiresAt: DateTime.utc(2026, 9, 1),
         ),
         message: 'offline',

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../discover/catalog_models.dart';
@@ -7,8 +5,7 @@ import '../discover/catalog_models.dart';
 typedef NovelDetailsBuilder =
     Widget Function(BuildContext context, CatalogNovel novel);
 
-/// Route-level gate that preserves the synchronous fixture path while allowing
-/// production outlines to be hydrated on demand.
+/// Route-level gate that hydrates production outlines on demand.
 class NovelDetailsLoaderScreen extends StatefulWidget {
   const NovelDetailsLoaderScreen({
     required this.outline,
@@ -27,65 +24,50 @@ class NovelDetailsLoaderScreen extends StatefulWidget {
 }
 
 class _NovelDetailsLoaderScreenState extends State<NovelDetailsLoaderScreen> {
-  CatalogNovel? _novel;
-  Object? _error;
-  var _requestGeneration = 0;
-
-  bool get _isLoading => _novel == null && _error == null;
+  late Future<CatalogNovel> _future;
 
   @override
   void initState() {
     super.initState();
-    if (widget.loader == null) {
-      _novel = widget.outline;
-    } else {
-      unawaited(_load());
-    }
+    _future = _load();
   }
 
-  Future<void> _load() async {
+  Future<CatalogNovel> _load() async {
     final loader = widget.loader;
-    if (loader == null) return;
-    final generation = ++_requestGeneration;
-    if (mounted) {
-      setState(() {
-        _novel = null;
-        _error = null;
-      });
+    if (loader == null) return widget.outline;
+    final novel = await loader(widget.outline);
+    if (novel.id != widget.outline.id) {
+      throw StateError('Hydrated novel ID does not match its outline.');
     }
-    try {
-      final novel = await loader(widget.outline);
-      if (!mounted || generation != _requestGeneration) return;
-      if (novel.id != widget.outline.id) {
-        throw StateError('Hydrated novel ID does not match its outline.');
-      }
-      setState(
-        () => _novel = widget.outline.isFavorite && !novel.isFavorite
-            ? novel.copyWith(isFavorite: true)
-            : novel,
-      );
-    } on Object catch (error) {
-      if (!mounted || generation != _requestGeneration) return;
-      setState(() => _error = error);
-    }
+    return widget.outline.isFavorite && !novel.isFavorite
+        ? novel.copyWith(isFavorite: true)
+        : novel;
   }
+
+  void _retry() => setState(() {
+    _future = _load();
+  });
 
   @override
   Widget build(BuildContext context) {
-    final novel = _novel;
-    if (novel != null) return widget.builder(context, novel);
-
-    return Scaffold(
-      key: const ValueKey('novel-details-loader-screen'),
-      appBar: AppBar(title: const Text('小说详情')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: _isLoading
-              ? const _DetailsLoadingState()
-              : _DetailsErrorState(onRetry: _load),
-        ),
-      ),
+    return FutureBuilder<CatalogNovel>(
+      future: _future,
+      builder: (context, snapshot) {
+        final novel = snapshot.data;
+        if (novel != null) return widget.builder(context, novel);
+        return Scaffold(
+          key: const ValueKey('novel-details-loader-screen'),
+          appBar: AppBar(title: const Text('小说详情')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: snapshot.hasError
+                  ? _DetailsErrorState(onRetry: _retry)
+                  : const _DetailsLoadingState(),
+            ),
+          ),
+        );
+      },
     );
   }
 }

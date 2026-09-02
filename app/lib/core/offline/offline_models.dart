@@ -106,8 +106,6 @@ class OfflineChapterCopy {
 
   ChapterRef get chapter => ChapterRef(novelId: novelId, chapterId: chapterId);
   bool get hasTranslation => translationBytes != null;
-  bool get isEvictable => kind == OfflineCopyKind.cacheCopy;
-  bool get isProtected => kind == OfflineCopyKind.offlineDownload;
   int get totalBytes => originalBytes + (translationBytes ?? 0);
 
   OfflineChapterCopy touch(DateTime readAt) {
@@ -145,8 +143,6 @@ sealed class DownloadIntent {
   final DateTime createdAt;
   final bool enabled;
 
-  bool get tracksFutureChapters;
-
   Iterable<String> targetChapterIds(Iterable<String> knownChapterIds);
 
   DownloadIntent withEnabled(bool enabled);
@@ -164,9 +160,6 @@ final class ChapterDownloadIntent extends DownloadIntent {
   });
 
   final String chapterId;
-
-  @override
-  bool get tracksFutureChapters => false;
 
   @override
   Iterable<String> targetChapterIds(Iterable<String> knownChapterIds) {
@@ -196,9 +189,6 @@ final class NovelDownloadIntent extends DownloadIntent {
     required super.createdAt,
     super.enabled,
   });
-
-  @override
-  bool get tracksFutureChapters => true;
 
   @override
   Iterable<String> targetChapterIds(Iterable<String> knownChapterIds) sync* {
@@ -374,17 +364,6 @@ class DownloadTask {
     DownloadTaskState.storing,
   }.contains(state);
 
-  bool get isTerminal => const {
-    DownloadTaskState.stored,
-    DownloadTaskState.removed,
-  }.contains(state);
-
-  double? get progressFraction {
-    final total = totalBytes;
-    if (total == null || total <= 0) return null;
-    return (bytesReceived / total).clamp(0.0, 1.0);
-  }
-
   DownloadTask beginFetching(DateTime now, {int? expectedBytes}) {
     _requireState({DownloadTaskState.queued}, 'begin fetching');
     if (expectedBytes != null && expectedBytes < bytesReceived) {
@@ -552,94 +531,6 @@ class DownloadTask {
   }
 }
 
-class DownloadProgressSummary {
-  const DownloadProgressSummary({
-    required this.totalTasks,
-    required this.queuedTasks,
-    required this.activeTasks,
-    required this.pausedTasks,
-    required this.failedTasks,
-    required this.storedTasks,
-    required this.removedTasks,
-    required this.bytesReceived,
-    required this.knownTotalBytes,
-  });
-
-  factory DownloadProgressSummary.fromTasks(Iterable<DownloadTask> tasks) {
-    var total = 0;
-    var queued = 0;
-    var active = 0;
-    var paused = 0;
-    var failed = 0;
-    var stored = 0;
-    var removed = 0;
-    var received = 0;
-    var knownTotal = 0;
-
-    for (final task in tasks) {
-      total += 1;
-      switch (task.state) {
-        case DownloadTaskState.queued:
-          queued += 1;
-        case DownloadTaskState.fetching:
-        case DownloadTaskState.validating:
-        case DownloadTaskState.storing:
-          active += 1;
-        case DownloadTaskState.paused:
-          paused += 1;
-        case DownloadTaskState.failed:
-          failed += 1;
-        case DownloadTaskState.stored:
-          stored += 1;
-        case DownloadTaskState.removed:
-          removed += 1;
-      }
-      if (task.totalBytes case final taskTotal?) {
-        knownTotal += taskTotal;
-        received += task.bytesReceived.clamp(0, taskTotal);
-      }
-    }
-
-    return DownloadProgressSummary(
-      totalTasks: total,
-      queuedTasks: queued,
-      activeTasks: active,
-      pausedTasks: paused,
-      failedTasks: failed,
-      storedTasks: stored,
-      removedTasks: removed,
-      bytesReceived: received,
-      knownTotalBytes: knownTotal,
-    );
-  }
-
-  final int totalTasks;
-  final int queuedTasks;
-  final int activeTasks;
-  final int pausedTasks;
-  final int failedTasks;
-  final int storedTasks;
-  final int removedTasks;
-  final int bytesReceived;
-  final int knownTotalBytes;
-
-  double? get progressFraction => knownTotalBytes == 0
-      ? null
-      : (bytesReceived / knownTotalBytes).clamp(0.0, 1.0);
-}
-
-class NovelDownloadProgressSummary {
-  const NovelDownloadProgressSummary({
-    required this.novelId,
-    required this.translationSource,
-    required this.progress,
-  });
-
-  final String novelId;
-  final TranslationSource translationSource;
-  final DownloadProgressSummary progress;
-}
-
 class NovelStorageSummary {
   const NovelStorageSummary({
     required this.novelId,
@@ -740,18 +631,4 @@ class OfflineStorageSummary {
       translationSources: Set.unmodifiable(sources),
     );
   }
-}
-
-class OfflineRemovalSummary {
-  const OfflineRemovalSummary({
-    required this.intentId,
-    required this.removedTaskCount,
-    required this.removedCopyCount,
-    required this.freedBytes,
-  });
-
-  final String intentId;
-  final int removedTaskCount;
-  final int removedCopyCount;
-  final int freedBytes;
 }

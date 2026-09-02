@@ -5,6 +5,7 @@ import 'package:jfzreader/core/database/app_database.dart';
 import 'package:jfzreader/core/database/local_state_repository.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -116,13 +117,12 @@ void main() {
         ),
       );
       repository.saveTask(task);
-      repository.saveCopy(
-        _cacheCopy(
-          id: 'cache-c1',
-          chapterId: 'c1',
-          storedAt: t0,
-          translationBytes: null,
-        ),
+      _saveCacheCopy(
+        repository,
+        id: 'cache-c1',
+        chapterId: 'c1',
+        storedAt: t0,
+        translationBytes: null,
       );
       _saveLocalState(repository, t0);
       repository.close();
@@ -269,7 +269,7 @@ void main() {
     });
 
     test(
-      'pause, resume, and stale revision behavior matches memory adapter',
+      'pause, resume, and stale revision behavior remains deterministic',
       () {
         final repository = SqliteOfflineRepository.openInMemory();
         addTearDown(repository.close);
@@ -307,17 +307,14 @@ void main() {
       final repository = SqliteOfflineRepository.openInMemory();
       addTearDown(repository.close);
       repository.saveIntent(_novelIntent(t0));
-      repository.saveCopy(_cacheCopy(id: 'old', chapterId: 'c1', storedAt: t0));
-      repository.saveCopy(
-        _cacheCopy(
-          id: 'protected',
-          chapterId: 'c2',
-          storedAt: t0.add(const Duration(minutes: 1)),
-        ),
+      _saveCacheCopy(repository, id: 'old', chapterId: 'c1', storedAt: t0);
+      _saveCacheCopy(
+        repository,
+        id: 'protected',
+        chapterId: 'c2',
+        storedAt: t0.add(const Duration(minutes: 1)),
       );
-      repository.saveCopy(
-        _downloadCopy(id: 'download', chapterId: 'c3', storedAt: t0),
-      );
+      _storeDownloadCopy(repository, t0);
 
       final evicted = repository.evictCacheTo(
         maxBytes: 200,
@@ -328,54 +325,45 @@ void main() {
       expect(evicted.map((copy) => copy.id), ['old']);
       expect(repository.copyById('download'), isNotNull);
 
-      final removal = repository.removeIntent(
-        'intent',
-        t0.add(const Duration(days: 1)),
-      );
-      expect(removal.removedCopyCount, 1);
-      expect(removal.freedBytes, 240);
+      repository.removeIntent('intent', t0.add(const Duration(days: 1)));
       expect(repository.copyById('download'), isNull);
       expect(repository.copyById('protected'), isNotNull);
     });
   });
 
   group('local reader state', () {
-    test(
-      'orders progress and bookmarks deterministically and removes them',
-      () {
-        final repository = SqliteOfflineRepository.openInMemory();
-        addTearDown(repository.close);
-        repository.saveReadingProgress(
-          LocalReadingProgress(
-            novelId: 'older',
-            position: const ReadingPosition(chapterId: 'c1', blockId: 'b1'),
-            updatedAt: t0,
-          ),
-        );
-        repository.saveReadingProgress(
-          LocalReadingProgress(
-            novelId: 'newer',
-            position: const ReadingPosition(chapterId: 'c2', blockId: 'b2'),
-            updatedAt: t0.add(const Duration(minutes: 1)),
-          ),
-        );
-        repository.saveBookmark(
-          LocalBookmark(
-            id: 'b1',
-            novelId: 'newer',
-            position: const ReadingPosition(chapterId: 'c2', blockId: 'p1'),
-            createdAt: t0,
-          ),
-        );
+    test('orders progress and bookmarks deterministically', () {
+      final repository = SqliteOfflineRepository.openInMemory();
+      addTearDown(repository.close);
+      repository.saveReadingProgress(
+        LocalReadingProgress(
+          novelId: 'older',
+          position: const ReadingPosition(chapterId: 'c1', blockId: 'b1'),
+          updatedAt: t0,
+        ),
+      );
+      repository.saveReadingProgress(
+        LocalReadingProgress(
+          novelId: 'newer',
+          position: const ReadingPosition(chapterId: 'c2', blockId: 'b2'),
+          updatedAt: t0.add(const Duration(minutes: 1)),
+        ),
+      );
+      repository.saveBookmark(
+        LocalBookmark(
+          id: 'b1',
+          novelId: 'newer',
+          position: const ReadingPosition(chapterId: 'c2', blockId: 'p1'),
+          createdAt: t0,
+        ),
+      );
 
-        expect(repository.listReadingProgress().first.novelId, 'newer');
-        expect(repository.listBookmarks(novelId: 'newer'), hasLength(1));
-        repository.removeReadingProgress('older');
-        repository.removeBookmark('b1');
-        expect(repository.readingProgressFor('older'), isNull);
-        expect(repository.bookmarkById('b1'), isNull);
-      },
-    );
+      expect(repository.listReadingProgress().first.novelId, 'newer');
+      expect(repository.listBookmarks(novelId: 'newer'), hasLength(1));
+      repository.removeBookmark('b1');
+      expect(repository.readingProgressFor('older'), isNotNull);
+      expect(repository.listBookmarks(novelId: 'newer'), isEmpty);
+    });
 
     test('stores top-level and reader route restoration states', () {
       final repository = SqliteOfflineRepository.openInMemory();
@@ -398,8 +386,6 @@ void main() {
         ),
       );
       expect(repository.lastRoute()!.position!.intraBlockOffset, 2);
-      repository.clearLastRoute();
-      expect(repository.lastRoute(), isNull);
     });
 
     test('normalizes, bounds, orders, and clears recent searches', () {
@@ -430,7 +416,7 @@ void main() {
         '七',
         '八',
       ]);
-      repository.clearRecentSearches();
+      repository.saveRecentSearches(const []);
       expect(repository.recentSearches(), isEmpty);
     });
   });
@@ -445,22 +431,70 @@ NovelDownloadIntent _novelIntent(DateTime now) {
   );
 }
 
-OfflineChapterCopy _cacheCopy({
+void _saveCacheCopy(
+  SqliteOfflineRepository repository, {
   required String id,
   required String chapterId,
   required DateTime storedAt,
   int? translationBytes = 80,
 }) {
-  return OfflineChapterCopy(
-    id: id,
+  final payload = CachedChapterPayload(
+    id: 'payload-$id',
     novelId: 'novel',
     chapterId: chapterId,
-    kind: OfflineCopyKind.cacheCopy,
-    translationSource: TranslationSource.sakura,
-    originalBytes: 120,
-    translationBytes: translationBytes,
-    storedAt: storedAt,
+    index: 1,
+    chineseTitle: '',
+    japaneseTitle: '',
+    previousChapterId: null,
+    nextChapterId: null,
+    publishedAt: null,
+    japaneseBlocks: const ['原文'],
+    translations: {
+      TranslationSource.sakura: CachedChapterTranslation(
+        availability: translationBytes == null
+            ? TranslationAvailability.pending
+            : TranslationAvailability.complete,
+        blocks: translationBytes == null ? const [] : const ['译文'],
+      ),
+    },
+    fetchedAt: storedAt,
     revision: 'r1',
+  );
+  repository.cacheChapterPayload(
+    payload: payload,
+    copy: OfflineChapterCopy(
+      id: id,
+      novelId: 'novel',
+      chapterId: chapterId,
+      kind: OfflineCopyKind.cacheCopy,
+      translationSource: TranslationSource.sakura,
+      originalBytes: 120,
+      translationBytes: translationBytes,
+      storedAt: storedAt,
+      payloadId: payload.id,
+      revision: payload.revision,
+    ),
+  );
+}
+
+void _storeDownloadCopy(SqliteOfflineRepository repository, DateTime storedAt) {
+  var task = repository
+      .reconcileIntent(
+        intentId: 'intent',
+        knownChapterIds: const ['c3'],
+        now: storedAt,
+      )
+      .single;
+  task = task.beginFetching(storedAt);
+  repository.saveTask(task);
+  task = task.beginValidation(storedAt);
+  repository.saveTask(task);
+  task = task.beginStoring(storedAt);
+  repository.saveTask(task);
+  repository.commitStoredTask(
+    taskId: task.id,
+    copy: _downloadCopy(id: 'download', chapterId: 'c3', storedAt: storedAt),
+    now: storedAt,
   );
 }
 
@@ -538,7 +572,6 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
         tapPageTurnEnabled: false,
       ),
       themePreference: ThemePreference.dark,
-      notifyNewChapters: true,
       cacheLimitBytes: 64 * 1024 * 1024,
       updatedAt: now,
     ),

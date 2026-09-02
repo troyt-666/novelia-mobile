@@ -3,10 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/database/local_state_repository.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 import 'package:jfzreader/main.dart';
+
+import 'support/fixture_content_coordinator.dart';
 
 void main() {
   Future<void> pumpApp(
@@ -18,7 +21,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(repository.close);
-    await tester.pumpWidget(NoveliaReaderApp(repository: repository));
+    await tester.pumpWidget(
+      NoveliaReaderApp(
+        repository: repository,
+        contentCoordinator: FixtureContentCoordinator(fixtureCatalogNovels),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -34,7 +42,6 @@ void main() {
           translationSource: TranslationSource.gpt,
         ),
         themePreference: ThemePreference.dark,
-        notifyNewChapters: false,
         cacheLimitBytes: 64 * 1024 * 1024,
         updatedAt: now,
       ),
@@ -108,7 +115,12 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(NoveliaReaderApp(repository: repository));
+    await tester.pumpWidget(
+      NoveliaReaderApp(
+        repository: repository,
+        contentCoordinator: FixtureContentCoordinator(fixtureCatalogNovels),
+      ),
+    );
 
     expect(find.text('发现'), findsNothing);
     expect(
@@ -147,8 +159,29 @@ void main() {
     tester,
   ) async {
     final repository = SqliteOfflineRepository.openInMemory();
-    repository.saveCopy(
-      OfflineChapterCopy(
+    final payload = CachedChapterPayload(
+      id: 'settings-cache-payload',
+      novelId: fixtureNovel.id,
+      chapterId: 'chapter-1',
+      index: 1,
+      chineseTitle: '',
+      japaneseTitle: '',
+      previousChapterId: null,
+      nextChapterId: null,
+      publishedAt: null,
+      japaneseBlocks: const ['原文'],
+      translations: {
+        TranslationSource.sakura: CachedChapterTranslation(
+          availability: TranslationAvailability.complete,
+          blocks: ['译文'],
+        ),
+      },
+      fetchedAt: DateTime.utc(2026, 8, 18),
+      revision: 'r1',
+    );
+    repository.cacheChapterPayload(
+      payload: payload,
+      copy: OfflineChapterCopy(
         id: 'settings-cache-copy',
         novelId: fixtureNovel.id,
         chapterId: 'chapter-1',
@@ -157,6 +190,7 @@ void main() {
         originalBytes: 120,
         translationBytes: 80,
         storedAt: DateTime.utc(2026, 8, 18),
+        payloadId: payload.id,
         revision: 'r1',
       ),
     );
@@ -197,9 +231,7 @@ void main() {
     expect(find.text('0 B · 0 章 · 上限 256 MB'), findsOneWidget);
   });
 
-  testWidgets('bookmark and Novel Download actions commit to SQLite', (
-    tester,
-  ) async {
+  testWidgets('bookmark action commits to SQLite', (tester) async {
     final repository = SqliteOfflineRepository.openInMemory();
     await pumpApp(tester, repository);
 
@@ -209,29 +241,6 @@ void main() {
           .first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('download-novel-button')));
-    await tester.pumpAndSettle();
-
-    expect(repository.listIntents(), hasLength(1));
-    expect(repository.listTasks(), hasLength(fixtureNovel.chapters.length));
-    expect(
-      repository.listTasks().every(
-        (task) => task.state == DownloadTaskState.stored,
-      ),
-      isTrue,
-    );
-    expect(
-      repository.listCopies(kind: OfflineCopyKind.offlineDownload),
-      hasLength(fixtureNovel.chapters.length),
-    );
-    expect(
-      repository
-          .listCopies(kind: OfflineCopyKind.offlineDownload)
-          .firstWhere((copy) => copy.chapterId == 'chapter-3')
-          .hasTranslation,
-      isFalse,
-    );
-
     await tester.tap(find.byKey(const ValueKey('start-reading-button')));
     await tester.pumpAndSettle();
     expect(repository.lastRoute()!.routeName, '/reader');
@@ -241,39 +250,5 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.listBookmarks(novelId: fixtureNovel.id), hasLength(1));
-
-    await tester.tap(find.byKey(const ValueKey('reader-back-button')));
-    await tester.pumpAndSettle();
-    Navigator.of(
-      tester.element(find.byKey(ValueKey('novel-details-${fixtureNovel.id}'))),
-    ).pop();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('nav-library')));
-    await tester.pumpAndSettle();
-    final manage = find.byKey(const ValueKey('downloads-manage-button'));
-    await tester.scrollUntilVisible(
-      manage,
-      400,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(manage);
-    await tester.pumpAndSettle();
-
-    final groupKey = '${fixtureNovel.id}::${TranslationSource.sakura.name}';
-    expect(repository.listIntents().single.enabled, isTrue);
-    expect(find.byKey(ValueKey('pause-download-$groupKey')), findsNothing);
-    expect(find.text('已完成'), findsOneWidget);
-
-    await tester.tap(find.byKey(ValueKey('remove-download-$groupKey')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('confirm-remove-download')));
-    await tester.pumpAndSettle();
-    expect(repository.listIntents(), isEmpty);
-    expect(
-      repository.listCopies(kind: OfflineCopyKind.offlineDownload),
-      isEmpty,
-    );
-    expect(repository.listBookmarks(novelId: fixtureNovel.id), hasLength(1));
-    expect(repository.readingProgressFor(fixtureNovel.id), isNotNull);
   });
 }
