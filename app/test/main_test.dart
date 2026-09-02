@@ -53,7 +53,11 @@ void _expectReaderKeyboardMapping() {
   );
 }
 
-NovelChapter _windowChapter(int number, {int blockCount = 6}) {
+NovelChapter _windowChapter(
+  int number, {
+  int blockCount = 6,
+  int paragraphRepeats = 4,
+}) {
   return NovelChapter(
     id: 'window-c$number',
     index: number,
@@ -66,14 +70,14 @@ NovelChapter _windowChapter(int number, {int blockCount = 6}) {
           id: 'window-c$number-b$block',
           ordinal: block,
           japanese: List.filled(
-            4,
+            paragraphRepeats,
             '第$number章の本文 $block。'
             '長い文章でスクロール位置を検証します。',
           ).join(),
           translations: {
             for (final source in TranslationSource.values)
               source: List.filled(
-                4,
+                paragraphRepeats,
                 '第 $number 章中文正文 $block。'
                 '这是用于验证阅读位置的较长段落。',
               ).join(),
@@ -505,7 +509,11 @@ void main() {
   ) async {
     final chapters = [
       for (var number = 1; number <= 36; number++)
-        _windowChapter(number, blockCount: 6),
+        _windowChapter(
+          number,
+          blockCount: number == 8 ? 2 : 6,
+          paragraphRepeats: number == 8 ? 200 : 4,
+        ),
     ];
     final initialChapter = chapters[29];
     final targetChapter = chapters[8];
@@ -539,11 +547,17 @@ void main() {
       ValueKey('chapter-boundary-${targetChapter.id}'),
     );
     expect(chapterTitle, findsOneWidget);
-    expect(tester.getRect(chapterTitle).top, inInclusiveRange(70, 150));
+    final beforeTop = tester.getTopLeft(chapterTitle).dy;
+    expect(beforeTop, inInclusiveRange(70, 150));
     expect(
       find.byKey(ValueKey('block-${targetChapter.blocks.first.id}-chinese')),
       findsOneWidget,
     );
+
+    final scrollable = _readerScrollable(tester).position;
+    scrollable.jumpTo(scrollable.pixels + 40);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(chapterTitle).dy, closeTo(beforeTop - 40, 2));
   });
 
   testWidgets('an unread chapter opens on its title before the first block', (

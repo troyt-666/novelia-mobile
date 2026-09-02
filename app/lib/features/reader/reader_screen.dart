@@ -586,8 +586,11 @@ class _ReaderScreenState extends State<ReaderScreen>
 
     var targetContext = _mountedContextFor(stableId);
     if (targetContext == null) {
+      _verticalScrollController.jumpTo(
+        _verticalScrollController.position.minScrollExtent,
+      );
       setState(() {
-        _windowStart = (targetIndex - _jumpLeadInItems).clamp(0, _items.length);
+        _windowStart = targetIndex;
         _windowEnd = (targetIndex + _initialWindowItems).clamp(
           _windowStart,
           _items.length,
