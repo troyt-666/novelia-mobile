@@ -13,11 +13,22 @@ class FixtureContentCoordinator implements NoveliaContentCoordinator {
   Future<NoveliaContentResult<NoveliaCatalogSlice>> loadCatalog(
     NoveliaCatalogQuery query,
   ) async {
+    final search = query.search.trim().toLowerCase();
+    final matches = search.isEmpty
+        ? novels
+        : novels
+              .where(
+                (novel) =>
+                    novel.chineseTitle.toLowerCase().contains(search) ||
+                    novel.japaneseTitle.toLowerCase().contains(search) ||
+                    (novel.author?.toLowerCase().contains(search) ?? false),
+              )
+              .toList();
     return NoveliaContentResult.available(
       NoveliaCatalogSlice(
         pageIndex: query.page,
-        totalPages: novels.isEmpty ? 0 : 1,
-        novels: novels,
+        totalPages: matches.isEmpty ? 0 : 1,
+        novels: matches,
       ),
     );
   }
