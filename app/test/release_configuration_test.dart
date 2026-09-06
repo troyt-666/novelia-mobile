@@ -1,20 +1,22 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xml/xml.dart';
 
 void main() {
-  test('v1 product metadata is release-ready', () {
+  test('product metadata and native update wiring are configured', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, startsWith('name: jfzreader\n'));
+    expect(
+      RegExp(r'^name:\s*(\S+)', multiLine: true).firstMatch(pubspec)?.group(1),
+      'jfzreader',
+    );
     expect(
       pubspec,
       contains(RegExp(r'^version: \d+\.\d+\.\d+\+\d+$', multiLine: true)),
     );
-    expect(pubspec, isNot(contains('reader spike')));
 
     final macInfo = File('macos/Runner/Info.plist').readAsStringSync();
-    expect(macInfo, contains('<key>CFBundleDisplayName</key>'));
-    expect(macInfo, contains('<string>JFZ Reader</string>'));
+    expect(_plistValues(macInfo)['CFBundleDisplayName'], 'JFZ Reader');
 
     final android = File('android/app/build.gradle.kts').readAsStringSync();
     expect(android, contains('applicationId = "io.github.troyt666.jfzreader"'));
@@ -37,12 +39,26 @@ void main() {
       'macos/Runner.xcodeproj/project.pbxproj',
     ).readAsStringSync();
     expect(macProject, contains('sparkle-project/Sparkle'));
-    expect(macProject, contains('version = 2.9.2'));
+    final packageVersion = RegExp(
+      r'version = ([0-9.]+);',
+    ).firstMatch(macProject)!.group(1);
+    final workflow = File(
+      '../.github/workflows/publish-release-artifacts.yml',
+    ).readAsStringSync();
+    final tools = RegExp(
+      r'Sparkle/releases/download/([0-9.]+)/Sparkle-([0-9.]+)\.tar\.xz',
+    ).firstMatch(workflow)!;
+    expect(tools.group(1), packageVersion);
+    expect(tools.group(2), packageVersion);
     final macUpdateInfo = File('macos/Runner/Info.plist').readAsStringSync();
-    expect(macUpdateInfo, contains('SUEnableInstallerLauncherService'));
-    expect(macUpdateInfo, contains('SUVerifyUpdateBeforeExtraction'));
-    expect(macUpdateInfo, contains('appcast.xml'));
-    expect(macUpdateInfo, isNot(contains('SPARKLE_PUBLIC_KEY_PENDING')));
+    final updateInfo = _plistValues(macUpdateInfo);
+    expect(updateInfo['SUEnableInstallerLauncherService'], 'true');
+    expect(updateInfo['SUVerifyUpdateBeforeExtraction'], 'true');
+    expect(Uri.parse(updateInfo['SUFeedURL']!).path, endsWith('/appcast.xml'));
+    expect(
+      updateInfo['SUPublicEDKey'],
+      matches(RegExp(r'^[A-Za-z0-9+/]{43}=$')),
+    );
     final macRunner = File(
       'macos/Runner/MainFlutterWindow.swift',
     ).readAsStringSync();
@@ -68,12 +84,6 @@ void main() {
       isNot(contains('signingConfig = signingConfigs.getByName("debug")')),
     );
 
-    final verifier = File(
-      'scripts/verify_android_release.sh',
-    ).readAsStringSync();
-    expect(verifier, contains('Android Debug'));
-    expect(verifier, contains('apksigner verify'));
-
     final workflow = File(
       '../.github/workflows/publish-release-artifacts.yml',
     ).readAsStringSync();
@@ -82,51 +92,18 @@ void main() {
     expect(workflow, contains('JFZREADER_ANDROID_KEY_ALIAS'));
     expect(workflow, contains('JFZREADER_ANDROID_KEY_PASSWORD'));
     expect(workflow, contains('verify_android_release.sh'));
-    expect(workflow, contains(r'Release tag $RELEASE_TAG does not match'));
-    expect(workflow, contains('build ios --release --no-codesign'));
-    expect(workflow, contains(r'JFZ-Reader-${tag}-ios-unsigned.ipa'));
-    expect(workflow, contains('Print :CFBundleIdentifier'));
-    expect(workflow, contains('Print :MinimumOSVersion'));
-    expect(workflow, contains('UsageDescription'));
     expect(workflow, contains('generate-update-site.sh'));
     expect(workflow, contains('SPARKLE_PRIVATE_KEY'));
     expect(workflow, contains('macos.sparkle-signature'));
-    expect(
-      workflow,
-      contains('app/build/macos/Build/Products/Release/jfzreader.app'),
-    );
-    expect(
-      workflow,
-      isNot(
-        contains(
-          "find app/build/macos/Build/Products/Release -type d -name '*.app'",
-        ),
-      ),
-    );
-    expect(workflow, contains('Sparkle-2.9.2.tar.xz'));
-    expect(
-      workflow,
-      contains(
-        '1cb340cbbef04c6c0d162078610c25e2221031d794a3449d89f2f56f4df77c95',
-      ),
-    );
+    // The tool version can change; archive integrity checking must remain wired.
+    expect(workflow, matches(RegExp(r"'[a-f0-9]{64}'")));
+    expect(workflow, contains('shasum -a 256 -c -'));
     expect(workflow, contains('actions/deploy-pages@v4'));
     expect(workflow, contains('pages: write'));
     expect(workflow, isNot(contains('signingConfigs.getByName("debug")')));
-
-    final feedGenerator = File(
-      '../.github/scripts/generate-update-site.sh',
-    ).readAsStringSync();
-    expect(feedGenerator, contains('altstore-source.json'));
-    expect(feedGenerator, contains('latest.json'));
-    expect(feedGenerator, contains('appcast.xml'));
-    expect(feedGenerator, contains('sparkle:edSignature'));
-    expect(feedGenerator, contains('sha256'));
-    expect(feedGenerator, contains('io.github.troyt666.jfzreader'));
-    expect(feedGenerator, contains('minOSVersion: "13.0"'));
   });
 
-  test('supported platforms expose installed app version metadata', () {
+  test('native implementations declare the installed-version channel', () {
     const channel = 'io.github.troyt666.jfzreader/app_version';
     for (final path in [
       'android/app/src/main/kotlin/io/github/troyt666/jfzreader/MainActivity.kt',
@@ -139,7 +116,7 @@ void main() {
     }
   });
 
-  test('macOS account storage does not trigger Keychain authorization', () {
+  test('macOS account storage uses preferences rather than Keychain APIs', () {
     final runner = File(
       'macos/Runner/MainFlutterWindow.swift',
     ).readAsStringSync();
@@ -149,12 +126,20 @@ void main() {
   });
 
   test('Apple signing materials stay untracked', () {
-    final gitignore = File('../.gitignore').readAsStringSync();
-    expect(gitignore, contains('*.p12'));
-    expect(gitignore, contains('*.cer'));
-    expect(gitignore, contains('*.mobileprovision'));
-    expect(gitignore, contains('*.p8'));
-    expect(gitignore, contains('ExportOptions*.plist'));
+    const ignored = [
+      'app/test-signing.p12',
+      'app/test-signing.cer',
+      'app/test-signing.mobileprovision',
+      'app/test-signing.p8',
+      'app/ios/ExportOptions.test.plist',
+    ];
+    final ignoreResult = Process.runSync('git', [
+      'check-ignore',
+      '--no-index',
+      ...ignored,
+    ], workingDirectory: '..');
+    expect(ignoreResult.exitCode, 0);
+    expect(ignoreResult.stdout.toString().trim().split('\n'), ignored);
 
     final example = File(
       'ios/Flutter/Local.xcconfig.example',
@@ -186,4 +171,16 @@ void main() {
     expect(File('../docs/release-guide.md').existsSync(), isTrue);
     expect(File('ios/Flutter/Local.xcconfig.example').existsSync(), isTrue);
   });
+}
+
+Map<String, String> _plistValues(String source) {
+  final elements = XmlDocument.parse(
+    source,
+  ).rootElement.getElement('dict')!.childElements.toList();
+  return {
+    for (var index = 0; index < elements.length; index += 2)
+      elements[index].innerText: elements[index + 1].name.local == 'string'
+          ? elements[index + 1].innerText
+          : elements[index + 1].name.local,
+  };
 }

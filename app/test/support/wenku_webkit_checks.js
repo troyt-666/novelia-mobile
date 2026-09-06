@@ -1,0 +1,55 @@
+const check = (ok, message) => { if (!ok) throw new Error(message); };
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const progress = () => JSON.parse(readerProgress());
+check(!testUnsafe, 'publication scripts must not run');
+check(!document.querySelector('[onload]'), 'publication event handlers must be stripped');
+check(document.querySelectorAll('script').length === 1, 'CSS must not create another script');
+check(document.querySelector('meta[http-equiv="Content-Security-Policy"]'), 'CSP is present');
+check(document.querySelector('img').src.startsWith('data:image/'), 'images remain embedded');
+if (document.body.classList.contains('reader-image-only')) {
+  check(progress().pageCount === 1, 'cover must fit a single page');
+  check(readerNext() === 'boundary', 'cover next exits resource');
+  return 'cover passed';
+}
+check(document.querySelector('ruby rt').textContent === 'てつ', 'ruby survives sanitization');
+check(progress().pageCount > 3, 'fixture must span several actual columns');
+readerSetFraction(1);
+await wait(150);
+check(progress().page === progress().pageCount - 1, 'last fraction restores last page');
+check(Math.abs(scrollX - progress().page * innerWidth) < 2, 'last page is physically reachable');
+check(readerNext() === 'boundary', 'next at last page exits resource');
+check(readerPrevious() === 'within', 'previous at last page stays in resource');
+await wait(400);
+check(Math.abs(scrollX - progress().page * innerWidth) < 2, 'previous moves exactly one column');
+readerSetFraction(0.5);
+await wait(100);
+check(progress().page === Math.floor((progress().pageCount - 1) / 2), 'fraction maps to a logical page');
+readerSetFragment('start');
+await wait(100);
+check(progress().page === 0, 'fragment restores its containing page');
+check(readerPrevious() === 'boundary', 'previous at first page exits resource');
+readerNext();
+await wait(400);
+scrollTo({left: innerWidth * 2.4, behavior: 'auto'});
+await wait(150);
+readerSnapToCurrentPage();
+check(progress().page === 2, 'snap follows actual scroll position');
+readerSetAppearance('#123456', '#abcdef', 0.7);
+check(getComputedStyle(document.scrollingElement || document.documentElement).getPropertyValue('--reader-background').trim() === '#123456', 'appearance updates without reloading');
+check(document.querySelector('.wenku-jp') && document.querySelector('.wenku-zh'), 'both language roles are identified');
+for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
+  window.dispatchEvent(new KeyboardEvent('keydown', {key, cancelable: true}));
+}
+check(testMessages.filter(m => m.action).map(m => m.action).join() === 'previous,next', 'keyboard uses horizontal navigation only');
+const input = document.createElement('input'); document.body.append(input);
+input.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));
+check(testMessages.filter(m => m.action).length === 2, 'editable fields retain arrow keys');
+for (const ratio of [0.1, 0.5, 0.9]) document.dispatchEvent(new MouseEvent('click', {clientX: innerWidth * ratio}));
+check(testMessages.filter(m => m.action).map(m => m.action).join() === 'previous,next,previous,next', 'edge taps navigate');
+check(testMessages.some(m => m.tap), 'center tap toggles chrome');
+const beforeSwipe = testMessages.filter(m => m.action).length;
+document.dispatchEvent(new PointerEvent('pointerdown', {isPrimary: true, clientX: 300, clientY: 300}));
+document.dispatchEvent(new PointerEvent('pointermove', {isPrimary: true, clientX: 200, clientY: 300}));
+document.dispatchEvent(new PointerEvent('pointerup', {isPrimary: true, clientX: 100, clientY: 300}));
+check(testMessages.filter(m => m.action).length === beforeSwipe + 1 && testMessages.filter(m => m.action).at(-1).action === 'next', 'swipe moves forward');
+return 'pagination, navigation, appearance, and sanitization passed';
