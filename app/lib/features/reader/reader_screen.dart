@@ -107,6 +107,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   static const _jumpLeadInItems = 2;
   static const _windowLeadInItems = 24;
   static const _chromeAutoHideDelay = Duration(seconds: 4);
+  static const _verticalCenterKey = ValueKey('reader-scroll-center');
 
   late List<NovelChapter> _loadedChapters;
   late List<ReaderStreamItem> _items;
@@ -119,6 +120,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     debugLabel: 'reader-keyboard-navigation',
   );
   final _viewportKey = GlobalKey(debugLabel: 'reader-viewport');
+  String? _verticalCenterId;
   final _anchorBlockId = RestorableStringN(null);
   late final RestorableInt _modeIndex;
   late final RestorableInt _sourceIndex;
@@ -209,6 +211,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     unawaited(_orientationController.apply(_settings.orientationPreference));
     _loadedChapters = List.of(widget.novel.chapters);
     _rebuildStream();
+    _verticalCenterId = _items.firstOrNull?.stableId;
     final initialBoundaries = _initialBoundaryStatuses();
     _beforeBoundary = initialBoundaries.$1;
     _afterBoundary = initialBoundaries.$2;
@@ -558,6 +561,10 @@ class _ReaderScreenState extends State<ReaderScreen>
             );
           }
         }
+      } else if (_verticalScrollController.hasClients) {
+        _verticalScrollController.jumpTo(
+          _verticalScrollController.position.minScrollExtent,
+        );
       }
       if (mounted) {
         setState(() => _restoring = false);
@@ -586,10 +593,9 @@ class _ReaderScreenState extends State<ReaderScreen>
 
     var targetContext = _mountedContextFor(stableId);
     if (targetContext == null) {
-      _verticalScrollController.jumpTo(
-        _verticalScrollController.position.minScrollExtent,
-      );
+      _verticalScrollController.jumpTo(0);
       setState(() {
+        _verticalCenterId = stableId;
         _windowStart = targetIndex;
         _windowEnd = (targetIndex + _initialWindowItems).clamp(
           _windowStart,
@@ -657,12 +663,14 @@ class _ReaderScreenState extends State<ReaderScreen>
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !controller.hasClients) return;
-      final addedExtent = controller.position.maxScrollExtent - oldMaxExtent;
-      final target = (oldPixels + addedExtent).clamp(
-        controller.position.minScrollExtent,
-        controller.position.maxScrollExtent,
-      );
-      controller.jumpTo(target);
+      if (_settings.layoutMode == ReaderLayoutMode.pages) {
+        final addedExtent = controller.position.maxScrollExtent - oldMaxExtent;
+        final target = (oldPixels + addedExtent).clamp(
+          controller.position.minScrollExtent,
+          controller.position.maxScrollExtent,
+        );
+        controller.jumpTo(target);
+      }
       _adjustingWindow = false;
     });
   }
@@ -865,6 +873,23 @@ class _ReaderScreenState extends State<ReaderScreen>
     required ReaderBoundaryStatus beforeStatus,
     required _VisibleReaderAnchor? visibleAnchor,
   }) async {
+    if (_settings.layoutMode == ReaderLayoutMode.scroll) {
+      final firstId = _items[_windowStart].stableId;
+      final lastId = _items[_windowEnd - 1].stableId;
+      setState(() {
+        _mergeLoadedChapters(incoming);
+        _windowStart = (_itemIndices[firstId]! - _windowLeadInItems).clamp(
+          0,
+          _items.length,
+        );
+        _windowEnd = _itemIndices[lastId]! + 1;
+        _beforeBoundary = beforeStatus;
+        _beforeLoading = false;
+        _beforeLoadError = null;
+        _beforeRequestArmed = beforeStatus == ReaderBoundaryStatus.loadable;
+      });
+      return;
+    }
     final oldWindowSpan = (_windowEnd - _windowStart).clamp(
       1,
       _initialWindowItems,
@@ -1434,6 +1459,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         _loadedChapters = chapters;
         _rebuildStream();
         final targetIndex = _itemIndices['chapter:${entry.id}'] ?? 0;
+        _verticalCenterId = _items[targetIndex].stableId;
         _windowStart = (targetIndex - _jumpLeadInItems).clamp(0, _items.length);
         _windowEnd = (targetIndex + _initialWindowItems).clamp(
           _windowStart,
@@ -1652,19 +1678,50 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Widget _buildVerticalReader(Color foreground) {
-    return ListView.builder(
-      controller: _verticalScrollController,
-      physics: const ClampingScrollPhysics(),
-      scrollCacheExtent: const ScrollCacheExtent.viewport(2),
-      addAutomaticKeepAlives: false,
-      addSemanticIndexes: false,
-      padding: EdgeInsets.only(
-        top: MediaQuery.paddingOf(context).top + 88,
-        bottom: MediaQuery.paddingOf(context).bottom + 164,
+    final centerStreamIndex = (_itemIndices[_verticalCenterId] ?? _windowStart)
+        .clamp(_windowStart, _windowEnd);
+    _verticalCenterId = _items.elementAtOrNull(centerStreamIndex)?.stableId;
+    final centerIndex =
+        centerStreamIndex - _windowStart + (_windowStart == 0 ? 1 : 0);
+    final topPadding = MediaQuery.paddingOf(context).top + 88;
+    return LayoutBuilder(
+      builder: (context, constraints) => CustomScrollView(
+        controller: _verticalScrollController,
+        physics: const ClampingScrollPhysics(),
+        scrollCacheExtent: const ScrollCacheExtent.viewport(2),
+        // Keep the same semantic origin while earlier items grow upwards.
+        // A lazy list's estimated maxScrollExtent is not a prepend distance.
+        center: _verticalCenterKey,
+        anchor: (topPadding / constraints.maxHeight).clamp(0.0, 1.0),
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.only(top: topPadding),
+            sliver: SliverList.builder(
+              addAutomaticKeepAlives: false,
+              addSemanticIndexes: false,
+              itemCount: centerIndex,
+              itemBuilder: (context, index) => _buildReaderItem(
+                context,
+                centerIndex - index - 1,
+                foreground,
+              ),
+            ),
+          ),
+          SliverPadding(
+            key: _verticalCenterKey,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.paddingOf(context).bottom + 164,
+            ),
+            sliver: SliverList.builder(
+              addAutomaticKeepAlives: false,
+              addSemanticIndexes: false,
+              itemCount: _readerItemCount - centerIndex,
+              itemBuilder: (context, index) =>
+                  _buildReaderItem(context, centerIndex + index, foreground),
+            ),
+          ),
+        ],
       ),
-      itemCount: _readerItemCount,
-      itemBuilder: (context, index) =>
-          _buildReaderItem(context, index, foreground),
     );
   }
 

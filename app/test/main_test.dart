@@ -472,7 +472,7 @@ void main() {
     expect(_readerScrollable(tester).position.pixels, greaterThan(40));
   });
 
-  testWidgets('restored deep position stays stable on the first scroll', (
+  testWidgets('restored deep position stays stable when scrolling both ways', (
     tester,
   ) async {
     final chapters = [
@@ -502,6 +502,17 @@ void main() {
 
     expect(target, findsOneWidget);
     expect(tester.getTopLeft(target).dy, closeTo(beforeTop - 40, 2));
+
+    var expectedTop = beforeTop - 40;
+    for (final delta in [-80.0, 40.0, 100.0, -100.0]) {
+      scrollable.jumpTo(scrollable.pixels + delta);
+      expectedTop -= delta;
+      await tester.pump();
+      expect(target, findsOneWidget);
+      expect(tester.getTopLeft(target).dy, closeTo(expectedTop, 2));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(target).dy, closeTo(expectedTop, 2));
+    }
   });
 
   testWidgets('catalog jump in a long loaded novel lands deterministically', (
@@ -535,11 +546,14 @@ void main() {
     await tester.scrollUntilVisible(
       targetTile,
       320,
+      continuous: true,
       scrollable: find.descendant(
         of: find.byKey(const ValueKey('chapter-catalog-list')),
         matching: find.byType(Scrollable),
       ),
     );
+    await tester.pumpAndSettle();
+    expect(targetTile.hitTestable(), findsOneWidget);
     await tester.tap(targetTile);
     await tester.pumpAndSettle();
 
@@ -554,10 +568,25 @@ void main() {
       findsOneWidget,
     );
 
-    final scrollable = _readerScrollable(tester).position;
-    scrollable.jumpTo(scrollable.pixels + 40);
+    final gesture = await tester.startGesture(const Offset(215, 400));
+    // The first move wins the drag gesture; subsequent moves scroll content.
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, -100));
+    await tester.pump();
+    var expectedTop = tester.getTopLeft(chapterTitle).dy;
+    expect(expectedTop, lessThan(beforeTop));
+    // Reverse while the finger is still down: loading earlier paragraphs
+    // must neither move the text independently nor cancel the drag.
+    for (final delta in [40.0, -80.0, 80.0, 160.0, -160.0]) {
+      await gesture.moveBy(Offset(0, delta));
+      expectedTop += delta;
+      await tester.pump();
+      expect(chapterTitle, findsOneWidget);
+      expect(tester.getTopLeft(chapterTitle).dy, closeTo(expectedTop, 2));
+    }
+    await gesture.up();
     await tester.pumpAndSettle();
-    expect(tester.getTopLeft(chapterTitle).dy, closeTo(beforeTop - 40, 2));
   });
 
   testWidgets('an unread chapter opens on its title before the first block', (
@@ -805,24 +834,25 @@ void main() {
     await pumpReader(tester);
     final position = _readerScrollable(tester).position;
     expect(position.axis, Axis.vertical);
+    final beforeTap = position.pixels;
 
     await tester.tapAt(const Offset(410, 466));
     await tester.pump(const Duration(milliseconds: 220));
     await tester.tapAt(const Offset(410, 466));
     await tester.pumpAndSettle();
     final afterTap = position.pixels;
-    expect(afterTap, closeTo(position.viewportDimension - 72, 1));
+    expect(afterTap - beforeTap, closeTo(position.viewportDimension - 72, 1));
 
     await tester.tapAt(const Offset(20, 466));
     await tester.pumpAndSettle();
-    expect(position.pixels, closeTo(0, 1));
+    expect(position.pixels, closeTo(beforeTap, 1));
 
     await tester.drag(
       find.byKey(const ValueKey('reader-stream')),
       const Offset(0, -180),
     );
     await tester.pumpAndSettle();
-    expect(position.pixels, greaterThan(0));
+    expect(position.pixels, greaterThan(beforeTap));
   });
 
   testWidgets('layout setting persists through the reader callback', (
@@ -1480,7 +1510,8 @@ void main() {
     tester,
   ) async {
     final chapters = [
-      for (var number = 1; number <= 6; number++) _windowChapter(number),
+      for (var number = 1; number <= 6; number++)
+        _windowChapter(number, blockCount: number == 2 ? 160 : 6),
     ];
     final requests = <ReaderAdjacentRequest>[];
     final response = Completer<ReaderChapterWindow>();
@@ -1521,6 +1552,10 @@ void main() {
     );
     expect(requests, hasLength(1));
     expect(requests.single.anchorChapterId, chapters[2].id);
+    // Keep reading while the request is in flight; preserve the position at
+    // completion, including when only part of a long previous chapter fits.
+    await tester.dragFrom(const Offset(215, 480), const Offset(0, -100));
+    await tester.pump();
     final anchor = find.byKey(
       ValueKey('block-${chapters[2].blocks.first.id}-chinese'),
     );
@@ -1535,8 +1570,10 @@ void main() {
         after: ReaderBoundaryStatus.loadable,
       ),
     );
+    await tester.pump();
+    expect(tester.getTopLeft(anchor).dy, closeTo(anchorTop, 1.0));
+    expect(reported, hasLength(progressBeforeCompletion));
     await tester.pumpAndSettle();
-
     expect(tester.getTopLeft(anchor).dy, closeTo(anchorTop, 1.0));
     expect(reported, hasLength(progressBeforeCompletion));
     for (var attempt = 0; attempt < 4; attempt++) {
