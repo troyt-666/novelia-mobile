@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/features/wenku/wenku_details_screen.dart';
+import 'package:jfzreader/features/wenku/wenku_epub_document.dart';
 import 'package:jfzreader/features/wenku/wenku_epub_store.dart';
 import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 import 'package:jfzreader/gateway/novelia/novelia_wenku_gateway.dart';
@@ -63,7 +64,7 @@ class _EmptyEpubStore extends WenkuEpubStore {
   const _EmptyEpubStore();
 
   @override
-  Future<Uint8List?> load(WenkuEpubRequest request) async => null;
+  Future<WenkuEpubDocument?> load(WenkuEpubRequest request) async => null;
 }
 
 class _PendingDownloadGateway implements NoveliaWenkuGateway {

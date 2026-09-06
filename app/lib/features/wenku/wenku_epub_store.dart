@@ -16,31 +16,32 @@ class WenkuEpubStore {
 
   final WenkuEpubRootDirectory? rootDirectory;
 
-  Future<Uint8List?> load(WenkuEpubRequest request) async {
+  Future<WenkuEpubDocument?> load(WenkuEpubRequest request) async {
     final target = await _fileFor(request);
     if (!await target.exists()) return null;
     try {
       final bytes = await target.readAsBytes();
-      if (_isReadableEpub(bytes)) return bytes;
-      await target.delete();
+      try {
+        return _parseEpub(bytes);
+      } on NoveliaGatewayException {
+        await target.delete();
+      }
     } on FileSystemException {
       // A stale or concurrently replaced cache entry is a cache miss.
     }
     return null;
   }
 
-  Future<File> save(WenkuEpubRequest request, Uint8List bytes) async {
-    if (!_isReadableEpub(bytes)) {
-      throw const NoveliaGatewayException(
-        NoveliaGatewayFailureKind.invalidResponse,
-        'The downloaded file was not an EPUB archive.',
-      );
-    }
+  Future<({File file, WenkuEpubDocument document})> save(
+    WenkuEpubRequest request,
+    Uint8List bytes,
+  ) async {
+    final document = _parseEpub(bytes);
     final target = await _fileFor(request, createDirectory: true);
     final temporary = File('${target.path}.part');
     await temporary.writeAsBytes(bytes, flush: true);
     if (await target.exists()) await target.delete();
-    return temporary.rename(target.path);
+    return (file: await temporary.rename(target.path), document: document);
   }
 
   Future<File> _fileFor(
@@ -65,19 +66,17 @@ class WenkuEpubStore {
     return target;
   }
 
-  static bool _isReadableEpub(Uint8List bytes) {
+  static WenkuEpubDocument _parseEpub(Uint8List bytes) {
     if (bytes.length < 64 ||
         bytes[0] != 0x50 ||
         bytes[1] != 0x4b ||
         bytes[2] != 0x03 ||
         bytes[3] != 0x04) {
-      return false;
+      throw const NoveliaGatewayException(
+        NoveliaGatewayFailureKind.invalidResponse,
+        'The downloaded file was not an EPUB archive.',
+      );
     }
-    try {
-      WenkuEpubDocument.parse(bytes);
-      return true;
-    } on Object {
-      return false;
-    }
+    return WenkuEpubDocument.parse(bytes);
   }
 }

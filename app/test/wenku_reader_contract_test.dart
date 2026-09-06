@@ -108,12 +108,26 @@ void main() {
     );
     final bytes = _fixtureEpub();
 
-    await WenkuEpubStore(rootDirectory: () async => root).save(request, bytes);
+    final saved = await WenkuEpubStore(
+      rootDirectory: () async => root,
+    ).save(request, bytes);
     final restored = await WenkuEpubStore(
       rootDirectory: () async => root,
     ).load(request);
 
-    expect(restored, bytes);
+    expect(await saved.file.readAsBytes(), bytes);
+    expect(saved.document.title, '夜行列车');
+    expect(restored!.title, saved.document.title);
+    expect(restored.spineLength, saved.document.spineLength);
+    expect(
+      restored.htmlForSpine(1, dark: false, fontSize: 18, japaneseFirst: false),
+      saved.document.htmlForSpine(
+        1,
+        dark: false,
+        fontSize: 18,
+        japaneseFirst: false,
+      ),
+    );
   });
 
   test('truncated cached EPUB is evicted instead of reused', () async {
@@ -129,10 +143,13 @@ void main() {
     final bytes = _fixtureEpub();
     final store = WenkuEpubStore(rootDirectory: () async => root);
     final cached = await store.save(request, bytes);
-    await cached.writeAsBytes(bytes.sublist(0, bytes.length ~/ 2), flush: true);
+    await cached.file.writeAsBytes(
+      bytes.sublist(0, bytes.length ~/ 2),
+      flush: true,
+    );
 
     expect(await store.load(request), isNull);
-    expect(await cached.exists(), isFalse);
+    expect(await cached.file.exists(), isFalse);
   });
 }
 

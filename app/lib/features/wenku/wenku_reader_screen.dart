@@ -18,13 +18,13 @@ String? wenkuReaderActionForKey(LogicalKeyboardKey key) {
 
 class WenkuReaderScreen extends StatefulWidget {
   const WenkuReaderScreen({
-    required this.epubBytes,
+    required this.document,
     required this.title,
     required this.order,
     super.key,
   });
 
-  final Uint8List epubBytes;
+  final WenkuEpubDocument document;
   final String title;
   final WenkuBilingualOrder order;
 
@@ -76,7 +76,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
       _loading = true;
     });
     try {
-      final document = WenkuEpubDocument.parse(widget.epubBytes);
+      final document = widget.document;
       final controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..addJavaScriptChannel(

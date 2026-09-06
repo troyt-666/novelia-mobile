@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
+import 'wenku_epub_document.dart';
 import 'wenku_epub_store.dart';
 import 'wenku_reader_screen.dart';
 
@@ -82,10 +82,10 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
     );
     WenkuEpubDownloadCancellationToken? cancellation;
     try {
-      final cachedBytes = await widget.store.load(request);
+      final cachedDocument = await widget.store.load(request);
       if (!mounted) return;
-      if (cachedBytes != null) {
-        await _openReader(cachedBytes, order: request.order);
+      if (cachedDocument != null) {
+        await _openReader(cachedDocument, order: request.order);
         return;
       }
 
@@ -109,10 +109,10 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
         cancellationToken: downloadCancellation,
       );
       downloadCancellation.throwIfCancelled();
-      await widget.store.save(request, bytes);
+      final saved = await widget.store.save(request, bytes);
       downloadCancellation.throwIfCancelled();
       if (!mounted) return;
-      await _openReader(bytes, order: request.order);
+      await _openReader(saved.document, order: request.order);
     } on WenkuEpubDownloadCancelledException {
       // Cancellation is an expected user action, not a failed download.
     } on Object catch (error) {
@@ -135,12 +135,12 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
   }
 
   Future<void> _openReader(
-    Uint8List bytes, {
+    WenkuEpubDocument document, {
     required WenkuBilingualOrder order,
   }) => Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) => WenkuReaderScreen(
-        epubBytes: bytes,
+        document: document,
         title: _novel?.chineseTitle ?? widget.summary.chineseTitle,
         order: order,
       ),
