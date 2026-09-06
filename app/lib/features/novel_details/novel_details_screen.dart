@@ -674,9 +674,6 @@ class _CoverageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final progress = coverage.totalChapters == 0
-        ? 0.0
-        : coverage.translatedChapters / coverage.totalChapters;
     return Semantics(
       label: '${coverage.source} 翻译覆盖 ${coverage.label}',
       child: Container(
@@ -696,13 +693,18 @@ class _CoverageCard extends StatelessWidget {
               style: Theme.of(context).textTheme.labelLarge,
             ),
             const SizedBox(height: 7),
-            LinearProgressIndicator(
-              value: progress,
-              borderRadius: BorderRadius.circular(4),
-            ),
+            if (coverage.isKnown)
+              LinearProgressIndicator(
+                value: coverage.totalChapters == 0
+                    ? 0
+                    : coverage.translatedChapters! / coverage.totalChapters!,
+                borderRadius: BorderRadius.circular(4),
+              ),
             const SizedBox(height: 6),
             Text(
-              '${coverage.translatedChapters}/${coverage.totalChapters} 章',
+              coverage.isKnown
+                  ? '${coverage.countLabel} 章'
+                  : coverage.countLabel,
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],

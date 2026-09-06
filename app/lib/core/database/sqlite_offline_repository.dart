@@ -1396,8 +1396,8 @@ final class SqliteOfflineRepository
             item['source'],
             'coverage source',
           ),
-          translatedChapters: _int(item['translatedChapters']),
-          totalChapters: _int(item['totalChapters']),
+          translatedChapters: _nullableInt(item['translatedChapters']),
+          totalChapters: _nullableInt(item['totalChapters']),
         ),
       );
     }

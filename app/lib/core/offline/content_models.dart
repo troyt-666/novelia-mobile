@@ -10,16 +10,18 @@ class CachedTranslationCoverage {
     required this.translatedChapters,
     required this.totalChapters,
   }) {
-    if (translatedChapters < 0 ||
-        totalChapters < 0 ||
-        translatedChapters > totalChapters) {
+    if ((translatedChapters != null && translatedChapters! < 0) ||
+        (totalChapters != null && totalChapters! < 0) ||
+        (translatedChapters != null &&
+            totalChapters != null &&
+            translatedChapters! > totalChapters!)) {
       throw ArgumentError('Translation coverage counts are inconsistent.');
     }
   }
 
   final TranslationSource source;
-  final int translatedChapters;
-  final int totalChapters;
+  final int? translatedChapters;
+  final int? totalChapters;
 }
 
 /// Provider-neutral metadata sufficient to render a cached discovery card.

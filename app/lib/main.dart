@@ -375,11 +375,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         novels.add(novel);
         try {
           _repository.upsertNovelOutline(
-            cacheAdapter.cacheOutline(
-              outline,
-              fetchedAt: fetchedAt,
-              allowRestricted: allowRestricted,
-            ),
+            cacheAdapter.cacheOutline(novel, fetchedAt: fetchedAt),
           );
         } on Object {
           // A cache failure must not hide an otherwise valid account row.

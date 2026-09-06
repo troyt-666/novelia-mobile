@@ -203,12 +203,15 @@ class TranslationCoverage {
   });
 
   final String source;
-  final int translatedChapters;
-  final int totalChapters;
+  final int? translatedChapters;
+  final int? totalChapters;
 
-  bool get hasTranslation => translatedChapters > 0;
-  bool get isComplete => translatedChapters == totalChapters;
-  String get label => '$source $translatedChapters/$totalChapters';
+  bool get isKnown => translatedChapters != null && totalChapters != null;
+  bool get hasTranslation => isKnown && translatedChapters! > 0;
+  bool get isComplete => isKnown && translatedChapters == totalChapters;
+  String get countLabel =>
+      isKnown ? '$translatedChapters/$totalChapters' : '统计未知';
+  String get label => '$source $countLabel';
 }
 
 @immutable

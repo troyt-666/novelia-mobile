@@ -179,11 +179,27 @@ the anonymous samples. `extra` appeared on ranking items but not normal catalog
 items. The gateway decoder must tolerate all nullable fields being absent.
 
 An opt-in live ranking smoke on 2026-08-18 observed a transient synchronization
-race in which a positive Translation count exceeded `total` by one. For ranking
-rows only, the client may cap a positive over-report to `total`, because no
-readable translated chapter can exist beyond the reported original catalog.
-Negative counts, and the same inconsistency in ordinary Catalog or Novel Detail
-responses, remain invalid and must fail closed.
+race in which a positive Translation count exceeded `total` by one.
+
+### Display-statistics policy (updated 2026-09-06)
+
+For decoded integer statistics, Catalog, Rankings, and Novel Details use the
+same rule. A negative chapter total is unknown. Each source's coverage is
+unknown when either count is negative or translated chapters exceed the total;
+other sources retain their valid coverage. Negative points, character counts,
+and visits are unknown independently. Zero remains a valid reported value.
+Do not cap an inconsistent count to imply complete translation.
+
+Unknown coverage displays `统计未知`, has no percentage/progress bar, and does
+not satisfy translated-source filters. Unknown statistics are stored as null
+values in normalized cache records and remain unknown offline. Existing
+integer cache records remain readable. A valid decoded TOC can still establish
+the chapter count when the reported total is unknown.
+
+These display anomalies do not discard other novels, block details, or prevent
+reading/downloading chapters established by the TOC. This does not relax DTO
+field types, page envelopes, stable identities, access restrictions, TOC
+uniqueness, payload identity, or original/translation paragraph alignment.
 
 ## Novel Details and Chapter List
 
@@ -473,10 +489,10 @@ optional and strict where the domain cannot be constructed safely.
   though the current server omits nulls.
 - Treat missing required identifiers, original paragraph arrays, or page
   envelopes as a parse failure.
-- Validate values before domain conversion: page counts and translation counts
-  must be non-negative; arrays must contain strings; IDs must be non-empty. The
-  ranking-only positive-counter normalization above is the sole documented
-  exception to the usual `translation <= total` invariant.
+- Validate structural values before domain conversion: page counts must be
+  non-negative, arrays must contain strings, and IDs must be non-empty.
+  Normalize inconsistent display statistics under the policy above; do not
+  treat them as structural content failures.
 - Do not treat a missing translated title or Translation array as a whole-page
   failure.
 - Do not silently substitute a different Translation Source.

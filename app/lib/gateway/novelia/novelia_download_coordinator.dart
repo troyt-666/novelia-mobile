@@ -5,6 +5,7 @@ import '../../core/offline/offline_models.dart';
 import '../../core/offline/offline_repository.dart';
 import '../../features/discover/catalog_models.dart';
 import 'novelia_content_cache_adapter.dart';
+import 'novelia_content_access.dart';
 import 'novelia_content_coordinator.dart';
 import 'novelia_domain_adapter.dart';
 import 'novelia_gateway.dart';
@@ -301,11 +302,7 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
       );
       try {
         contentRepository.upsertNovelDetail(
-          cacheAdapter.cacheDetails(
-            details,
-            fetchedAt: clock(),
-            allowRestricted: _allowsRestrictedContent,
-          ),
+          cacheAdapter.cacheDetails(novel, fetchedAt: clock()),
         );
       } on Object {
         // Downloading may continue with verified live metadata. The final
@@ -316,7 +313,12 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
         novel: novel,
       );
     } on NoveliaRestrictedContentException {
-      _markCachedNovelRestricted(novelId);
+      revokeRestrictedNovelCache(
+        contentRepository,
+        novelId: novelId,
+        checkedAt: clock(),
+        domainAdapter: domainAdapter,
+      );
       return const _TocHydration(
         availability: CatalogAvailability.authenticationRequired,
         failure: NoveliaGatewayException(
@@ -561,39 +563,6 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
       );
     } on Object {
       return false;
-    }
-  }
-
-  void _markCachedNovelRestricted(String novelId) {
-    try {
-      final cached = contentRepository.listCachedNovels().where(
-        (outline) => outline.id == novelId,
-      );
-      if (cached.isNotEmpty &&
-          !domainAdapter.isRestrictedAttentions(cached.first.tags)) {
-        final outline = cached.first;
-        contentRepository.upsertNovelOutline(
-          CachedNovelOutline(
-            id: outline.id,
-            chineseTitle: outline.chineseTitle,
-            japaneseTitle: outline.japaneseTitle,
-            author: outline.author,
-            contentSource: outline.contentSource,
-            publicationState: outline.publicationState,
-            chapterCount: outline.chapterCount,
-            wordCount: outline.wordCount,
-            updatedAt: outline.updatedAt,
-            tags: [...outline.tags, 'R18'],
-            translationCoverage: outline.translationCoverage,
-            fetchedAt: clock(),
-            revision: outline.revision,
-            etag: outline.etag,
-          ),
-        );
-      }
-      contentRepository.removeCachedNovel(novelId);
-    } on Object {
-      // The current synchronization still fails closed if cleanup is damaged.
     }
   }
 

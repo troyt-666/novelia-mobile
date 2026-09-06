@@ -41,7 +41,7 @@ void main() {
       final novel = adapter.mapOutline(_outline(publicationType: null));
       const cacheAdapter = NoveliaContentCacheAdapter();
       final cached = cacheAdapter.cacheOutline(
-        _outline(publicationType: null),
+        novel,
         fetchedAt: DateTime.utc(2026, 8, 17),
       );
 

@@ -16,34 +16,18 @@ class NoveliaContentCacheAdapter {
 
   final NoveliaDomainAdapter domainAdapter;
 
-  CachedNovelOutline cacheOutline(
-    NoveliaNovelOutline outline, {
-    required DateTime fetchedAt,
-    bool allowRestricted = false,
-  }) {
-    final mapped = domainAdapter.mapOutline(
-      outline,
-      allowRestricted: allowRestricted,
-    );
-    return _cacheOutlineFromDomain(mapped, fetchedAt: fetchedAt);
-  }
-
+  /// Stores a domain value already validated by the live content boundary.
   CachedNovelDetail cacheDetails(
-    NoveliaNovelDetails details, {
+    CatalogNovel mapped, {
     required DateTime fetchedAt,
-    bool allowRestricted = false,
   }) {
-    final mapped = domainAdapter.mapDetails(
-      details,
-      allowRestricted: allowRestricted,
-    );
     final readerNovel = mapped.readerNovel!;
     final chapterById = {
       for (final chapter in readerNovel.chapters) chapter.id: chapter,
     };
 
     return CachedNovelDetail(
-      outline: _cacheOutlineFromDomain(mapped, fetchedAt: fetchedAt),
+      outline: cacheOutline(mapped, fetchedAt: fetchedAt),
       synopsis: mapped.synopsis ?? '',
       points: mapped.points,
       views: mapped.views,
@@ -372,7 +356,7 @@ class NoveliaContentCacheAdapter {
     );
   }
 
-  CachedNovelOutline _cacheOutlineFromDomain(
+  CachedNovelOutline cacheOutline(
     CatalogNovel mapped, {
     required DateTime fetchedAt,
   }) {

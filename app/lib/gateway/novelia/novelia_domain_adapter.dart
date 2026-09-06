@@ -62,12 +62,6 @@ class NoveliaDomainAdapter {
       outline.key,
       allowRestricted: allowRestricted,
     );
-    _validateCoverage(
-      totalChapters: outline.totalChapters,
-      youdaoChapters: outline.youdaoChapters,
-      gptChapters: outline.gptChapters,
-      sakuraChapters: outline.sakuraChapters,
-    );
 
     return CatalogNovel(
       id: outline.key.stableId,
@@ -83,7 +77,7 @@ class NoveliaDomainAdapter {
         gptChapters: outline.gptChapters,
         sakuraChapters: outline.sakuraChapters,
       ),
-      declaredChapterCount: outline.totalChapters,
+      declaredChapterCount: _nonnegative(outline.totalChapters),
       originalUrl: originalUri(outline.key),
       isFavorite: outline.favoriteFolderId != null,
     );
@@ -100,16 +94,6 @@ class NoveliaDomainAdapter {
       details.key,
       allowRestricted: allowRestricted,
     );
-    _validateNonnegative('points', details.points);
-    _validateNonnegative('totalCharacters', details.totalCharacters);
-    _validateNonnegative('visited', details.visited);
-    _validateCoverage(
-      totalChapters: details.originalChapters,
-      youdaoChapters: details.youdaoChapters,
-      gptChapters: details.gptChapters,
-      sakuraChapters: details.sakuraChapters,
-    );
-
     final mappedToc = _mapToc(details, chapterPayloads);
     final author = details.authors.map((author) => author.name).join('、');
 
@@ -120,12 +104,12 @@ class NoveliaDomainAdapter {
       author: author.isEmpty ? null : author,
       source: providerLabel(details.key.providerId),
       publicationState: publicationState(details.publicationType),
-      wordCount: details.totalCharacters,
+      wordCount: _nonnegative(details.totalCharacters),
       updatedAt: details.syncedAt,
       tags: _tags(details.attentions, details.keywords),
       synopsis: details.chineseIntroduction ?? details.japaneseIntroduction,
-      points: details.points,
-      views: details.visited,
+      points: _nonnegative(details.points),
+      views: _nonnegative(details.visited),
       translationCoverage: _coverage(
         totalChapters: details.originalChapters,
         youdaoChapters: details.youdaoChapters,
@@ -139,7 +123,7 @@ class NoveliaDomainAdapter {
         author: author,
         chapters: mappedToc.chapters,
       ),
-      declaredChapterCount: details.originalChapters,
+      declaredChapterCount: _nonnegative(details.originalChapters),
       chapterSections: mappedToc.sections,
       comments: comments,
       originalUrl: originalUri(details.key),
@@ -370,51 +354,30 @@ class NoveliaDomainAdapter {
     required int sakuraChapters,
   }) {
     return [
-      TranslationCoverage(
-        source: TranslationSource.youdao.label,
-        translatedChapters: youdaoChapters,
-        totalChapters: totalChapters,
-      ),
-      TranslationCoverage(
-        source: TranslationSource.gpt.label,
-        translatedChapters: gptChapters,
-        totalChapters: totalChapters,
-      ),
-      TranslationCoverage(
-        source: TranslationSource.sakura.label,
-        translatedChapters: sakuraChapters,
-        totalChapters: totalChapters,
-      ),
+      for (final entry in {
+        TranslationSource.youdao: youdaoChapters,
+        TranslationSource.gpt: gptChapters,
+        TranslationSource.sakura: sakuraChapters,
+      }.entries)
+        if (totalChapters >= 0 &&
+            entry.value >= 0 &&
+            entry.value <= totalChapters)
+          TranslationCoverage(
+            source: entry.key.label,
+            translatedChapters: entry.value,
+            totalChapters: totalChapters,
+          )
+        else
+          TranslationCoverage(
+            source: entry.key.label,
+            translatedChapters: null,
+            totalChapters: null,
+          ),
     ];
   }
 
-  static void _validateCoverage({
-    required int totalChapters,
-    required int youdaoChapters,
-    required int gptChapters,
-    required int sakuraChapters,
-  }) {
-    if (totalChapters < 0) {
-      throw const NoveliaDomainMappingException(
-        'The service returned a negative chapter count.',
-      );
-    }
-    for (final count in [youdaoChapters, gptChapters, sakuraChapters]) {
-      if (count < 0 || count > totalChapters) {
-        throw const NoveliaDomainMappingException(
-          'The service returned inconsistent translation coverage.',
-        );
-      }
-    }
-  }
-
-  static void _validateNonnegative(String field, int? value) {
-    if (value != null && value < 0) {
-      throw NoveliaDomainMappingException(
-        'The service returned a negative $field value.',
-      );
-    }
-  }
+  static int? _nonnegative(int? value) =>
+      value != null && value >= 0 ? value : null;
 
   void _requireAllowed(
     Iterable<String> attentions,

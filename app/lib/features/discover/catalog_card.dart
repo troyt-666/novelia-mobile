@@ -210,8 +210,7 @@ class _CoverageBadge extends StatelessWidget {
         : colors.onTertiaryContainer;
     return Semantics(
       label:
-          '${coverage.source} 翻译 '
-          '${coverage.translatedChapters} / ${coverage.totalChapters} 章',
+          '${coverage.source} 翻译 ${coverage.countLabel}${coverage.isKnown ? ' 章' : ''}',
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: background,

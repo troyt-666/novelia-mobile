@@ -16,6 +16,115 @@ void main() {
   final now = DateTime.utc(2026, 8, 17, 12);
 
   group('LiveFirstNoveliaContentCoordinator', () {
+    for (final restricted in [false, true]) {
+      test(
+        'all read entry points follow account access (R18=$restricted)',
+        () async {
+          var signedIn = true;
+          final store = _openStore();
+          final attentions = restricted ? const [' r18 '] : const <String>[];
+          final gateway = _FakeGateway(
+            catalogPage: NoveliaPage(
+              items: [_outline(attentions: attentions)],
+              pageCount: 1,
+            ),
+            details: _details(attentions: attentions, chapterIds: const ['c1']),
+            chapters: {'c1': _payload('c1')},
+          );
+          final coordinator = LiveFirstNoveliaContentCoordinator(
+            gateway: gateway,
+            contentRepository: store,
+            canAccessRestrictedContent: () => signedIn,
+          );
+          final catalog = await coordinator.loadCatalog(
+            const NoveliaCatalogQuery(contentLevel: 0),
+          );
+          final novel = (await coordinator.loadDetails(
+            catalog.data!.novels.single,
+          )).data!;
+          await coordinator.loadChapter(novel, chapterId: 'c1');
+          expect(coordinator.cachedChapter(novel, chapterId: 'c1'), isNotNull);
+          expect(
+            (await coordinator.loadComments(novel)).availability,
+            CatalogAvailability.available,
+          );
+
+          signedIn = false;
+          final chapterCalls = gateway.chapterCalls.length;
+          final detailCalls = gateway.detailCalls;
+          gateway.lastCommentKey = null;
+          expect(
+            coordinator.cachedChapter(novel, chapterId: 'c1'),
+            restricted ? isNull : isNotNull,
+          );
+          final results = [
+            await coordinator.loadChapter(novel, chapterId: 'c1'),
+            await coordinator.loadComments(novel),
+            await coordinator.loadDetails(novel),
+          ];
+          for (final result in results) {
+            expect(
+              result.availability,
+              restricted
+                  ? CatalogAvailability.authenticationRequired
+                  : CatalogAvailability.available,
+            );
+            expect(result.data, restricted ? isNull : isNotNull);
+          }
+          expect(
+            gateway.chapterCalls.length,
+            chapterCalls + (restricted ? 0 : 1),
+          );
+          expect(gateway.detailCalls, detailCalls + (restricted ? 0 : 1));
+          expect(gateway.lastCommentKey, restricted ? isNull : _key);
+
+          signedIn = true;
+          final refreshed = await coordinator.loadCatalog(
+            const NoveliaCatalogQuery(contentLevel: 0),
+          );
+          expect(
+            (await coordinator.loadDetails(
+              refreshed.data!.novels.single,
+            )).availability,
+            CatalogAvailability.available,
+          );
+          expect(
+            (await coordinator.loadChapter(novel, chapterId: 'c1')).data,
+            isNotNull,
+          );
+        },
+      );
+    }
+
+    test(
+      'unverified hydrated objects cannot initiate content requests',
+      () async {
+        final gateway = _FakeGateway(
+          catalogPage: const NoveliaPage(items: [], pageCount: 0),
+          details: _details(),
+        );
+        final coordinator = LiveFirstNoveliaContentCoordinator(
+          gateway: gateway,
+        );
+        final novel = const NoveliaDomainAdapter().mapDetails(_details());
+        expect(coordinator.cachedChapter(novel, chapterId: 'c1'), isNull);
+        for (final result in [
+          await coordinator.loadDetails(novel),
+          await coordinator.loadChapter(novel, chapterId: 'c1'),
+          await coordinator.loadComments(novel),
+        ]) {
+          expect(
+            result.availability,
+            CatalogAvailability.authenticationRequired,
+          );
+          expect(result.data, isNull);
+        }
+        expect(gateway.detailCalls, 0);
+        expect(gateway.chapterCalls, isEmpty);
+        expect(gateway.lastCommentKey, isNull);
+      },
+    );
+
     test(
       'keeps catalog/detail body-free and atomically caches a chapter read',
       () async {
@@ -85,38 +194,35 @@ void main() {
       },
     );
 
-    test(
-      'caps an over-reported ranking counter at the original total',
-      () async {
-        final store = _openStore();
-        final gateway = _FakeGateway(
-          catalogPage: NoveliaPage(
-            items: [_outline(totalChapters: 190, youdaoChapters: 191)],
-            pageCount: 2,
-          ),
-          details: _details(),
-        );
-        final coordinator = LiveFirstNoveliaContentCoordinator(
-          gateway: gateway,
-          contentRepository: store,
-          clock: () => now,
-        );
+    test('keeps an over-reported ranking counter unknown', () async {
+      final store = _openStore();
+      final gateway = _FakeGateway(
+        catalogPage: NoveliaPage(
+          items: [_outline(totalChapters: 190, youdaoChapters: 191)],
+          pageCount: 2,
+        ),
+        details: _details(),
+      );
+      final coordinator = LiveFirstNoveliaContentCoordinator(
+        gateway: gateway,
+        contentRepository: store,
+        clock: () => now,
+      );
 
-        final result = await coordinator.loadRankings(
-          NoveliaRankingQuery.syosetu(page: 1),
-        );
+      final result = await coordinator.loadRankings(
+        NoveliaRankingQuery.syosetu(page: 1),
+      );
 
-        expect(result.availability, CatalogAvailability.available);
-        expect(result.data!.totalPages, 2);
-        final novel = result.data!.novels.single;
-        expect(novel.declaredChapterCount, 190);
-        expect(
-          novel.coverageFor(TranslationSource.youdao.label)!.translatedChapters,
-          190,
-        );
-        expect(store.listCachedNovels(), hasLength(1));
-      },
-    );
+      expect(result.availability, CatalogAvailability.available);
+      expect(result.data!.totalPages, 2);
+      final novel = result.data!.novels.single;
+      expect(novel.declaredChapterCount, 190);
+      expect(
+        novel.coverageFor(TranslationSource.youdao.label)!.translatedChapters,
+        isNull,
+      );
+      expect(store.listCachedNovels(), hasLength(1));
+    });
 
     test(
       'falls back through normalized outline, detail, and chapter cache',
@@ -124,10 +230,16 @@ void main() {
         const cacheAdapter = NoveliaContentCacheAdapter();
         final store = _openStore();
         store.upsertNovelOutline(
-          cacheAdapter.cacheOutline(_outline(), fetchedAt: now),
+          cacheAdapter.cacheOutline(
+            const NoveliaDomainAdapter().mapOutline(_outline()),
+            fetchedAt: now,
+          ),
         );
         store.upsertNovelDetail(
-          cacheAdapter.cacheDetails(_details(), fetchedAt: now),
+          cacheAdapter.cacheDetails(
+            const NoveliaDomainAdapter().mapDetails(_details()),
+            fetchedAt: now,
+          ),
         );
         final cachedPayload = cacheAdapter.cacheChapter(
           _payload('c1'),
@@ -502,6 +614,112 @@ void main() {
   });
 
   group('AsyncNoveliaDownloadCoordinator', () {
+    test(
+      'invalid display counts still allow reading and protected downloads',
+      () async {
+        final store = _openStore();
+        final gateway = _FakeGateway(
+          catalogPage: NoveliaPage(
+            items: [_outline(totalChapters: 2, youdaoChapters: 3)],
+            pageCount: 1,
+          ),
+          details: _details(chapterIds: const ['c1'], originalChapters: -1),
+          chapters: {
+            'c1': _payload('c1', sakura: const ['甲', '']),
+          },
+        );
+        final reader = LiveFirstNoveliaContentCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+        );
+        final catalog = await reader.loadCatalog(const NoveliaCatalogQuery());
+        final detail = await reader.loadDetails(catalog.data!.novels.single);
+        expect(detail.data!.knownChapterCount, 1);
+        expect(
+          (await reader.loadChapter(
+            detail.data!,
+            chapterId: 'c1',
+          )).data!.blocks.first.japanese,
+          '一',
+        );
+        store.saveIntent(
+          NovelDownloadIntent(
+            id: 'stats',
+            novelId: _key.stableId,
+            translationSource: TranslationSource.sakura,
+            createdAt: now,
+          ),
+        );
+        final run = await AsyncNoveliaDownloadCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+          offlineRepository: store,
+        ).synchronizeIntent('stats');
+        expect(run.availability, CatalogAvailability.available);
+        expect(run.tasks.single.state, DownloadTaskState.stored);
+        expect(
+          store.listCopies(kind: OfflineCopyKind.offlineDownload),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'download reclassification retains protected copies and denies anonymous restart',
+      () async {
+        final store = _openStore();
+        store.saveIntent(
+          NovelDownloadIntent(
+            id: 'intent',
+            novelId: _key.stableId,
+            translationSource: TranslationSource.sakura,
+            createdAt: now,
+          ),
+        );
+        final gateway = _FakeGateway(
+          catalogPage: const NoveliaPage(items: [], pageCount: 0),
+          details: _details(chapterIds: const ['c1']),
+          chapters: {
+            'c1': _payload('c1', sakura: const ['甲', '']),
+          },
+        );
+        AsyncNoveliaDownloadCoordinator downloader({bool signedIn = false}) =>
+            AsyncNoveliaDownloadCoordinator(
+              gateway: gateway,
+              contentRepository: store,
+              offlineRepository: store,
+              canAccessRestrictedContent: () => signedIn,
+            );
+        await downloader().synchronizeIntent('intent');
+        final copy = store
+            .listCopies(kind: OfflineCopyKind.offlineDownload)
+            .single;
+        gateway.details = _details(
+          attentions: const ['R18'],
+          chapterIds: const ['c1'],
+        );
+        final denied = await downloader().synchronizeIntent('intent');
+        expect(denied.availability, CatalogAvailability.authenticationRequired);
+        expect(store.listCachedNovels().single.tags, contains('R18'));
+        expect(store.copyById(copy.id)?.payloadId, copy.payloadId);
+        expect(store.chapterPayloadById(copy.payloadId!), isNotNull);
+        final detailCalls = gateway.detailCalls;
+        expect(
+          (await downloader().synchronizeIntent('intent')).availability,
+          CatalogAvailability.authenticationRequired,
+        );
+        expect(gateway.detailCalls, detailCalls);
+        expect(gateway.chapterCalls, ['c1']);
+        expect(
+          (await downloader(
+            signedIn: true,
+          ).synchronizeIntent('intent')).availability,
+          CatalogAvailability.available,
+        );
+        expect(store.copyById(copy.id), isNotNull);
+      },
+    );
+
     test(
       'reconciles future chapters and stores pending Japanese atomically',
       () async {
@@ -924,6 +1142,7 @@ NoveliaNovelOutline _outline({
 NoveliaNovelDetails _details({
   List<String> attentions = const ['一般向'],
   List<String> chapterIds = const ['c1', 'c2'],
+  int? originalChapters,
 }) {
   return NoveliaNovelDetails(
     key: _key,
@@ -954,7 +1173,7 @@ NoveliaNovelDetails _details({
     ],
     visited: 99,
     syncedAt: DateTime.utc(2026, 8, 17),
-    originalChapters: chapterIds.length,
+    originalChapters: originalChapters ?? chapterIds.length,
     baiduChapters: 0,
     youdaoChapters: chapterIds.length,
     gptChapters: 0,
