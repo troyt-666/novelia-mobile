@@ -6,7 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/account/account_session_controller.dart';
 import 'core/account/account_models.dart';
-import 'core/account/account_sync_models.dart';
+import 'core/account/remote_history_sync.dart';
 import 'core/account/secure_session_store.dart';
 import 'core/database/local_state_repository.dart';
 import 'core/database/sqlite_offline_repository.dart';
@@ -23,6 +23,7 @@ import 'features/reader/reader_screen.dart';
 import 'features/shell/download_management_screen.dart';
 import 'features/shell/novelia_shell.dart';
 import 'features/shell/shell_view_models.dart';
+import 'features/shell/local_library_snapshot.dart';
 import 'gateway/novelia/http_novelia_gateway.dart';
 import 'gateway/novelia/http_novelia_wenku_gateway.dart';
 import 'gateway/novelia/http_novelia_auth_gateway.dart';
@@ -30,6 +31,7 @@ import 'gateway/novelia/http_novelia_account_gateway.dart';
 import 'gateway/novelia/novelia_account_gateway.dart';
 import 'gateway/novelia/novelia_content_cache_adapter.dart';
 import 'gateway/novelia/novelia_content_coordinator.dart';
+import 'gateway/novelia/novelia_catalog_controller.dart';
 import 'gateway/novelia/novelia_download_coordinator.dart';
 import 'gateway/novelia/novelia_domain_adapter.dart';
 import 'gateway/novelia/novelia_gateway.dart';
@@ -149,6 +151,7 @@ class NoveliaReaderApp extends StatefulWidget {
 
 class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     with WidgetsBindingObserver {
+  late LocalLibrarySnapshot _library;
   late ThemeMode _themeMode;
   late ReaderSettings _readerSettings;
   late int _cacheLimitBytes;
@@ -156,39 +159,16 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   late List<String> _initialRecentSearches;
   late String? _initialReaderNovelId;
   late ReadingPosition? _initialReaderPosition;
-  late List<CatalogNovel> _catalogNovels;
-  late List<CatalogNovel> _recentlyUpdatedNovels;
-  late CatalogAvailability _catalogAvailability;
-  late CatalogAvailability _recentlyUpdatedAvailability;
-  late CatalogAvailability _mostClickedAvailability;
+  late final NoveliaCatalogController _feeds;
+  List<CatalogNovel> get _catalogNovels => _feeds.catalog.novels;
+  CatalogCriteria get _catalogCriteria => _feeds.criteria;
   final Set<String> _activeDownloadSyncs = <String>{};
   final Set<String> _pendingDownloadSyncs = <String>{};
-  var _catalogLoadGeneration = 0;
-  var _catalogPageIndex = -1;
-  var _catalogTotalPages = 0;
-  var _catalogCriteria = const CatalogCriteria();
-  var _catalogLoading = false;
-  var _catalogLoadingMore = false;
-  var _catalogLoadMoreFailed = false;
-  var _mostClickedNovels = const <CatalogNovel>[];
-  var _mostClickedGeneration = 0;
-  var _recentlyUpdatedGeneration = 0;
-  var _mostClickedPageIndex = -1;
-  var _mostClickedTotalPages = 0;
-  var _mostClickedLoadingMore = false;
-  var _mostClickedLoadMoreFailed = false;
-  var _recentlyUpdatedPageIndex = -1;
-  var _recentlyUpdatedTotalPages = 0;
-  var _recentlyUpdatedLoadingMore = false;
-  var _recentlyUpdatedLoadMoreFailed = false;
   var _defaultRankingPageSize = 0;
   var _currentDestination = 0;
   var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
   var _favoriteFolderGeneration = 0;
-  var _historyFlushActive = false;
-  var _historyOutboxOwnerInitialized = false;
-  String? _historyOutboxOwner;
-  final Map<String, String> _lastHistoryChapterByNovel = {};
+  late final RemoteHistorySync _historySync;
 
   SqliteOfflineRepository get _repository => widget.repository;
 
@@ -196,6 +176,11 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _historySync = RemoteHistorySync(
+      repository: _repository,
+      sessionController: widget.accountSessionController,
+      gateway: widget.accountGateway,
+    );
     widget.accountSessionController?.addListener(_accountSessionChanged);
     if (widget.accountSessionController != null) {
       unawaited(widget.accountSessionController!.restore());
@@ -216,16 +201,18 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     _initialReaderPosition = restoreReader ? route?.position : null;
 
     _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
-    _catalogNovels = _restoreCachedCatalog();
-    _recentlyUpdatedNovels = _catalogNovels;
-    // Restored rows are useful immediately, but they are not evidence that
-    // the service is currently reachable. A live-origin refresh promotes the
-    // state to available once it actually succeeds.
-    _catalogAvailability = CatalogAvailability.offline;
-    _recentlyUpdatedAvailability = CatalogAvailability.offline;
-    _mostClickedAvailability = CatalogAvailability.offline;
-    unawaited(_refreshCatalog());
-    unawaited(_refreshMostClicked());
+    _feeds = NoveliaCatalogController(
+      contentCoordinator: widget.contentCoordinator,
+      baseQuery: widget.catalogQuery,
+      initialNovels: _restoreCachedCatalog(),
+      canAccessRestrictedContent: () =>
+          widget.accountSessionController?.snapshot.isSignedIn == true,
+      onContentChanged: _refreshLibrary,
+    )..addListener(_feedsChanged);
+    _library = _loadLibrarySnapshot();
+    unawaited(_feeds.refreshCatalog());
+    unawaited(_feeds.refreshRecentlyUpdated());
+    unawaited(_feeds.refreshMostClicked());
     unawaited(_resumeDownloadIntents());
   }
 
@@ -233,9 +220,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.accountSessionController?.removeListener(_accountSessionChanged);
-    _catalogLoadGeneration += 1;
-    _mostClickedGeneration += 1;
-    _recentlyUpdatedGeneration += 1;
+    _feeds.removeListener(_feedsChanged);
+    _feeds.dispose();
+    _historySync.dispose();
     widget.onRuntimeDispose?.call();
     if (widget.closeRepositoryOnDispose) _repository.close();
     super.dispose();
@@ -244,9 +231,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    unawaited(_refreshCatalog());
-    unawaited(_refreshRecentlyUpdated());
-    unawaited(_refreshMostClicked());
+    unawaited(_feeds.refreshCatalog());
+    unawaited(_feeds.refreshRecentlyUpdated());
+    unawaited(_feeds.refreshMostClicked());
     if (widget.downloadCoordinator != null) {
       unawaited(_resumeDownloadIntents());
     }
@@ -255,25 +242,25 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       unawaited(widget.accountSessionController!.retry());
     } else if (widget.accountSessionController?.snapshot.isSignedIn == true) {
       unawaited(_refreshFavoriteFolders());
-      unawaited(_flushRemoteHistory());
+      unawaited(_historySync.flush());
     }
   }
 
   void _accountSessionChanged() {
     if (!mounted) return;
     final session = widget.accountSessionController?.snapshot;
-    _syncHistoryOutboxOwner(session);
+    _historySync.updateSession(session);
     if (session?.isSignedIn == true) {
       unawaited(_refreshFavoriteFolders());
-      unawaited(_flushRemoteHistory());
+      unawaited(_historySync.flush());
     } else {
       _favoriteFolderGeneration += 1;
       _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
     }
     if (_catalogCriteria.contentLevel != CatalogContentLevel.general) {
-      unawaited(_refreshCatalog(criteria: _catalogCriteria));
+      unawaited(_feeds.refreshCatalog(criteria: _catalogCriteria));
     }
-    setState(() {});
+    _refreshLibrary();
   }
 
   Future<void> _refreshFavoriteFolders() async {
@@ -393,89 +380,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<void> _logoutAccount() async {
-    _clearHistoryOutbox();
-    _historyOutboxOwner = null;
-    _historyOutboxOwnerInitialized = true;
+    _historySync.signedOut();
     await widget.accountSessionController?.logout();
-  }
-
-  void _syncHistoryOutboxOwner(AccountSessionSnapshot? session) {
-    if (session == null) return;
-    if (session.status == AccountSessionStatus.restoring &&
-        session.profile == null) {
-      return;
-    }
-    final username = session.profile?.username;
-    if (!_historyOutboxOwnerInitialized) {
-      _historyOutboxOwner = username;
-      _historyOutboxOwnerInitialized = true;
-      if (session.status == AccountSessionStatus.signedOut) {
-        _clearHistoryOutbox();
-      }
-      return;
-    }
-    if (username == _historyOutboxOwner) return;
-    _clearHistoryOutbox();
-    _historyOutboxOwner = username;
-  }
-
-  void _clearHistoryOutbox() {
-    _repository.clearRemoteHistoryOutbox();
-    _lastHistoryChapterByNovel.clear();
-  }
-
-  void _queueRemoteHistory(
-    ReaderNovel novel,
-    ReadingPosition position,
-    DateTime occurredAt,
-  ) {
-    if (widget.accountSessionController?.snapshot.hasStoredAccount != true ||
-        widget.accountGateway == null ||
-        _lastHistoryChapterByNovel[novel.id] == position.chapterId) {
-      return;
-    }
-    final key = _serviceNovelKey(novel.id);
-    if (key == null) return;
-    _lastHistoryChapterByNovel[novel.id] = position.chapterId;
-    _repository.queueRemoteHistory(
-      RemoteHistoryOutboxEntry(
-        novelId: novel.id,
-        providerId: key.$1,
-        serviceNovelId: key.$2,
-        chapterId: position.chapterId,
-        occurredAt: occurredAt,
-      ),
-    );
-    unawaited(_flushRemoteHistory());
-  }
-
-  Future<void> _flushRemoteHistory() async {
-    final gateway = widget.accountGateway;
-    if (_historyFlushActive ||
-        gateway == null ||
-        widget.accountSessionController?.snapshot.isSignedIn != true) {
-      return;
-    }
-    _historyFlushActive = true;
-    try {
-      while (widget.accountSessionController?.snapshot.isSignedIn == true) {
-        final entries = _repository.listRemoteHistoryOutbox();
-        if (entries.isEmpty) break;
-        final entry = entries.first;
-        try {
-          await gateway.updateReadHistory(
-            providerId: entry.providerId,
-            novelId: entry.serviceNovelId,
-            chapterId: entry.chapterId,
-          );
-          _repository.removeRemoteHistoryIfUnchanged(entry);
-        } on Object {
-          break;
-        }
-      }
-    } finally {
-      _historyFlushActive = false;
-    }
   }
 
   static (String, String)? _serviceNovelKey(String stableId) {
@@ -509,362 +415,25 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     return List.unmodifiable(novels);
   }
 
-  Future<void> _refreshCatalog({
-    CatalogCriteria? criteria,
-    bool append = false,
-  }) async {
-    final requestedCriteria = criteria ?? _catalogCriteria;
-    final criteriaChanged = requestedCriteria != _catalogCriteria;
-    if (append &&
-        (_catalogLoadingMore ||
-            _catalogPageIndex < 0 ||
-            _catalogPageIndex + 1 >= _catalogTotalPages)) {
-      return;
-    }
-    final targetPage = append ? _catalogPageIndex + 1 : 0;
-    final generation = append
-        ? _catalogLoadGeneration
-        : ++_catalogLoadGeneration;
-    if (mounted && append) {
-      setState(() {
-        _catalogLoadingMore = true;
-        _catalogLoadMoreFailed = false;
-      });
-    } else if (mounted && !append) {
-      setState(() {
-        _catalogCriteria = requestedCriteria;
-        _catalogLoading = true;
-        _catalogLoadingMore = false;
-        _catalogLoadMoreFailed = false;
-        if (criteriaChanged) {
-          _catalogNovels = const [];
-          _catalogPageIndex = -1;
-          _catalogTotalPages = 0;
-        }
-      });
-    }
-    final base = widget.catalogQuery;
-    final providers = _usesAllCatalogSources(requestedCriteria.sources)
-        ? base.providers
-        : [
-            for (final source in requestedCriteria.sources)
-              ?_providerIdForSource(source),
-          ];
-    final effectiveSearch = requestedCriteria.search.trim().isNotEmpty
-        ? requestedCriteria.search.trim()
-        : requestedCriteria.exactTag?.trim() ?? '';
-    final query = NoveliaCatalogQuery(
-      page: targetPage,
-      pageSize: base.pageSize,
-      search: effectiveSearch,
-      providers: providers,
-      publicationType: _publicationTypeFor(
-        requestedCriteria.publicationState,
-        fallback: base.publicationType,
-      ),
-      contentLevel: _contentLevelFor(requestedCriteria.contentLevel),
-      translationFilter: _translationFilterFor(
-        requestedCriteria.translationSource,
-        fallback: base.translationFilter,
-      ),
-      sort: _sortCodeFor(requestedCriteria.sort),
-    );
-    try {
-      final result = await widget.contentCoordinator.loadCatalog(query);
-      if (!mounted || generation != _catalogLoadGeneration) return;
-      final slice = result.data;
-      setState(() {
-        _catalogAvailability = result.availability;
-        if (_isPlainRecentlyUpdated(requestedCriteria)) {
-          _recentlyUpdatedAvailability = result.availability;
-        }
-        _catalogCriteria = requestedCriteria;
-        _catalogLoading = false;
-        _catalogLoadingMore = false;
-        _catalogLoadMoreFailed = append && slice == null;
-        if (slice != null) {
-          final hydratedById = {
-            for (final novel in _catalogNovels)
-              if (novel.readerNovel != null) novel.id: novel,
-          };
-          final incoming = [
-            for (final novel in slice.novels)
-              if (_matchesUnsupportedServiceCriteria(novel, requestedCriteria))
-                hydratedById[novel.id] ?? novel,
-          ];
-          if (append) {
-            final seen = {for (final novel in _catalogNovels) novel.id};
-            _catalogNovels = List.unmodifiable([
-              ..._catalogNovels,
-              for (final novel in incoming)
-                if (seen.add(novel.id)) novel,
-            ]);
-          } else {
-            _catalogNovels = List.unmodifiable(incoming);
-            if (_isPlainRecentlyUpdated(requestedCriteria)) {
-              _recentlyUpdatedNovels = _catalogNovels;
-              _recentlyUpdatedPageIndex = slice.pageIndex;
-              _recentlyUpdatedTotalPages = slice.totalPages;
-            }
-          }
-          _catalogPageIndex = slice.pageIndex;
-          _catalogTotalPages = slice.totalPages;
-        }
-      });
-    } on Object {
-      if (!mounted || generation != _catalogLoadGeneration) return;
-      setState(() {
-        _catalogLoading = false;
-        _catalogLoadingMore = false;
-        _catalogLoadMoreFailed = append;
-        if (_catalogNovels.isEmpty) {
-          _catalogAvailability = CatalogAvailability.offline;
-        }
-        if (_isPlainRecentlyUpdated(requestedCriteria)) {
-          _recentlyUpdatedAvailability = CatalogAvailability.offline;
-        }
-      });
-    }
+  void _feedsChanged() {
+    if (mounted) setState(() {});
   }
 
-  Future<void> _applyCatalogCriteria(CatalogCriteria criteria) {
-    return _refreshCatalog(criteria: criteria);
-  }
+  Future<void> _refreshDiscoveryFeeds() => Future.wait([
+    _feeds.refreshRecentlyUpdated(),
+    _feeds.refreshMostClicked(),
+  ]);
 
-  Future<void> _loadMoreCatalog() {
-    return _refreshCatalog(append: true);
-  }
-
-  static String? _providerIdForSource(String? source) {
-    return switch (source?.trim().toLowerCase()) {
-      'kakuyomu' => 'kakuyomu',
-      'syosetu' || '成为小说家吧' => 'syosetu',
-      'novelup' => 'novelup',
-      'hameln' => 'hameln',
-      'pixiv' => 'pixiv',
-      'alphapolis' => 'alphapolis',
-      _ => null,
-    };
-  }
-
-  int _contentLevelFor(CatalogContentLevel level) {
-    return switch (level) {
-      CatalogContentLevel.all =>
-        widget.accountSessionController?.snapshot.isSignedIn == true ? 0 : 1,
-      CatalogContentLevel.general => 1,
-      CatalogContentLevel.r18 => 2,
-    };
-  }
-
-  static int _publicationTypeFor(
-    NovelPublicationState? state, {
-    required int fallback,
-  }) {
-    return switch (state) {
-      null => fallback,
-      NovelPublicationState.ongoing => 1,
-      NovelPublicationState.completed => 2,
-      NovelPublicationState.shortStory => 3,
-      // The endpoint has no "unknown" code. Query the general catalog and
-      // apply this one criterion to the truthful mapped state below.
-      NovelPublicationState.unknown => 0,
-    };
-  }
-
-  static int _translationFilterFor(String? source, {required int fallback}) {
-    return switch (source?.trim().toLowerCase()) {
-      null || '' => fallback,
-      'gpt' => 1,
-      'sakura' => 2,
-      // The service query exposes only GPT and Sakura filters. Youdao is
-      // narrowed from the returned coverage metadata without inventing a code.
-      _ => 0,
-    };
-  }
-
-  static int _sortCodeFor(CatalogSort sort) {
-    return switch (sort) {
-      CatalogSort.recentlyUpdated => 0,
-      CatalogSort.mostClicked => 1,
-      CatalogSort.relevance => 2,
-    };
-  }
-
-  static bool _matchesUnsupportedServiceCriteria(
-    CatalogNovel novel,
-    CatalogCriteria criteria,
-  ) {
-    final selectedProviders = criteria.sources
-        .map(_providerIdForSource)
-        .whereType<String>();
-    if (!selectedProviders.contains(_providerIdForSource(novel.source))) {
-      return false;
-    }
-    final isRestricted = novel.tags.any(
-      (tag) => tag.trim().toUpperCase() == 'R18',
-    );
-    if (criteria.contentLevel == CatalogContentLevel.general && isRestricted) {
-      return false;
-    }
-    if (criteria.contentLevel == CatalogContentLevel.r18 && !isRestricted) {
-      return false;
-    }
-    final selectedState = criteria.publicationState;
-    if (selectedState != null && novel.publicationState != selectedState) {
-      return false;
-    }
-    final translationSource = criteria.translationSource;
-    if (translationSource != null &&
-        novel.coverageFor(translationSource)?.hasTranslation != true) {
-      return false;
-    }
-    final exactTag = criteria.exactTag;
-    if (exactTag != null && !novel.tags.contains(exactTag)) return false;
-    return true;
-  }
-
-  Future<void> _refreshMostClicked({bool append = false}) async {
-    if (append &&
-        (_mostClickedLoadingMore ||
-            _mostClickedPageIndex < 0 ||
-            _mostClickedPageIndex + 1 >= _mostClickedTotalPages)) {
-      return;
-    }
-    final generation = append
-        ? _mostClickedGeneration
-        : ++_mostClickedGeneration;
-    final targetPage = append ? _mostClickedPageIndex + 1 : 0;
-    final base = widget.catalogQuery;
-    if (append && mounted) {
-      setState(() {
-        _mostClickedLoadingMore = true;
-        _mostClickedLoadMoreFailed = false;
-      });
-    }
-    try {
-      final result = await widget.contentCoordinator.loadCatalog(
-        NoveliaCatalogQuery(
-          page: targetPage,
-          pageSize: base.pageSize,
-          providers: base.providers,
-          contentLevel: base.contentLevel,
-          sort: 1,
-        ),
-      );
-      if (!mounted || generation != _mostClickedGeneration) return;
-      final data = result.data;
-      setState(() {
-        _mostClickedAvailability = result.availability;
-        _mostClickedLoadingMore = false;
-        _mostClickedLoadMoreFailed = append && data == null;
-        if (data == null || result.origin != NoveliaContentOrigin.live) return;
-        _mostClickedNovels = append
-            ? _appendUniqueNovels(_mostClickedNovels, data.novels)
-            : List.unmodifiable(data.novels);
-        _mostClickedPageIndex = data.pageIndex;
-        _mostClickedTotalPages = data.totalPages;
-      });
-    } on Object {
-      if (!mounted || generation != _mostClickedGeneration) return;
-      setState(() {
-        _mostClickedAvailability = CatalogAvailability.offline;
-        _mostClickedLoadingMore = false;
-        _mostClickedLoadMoreFailed = append;
-      });
-    }
-  }
-
-  Future<void> _refreshRecentlyUpdated({bool append = false}) async {
-    if (append &&
-        (_recentlyUpdatedLoadingMore ||
-            _recentlyUpdatedPageIndex < 0 ||
-            _recentlyUpdatedPageIndex + 1 >= _recentlyUpdatedTotalPages)) {
-      return;
-    }
-    final generation = append
-        ? _recentlyUpdatedGeneration
-        : ++_recentlyUpdatedGeneration;
-    final targetPage = append ? _recentlyUpdatedPageIndex + 1 : 0;
-    final base = widget.catalogQuery;
-    if (append && mounted) {
-      setState(() {
-        _recentlyUpdatedLoadingMore = true;
-        _recentlyUpdatedLoadMoreFailed = false;
-      });
-    }
-    try {
-      final result = await widget.contentCoordinator.loadCatalog(
-        NoveliaCatalogQuery(
-          page: targetPage,
-          pageSize: base.pageSize,
-          providers: base.providers,
-          contentLevel: base.contentLevel,
-          sort: 0,
-        ),
-      );
-      if (!mounted || generation != _recentlyUpdatedGeneration) return;
-      final data = result.data;
-      setState(() {
-        _recentlyUpdatedAvailability = result.availability;
-        _recentlyUpdatedLoadingMore = false;
-        _recentlyUpdatedLoadMoreFailed = append && data == null;
-        if (data == null) return;
-        _recentlyUpdatedNovels = append
-            ? _appendUniqueNovels(_recentlyUpdatedNovels, data.novels)
-            : List.unmodifiable(data.novels);
-        _recentlyUpdatedPageIndex = data.pageIndex;
-        _recentlyUpdatedTotalPages = data.totalPages;
-      });
-    } on Object {
-      if (!mounted || generation != _recentlyUpdatedGeneration) return;
-      setState(() {
-        _recentlyUpdatedAvailability = CatalogAvailability.offline;
-        _recentlyUpdatedLoadingMore = false;
-        _recentlyUpdatedLoadMoreFailed = append;
-      });
-    }
-  }
-
-  static List<CatalogNovel> _appendUniqueNovels(
-    List<CatalogNovel> current,
-    List<CatalogNovel> incoming,
-  ) {
-    final seen = {for (final novel in current) novel.id};
-    return List.unmodifiable([
-      ...current,
-      for (final novel in incoming)
-        if (seen.add(novel.id)) novel,
-    ]);
-  }
-
-  Future<void> _refreshDiscoveryFeeds() async {
-    await Future.wait([_refreshRecentlyUpdated(), _refreshMostClicked()]);
-  }
-
-  Future<void> _loadMoreDiscovery(CatalogSort sort) {
-    return sort == CatalogSort.mostClicked
-        ? _refreshMostClicked(append: true)
-        : _refreshRecentlyUpdated(append: true);
-  }
-
-  static bool _isPlainRecentlyUpdated(CatalogCriteria criteria) {
-    return criteria.search.trim().isEmpty &&
-        _usesAllCatalogSources(criteria.sources) &&
-        criteria.publicationState == null &&
-        criteria.contentLevel == CatalogContentLevel.all &&
-        criteria.translationSource == null &&
-        criteria.exactTag == null &&
-        criteria.sort == CatalogSort.recentlyUpdated;
-  }
-
-  static bool _usesAllCatalogSources(List<String> sources) {
-    final selected = sources.toSet();
-    return selected.length == catalogSourceValues.length &&
-        selected.containsAll(catalogSourceValues);
-  }
+  Future<void> _loadMoreDiscovery(CatalogSort sort) =>
+      sort == CatalogSort.mostClicked
+      ? _feeds.refreshMostClicked(append: true)
+      : _feeds.refreshRecentlyUpdated(append: true);
 
   CatalogAvailability get _discoveryAvailability {
-    final feeds = [_recentlyUpdatedAvailability, _mostClickedAvailability];
+    final feeds = [
+      _feeds.recentlyUpdated.availability,
+      _feeds.mostClicked.availability,
+    ];
     if (feeds.contains(CatalogAvailability.available)) {
       return CatalogAvailability.available;
     }
@@ -875,14 +444,15 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   CatalogAvailability get _searchAvailability {
-    if (_catalogAvailability == CatalogAvailability.authenticationRequired) {
+    if (_feeds.catalog.availability ==
+        CatalogAvailability.authenticationRequired) {
       return CatalogAvailability.authenticationRequired;
     }
-    if (_catalogAvailability == CatalogAvailability.offline &&
+    if (_feeds.catalog.availability == CatalogAvailability.offline &&
         _discoveryAvailability == CatalogAvailability.available) {
       return CatalogAvailability.available;
     }
-    return _catalogAvailability;
+    return _feeds.catalog.availability;
   }
 
   Future<RankingPageView> _loadRankings(RankingsQuery query) async {
@@ -978,10 +548,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       // Do not rebuild the app-level Navigator while its detail loader is
       // completing. The hydrated aggregate is picked up on the next ordinary
       // state change, while the active route receives [loaded] directly.
-      _catalogNovels = List.unmodifiable([
-        for (final novel in _catalogNovels)
-          if (novel.id == loaded.id) loaded else novel,
-      ]);
+      _feeds.rememberDetails(loaded);
     }
     return loaded;
   }
@@ -1069,7 +636,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       run = null;
     } finally {
       _activeDownloadSyncs.remove(intentId);
-      if (mounted) setState(() {});
+      _refreshLibrary();
     }
     if (mounted && _pendingDownloadSyncs.remove(intentId)) {
       unawaited(_synchronizeIntent(intentId, retryFailures: true));
@@ -1103,12 +670,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     _cacheLimitBytes = bytes;
     _saveSettings();
     _repository.evictCacheTo(maxBytes: bytes);
-    if (mounted) setState(() {});
+    _refreshLibrary();
   }
 
   Future<int> _clearReadingCache() async {
     final removed = _repository.evictCacheTo(maxBytes: 0);
-    if (mounted) setState(() {});
+    _refreshLibrary();
     return removed.length;
   }
 
@@ -1120,6 +687,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         updatedAt: DateTime.now().toUtc(),
       ),
     );
+    _refreshLibrary();
   }
 
   void _saveReaderPosition(
@@ -1129,7 +697,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }) {
     final now = DateTime.now().toUtc();
     _saveProgressOnly(novel, position, now);
-    if (syncRemoteHistory) _queueRemoteHistory(novel, position, now);
+    if (syncRemoteHistory) _historySync.record(novel, position, now);
     _touchChapterCopies(novel.id, position.chapterId, now);
     _repository.evictCacheTo(
       maxBytes: _cacheLimitBytes,
@@ -1224,7 +792,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     // belong in Download Management instead of turning a valid creation into
     // a misleading "creation failed" toast.
     unawaited(_synchronizeIntent(intent.id, retryFailures: true));
-    if (mounted) setState(() {});
+    _refreshLibrary();
   }
 
   Future<LibraryProtectedDownload?> _manageDownload(
@@ -1271,242 +839,31 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         break;
     }
 
-    if (mounted) setState(() {});
+    _refreshLibrary();
     if (action == DownloadManagementAction.remove) return null;
-    final updated = _libraryDownloads(_localNovelsById());
+    final updated = _library.downloads;
     return updated
         .where((candidate) => candidate.groupKey == download.groupKey)
         .firstOrNull;
   }
 
-  Map<String, CatalogNovel> _localNovelsById() {
-    const adapter = NoveliaContentCacheAdapter();
-    final allowRestricted =
-        widget.accountSessionController?.snapshot.isSignedIn == true;
-    final result = <String, CatalogNovel>{};
-    for (final cached in _repository.listCachedNovels()) {
-      try {
-        result[cached.id] = adapter.restoreOutline(
-          cached,
-          allowRestricted: allowRestricted,
-        );
-        final detail = _repository.novelDetail(cached.id);
-        if (detail != null) {
-          result[cached.id] = adapter.restoreDetails(
-            detail,
-            allowRestricted: allowRestricted,
-          );
-        }
-      } on Object {
-        // Omit a malformed local title without hiding unrelated local state.
-      }
-    }
-    for (final novel in _catalogNovels) {
-      final existing = result[novel.id];
-      if (existing == null || novel.readerNovel != null) {
-        result[novel.id] = novel;
-      }
-    }
-    return result;
-  }
+  LocalLibrarySnapshot _loadLibrarySnapshot() => LocalLibrarySnapshot.load(
+    _repository,
+    knownNovels: _catalogNovels,
+    allowRestricted:
+        widget.accountSessionController?.snapshot.isSignedIn == true,
+  );
 
-  List<LibraryContinuedRead> _libraryContinuedReads(
-    Map<String, CatalogNovel> novelsById,
-  ) {
-    final progress = _repository.listReadingProgress().toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return List.unmodifiable([
-      for (final item in progress)
-        if (novelsById[item.novelId] case final novel?)
-          LibraryContinuedRead(
-            novel: novel,
-            position: item.position,
-            progress: _readingFraction(novel, item.position),
-            chapterLabel: _chapterLabel(novel, item.position.chapterId),
-          ),
-    ]);
-  }
-
-  double _readingFraction(CatalogNovel novel, ReadingPosition position) {
-    final chapters = novel.readerNovel?.chapters;
-    if (chapters == null || chapters.isEmpty) return 0;
-    final chapterIndex = chapters.indexWhere(
-      (chapter) => chapter.id == position.chapterId,
-    );
-    if (chapterIndex < 0) return 0;
-    final payload = _repository.chapterPayload(
-      novelId: novel.id,
-      chapterId: position.chapterId,
-    );
-    final blockCount = payload?.japaneseBlocks.length ?? 0;
-    final separator = position.blockId.lastIndexOf(':');
-    final ordinal = separator < 0
-        ? null
-        : int.tryParse(position.blockId.substring(separator + 1));
-    final chapterFraction = blockCount <= 0 || ordinal == null
-        ? 0.0
-        : ((ordinal + 1) / blockCount).clamp(0.0, 1.0);
-    return ((chapterIndex + chapterFraction) / chapters.length).clamp(0.0, 1.0);
-  }
-
-  String? _chapterLabel(CatalogNovel novel, String chapterId) {
-    final chapters = novel.readerNovel?.chapters;
-    if (chapters == null) return null;
-    for (final chapter in chapters) {
-      if (chapter.id == chapterId) {
-        return chapter.chineseTitle.isEmpty
-            ? chapter.japaneseTitle
-            : chapter.chineseTitle;
-      }
-    }
-    return null;
-  }
-
-  List<LibraryProtectedDownload> _libraryDownloads(
-    Map<String, CatalogNovel> novelsById,
-  ) {
-    final intentsByGroup =
-        <(String, TranslationSource), List<DownloadIntent>>{};
-    for (final intent in _repository.listIntents()) {
-      final group = (intent.novelId, intent.translationSource);
-      intentsByGroup.putIfAbsent(group, () => []).add(intent);
-    }
-
-    final copiesByGroup =
-        <(String, TranslationSource), Map<String, OfflineChapterCopy>>{};
-    for (final copy in _repository.listCopies(
-      kind: OfflineCopyKind.offlineDownload,
-    )) {
-      final group = (copy.novelId, copy.translationSource);
-      final copies = copiesByGroup.putIfAbsent(group, () => {});
-      final existing = copies[copy.chapterId];
-      if (existing == null || copy.storedAt.isAfter(existing.storedAt)) {
-        copies[copy.chapterId] = copy;
-      }
-    }
-
-    final tasksByGroup =
-        <(String, TranslationSource), Map<String, DownloadTask>>{};
-    for (final task in _repository.listTasks()) {
-      if (task.state == DownloadTaskState.removed) continue;
-      final group = (task.novelId, task.translationSource);
-      final tasks = tasksByGroup.putIfAbsent(group, () => {});
-      final existing = tasks[task.chapterId];
-      if (existing == null || task.updatedAt.isAfter(existing.updatedAt)) {
-        tasks[task.chapterId] = task;
-      }
-    }
-
-    final groups =
-        {
-          ...intentsByGroup.keys,
-          ...copiesByGroup.keys,
-          ...tasksByGroup.keys,
-        }.toList()..sort((a, b) {
-          final novelOrder = a.$1.compareTo(b.$1);
-          return novelOrder == 0
-              ? a.$2.index.compareTo(b.$2.index)
-              : novelOrder;
-        });
-    final downloads = <LibraryProtectedDownload>[];
-    for (final group in groups) {
-      final novel = novelsById[group.$1];
-      if (novel == null) continue;
-      final intents = intentsByGroup[group] ?? const [];
-      final copies = copiesByGroup[group] ?? const {};
-      final tasks = tasksByGroup[group] ?? const {};
-      final chapterIds = {...copies.keys, ...tasks.keys}.toList()
-        ..sort((a, b) {
-          final aIndex = _chapterCatalogIndex(novel, a);
-          final bIndex = _chapterCatalogIndex(novel, b);
-          final order = aIndex.compareTo(bIndex);
-          return order == 0 ? a.compareTo(b) : order;
-        });
-      downloads.add(
-        LibraryProtectedDownload(
-          novel: novel,
-          translationSource: group.$2,
-          intentIds: [for (final intent in intents) intent.id],
-          enabled: intents.any((intent) => intent.enabled),
-          chapters: [
-            for (final chapterId in chapterIds)
-              _libraryDownloadChapter(
-                chapterId,
-                copy: copies[chapterId],
-                task: tasks[chapterId],
-              ),
-          ],
-        ),
-      );
-    }
-    return List.unmodifiable(downloads);
-  }
-
-  static LibraryDownloadChapter _libraryDownloadChapter(
-    String chapterId, {
-    required OfflineChapterCopy? copy,
-    required DownloadTask? task,
-  }) {
-    final storedBytes = copy?.totalBytes;
-    final state = _displayTaskState(copy, task);
-    return LibraryDownloadChapter(
-      chapterId: chapterId,
-      byteCount: storedBytes ?? 0,
-      translationAvailable: copy?.translationBytes != null,
-      taskState: state,
-      bytesReceived: state == DownloadTaskState.stored
-          ? storedBytes ?? task?.bytesReceived ?? 0
-          : task?.bytesReceived ?? 0,
-      totalBytes: state == DownloadTaskState.stored
-          ? storedBytes ?? task?.totalBytes
-          : task?.totalBytes,
-      failure: task?.failure,
-    );
-  }
-
-  static DownloadTaskState _displayTaskState(
-    OfflineChapterCopy? copy,
-    DownloadTask? task,
-  ) {
-    if (copy != null &&
-        (task == null ||
-            task.state == DownloadTaskState.stored ||
-            task.storedCopyId != copy.id)) {
-      return DownloadTaskState.stored;
-    }
-    return task?.state ?? DownloadTaskState.stored;
-  }
-
-  static int _chapterCatalogIndex(CatalogNovel novel, String chapterId) {
-    final chapters = novel.readerNovel?.chapters;
-    if (chapters == null) return 1 << 30;
-    final index = chapters.indexWhere((chapter) => chapter.id == chapterId);
-    return index < 0 ? 1 << 30 : index;
-  }
-
-  List<LibraryBookmarkItem> _libraryBookmarks(
-    Map<String, CatalogNovel> novelsById,
-  ) {
-    final bookmarks = _repository.listBookmarks().toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return List.unmodifiable([
-      for (final bookmark in bookmarks)
-        if (novelsById[bookmark.novelId] case final novel?)
-          LibraryBookmarkItem(
-            id: bookmark.id,
-            novel: novel,
-            position: bookmark.position,
-            chapterLabel: _chapterLabel(novel, bookmark.position.chapterId),
-          ),
-    ]);
+  void _refreshLibrary() {
+    if (!mounted) return;
+    setState(() => _library = _loadLibrarySnapshot());
   }
 
   @override
   Widget build(BuildContext context) {
-    final localNovelsById = _localNovelsById();
     final awaitingInitialReaderCatalog =
         _initialReaderNovelId != null &&
-        _catalogLoading &&
+        _feeds.catalog.loading &&
         !_catalogNovels.any((novel) => novel.id == _initialReaderNovelId);
     return MaterialApp(
       title: 'JFZ Reader',
@@ -1541,9 +898,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               novels: _catalogNovels,
               catalogAvailability: _searchAvailability,
               discoveryAvailability: _discoveryAvailability,
-              continuedReads: _libraryContinuedReads(localNovelsById),
-              protectedDownloads: _libraryDownloads(localNovelsById),
-              bookmarks: _libraryBookmarks(localNovelsById),
+              continuedReads: _library.continuedReads,
+              protectedDownloads: _library.downloads,
+              bookmarks: _library.bookmarks,
               remoteFavorites: _remoteFavorites,
               favoriteFolderLoader: widget.accountGateway == null
                   ? null
@@ -1587,33 +944,30 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               onFavoriteFolderCreateRequested: widget.accountGateway == null
                   ? null
                   : _createFavoriteFolder,
-              storageSummary: _repository.storageSummary(),
+              storageSummary: _library.storageSummary,
               cacheLimitBytes: _cacheLimitBytes,
               onCacheLimitChanged: _setCacheLimit,
               onClearReadingCache: _clearReadingCache,
               initialCatalogCriteria: _catalogCriteria,
-              onCatalogCriteriaRequested: _applyCatalogCriteria,
-              onCatalogLoadMoreRequested: _loadMoreCatalog,
+              onCatalogCriteriaRequested: (criteria) =>
+                  _feeds.refreshCatalog(criteria: criteria),
+              onCatalogLoadMoreRequested: () =>
+                  _feeds.refreshCatalog(append: true),
               onDiscoveryRefreshRequested: _refreshDiscoveryFeeds,
               onDiscoveryLoadMoreRequested: _loadMoreDiscovery,
-              catalogHasMore:
-                  _catalogPageIndex >= 0 &&
-                  _catalogPageIndex + 1 < _catalogTotalPages,
-              catalogLoading: _catalogLoading,
-              catalogLoadingMore: _catalogLoadingMore,
-              catalogLoadMoreFailed: _catalogLoadMoreFailed,
-              recentlyUpdatedHasMore:
-                  _recentlyUpdatedPageIndex >= 0 &&
-                  _recentlyUpdatedPageIndex + 1 < _recentlyUpdatedTotalPages,
-              recentlyUpdatedLoadingMore: _recentlyUpdatedLoadingMore,
-              recentlyUpdatedLoadMoreFailed: _recentlyUpdatedLoadMoreFailed,
-              mostClickedHasMore:
-                  _mostClickedPageIndex >= 0 &&
-                  _mostClickedPageIndex + 1 < _mostClickedTotalPages,
-              mostClickedLoadingMore: _mostClickedLoadingMore,
-              mostClickedLoadMoreFailed: _mostClickedLoadMoreFailed,
-              mostClickedNovels: _mostClickedNovels,
-              recentlyUpdatedNovels: _recentlyUpdatedNovels,
+              catalogHasMore: _feeds.catalog.hasMore,
+              catalogLoading: _feeds.catalog.loading,
+              catalogLoadingMore: _feeds.catalog.loadingMore,
+              catalogLoadMoreFailed: _feeds.catalog.loadMoreFailed,
+              recentlyUpdatedHasMore: _feeds.recentlyUpdated.hasMore,
+              recentlyUpdatedLoadingMore: _feeds.recentlyUpdated.loadingMore,
+              recentlyUpdatedLoadMoreFailed:
+                  _feeds.recentlyUpdated.loadMoreFailed,
+              mostClickedHasMore: _feeds.mostClicked.hasMore,
+              mostClickedLoadingMore: _feeds.mostClicked.loadingMore,
+              mostClickedLoadMoreFailed: _feeds.mostClicked.loadMoreFailed,
+              mostClickedNovels: _feeds.mostClicked.novels,
+              recentlyUpdatedNovels: _feeds.recentlyUpdated.novels,
               rankingsLoader: _loadRankings,
               novelDetailsLoader: _loadNovelDetails,
               readerLaunchLoader: _loadReaderWindow,
@@ -1648,17 +1002,16 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               },
               onReaderClosed: () {
                 _saveTopLevelRoute(_currentDestination);
-                // Reader callbacks persist progress and bookmarks outside this
-                // widget's state. Rebuild once after the route closes so Library and
-                // Settings immediately project the newly committed local rows.
-                if (mounted) setState(() {});
               },
               onDownloadRequested: widget.downloadCoordinator == null
                   ? null
                   : _downloadNovel,
               onDownloadManagementRequested: _manageDownload,
-              downloadManagementSnapshotLoader: () =>
-                  _libraryDownloads(_localNovelsById()),
+              downloadManagementSnapshotLoader: () {
+                // Download Management explicitly requests current task progress.
+                _library = _loadLibrarySnapshot();
+                return _library.downloads;
+              },
               readerBuilder: (context, data) {
                 final novel = data.novel;
                 // The shell has already resolved explicit chapter selection, saved

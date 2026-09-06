@@ -8,6 +8,7 @@ import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 import 'package:jfzreader/main.dart';
+import 'package:jfzreader/features/shell/novelia_shell.dart';
 
 import 'support/fixture_content_coordinator.dart';
 
@@ -29,6 +30,35 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'theme rebuild reuses the shelf and reading completion refreshes it',
+    (tester) async {
+      final repository = SqliteOfflineRepository.openInMemory();
+      await pumpApp(tester, repository);
+      NoveliaShell shell() =>
+          tester.widget<NoveliaShell>(find.byType(NoveliaShell));
+      final before = shell().continuedReads;
+      shell().onThemeModeChanged(ThemeMode.dark);
+      await tester.pumpAndSettle();
+      expect(shell().continuedReads, same(before));
+
+      repository.saveReadingProgress(
+        LocalReadingProgress(
+          novelId: fixtureNovel.id,
+          position: const ReadingPosition(
+            chapterId: 'chapter-2',
+            blockId: 'c2-0',
+          ),
+          updatedAt: DateTime.utc(2026, 9, 6),
+        ),
+      );
+      shell().onReaderClosed?.call();
+      await tester.pumpAndSettle();
+      expect(shell().continuedReads.single.position.chapterId, 'chapter-2');
+      expect(shell().continuedReads, isNot(same(before)));
+    },
+  );
 
   testWidgets('restores persisted app settings and top-level destination', (
     tester,

@@ -474,6 +474,14 @@ final class SqliteOfflineRepository
     );
   }
 
+  CachedNovelOutline? cachedNovelOutline(String novelId) {
+    _checkOpen();
+    final rows = _database.select('SELECT * FROM cached_novels WHERE id = ?;', [
+      novelId,
+    ]);
+    return rows.isEmpty ? null : _outlineFromRow(rows.single);
+  }
+
   @override
   CachedNovelDetail? novelDetail(String novelId) {
     _checkOpen();
