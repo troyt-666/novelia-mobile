@@ -11,6 +11,41 @@ import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
 
 void main() {
   group('account session controller', () {
+    for (final operation in ['restore', 'accessToken', 'retry']) {
+      for (final failure in [
+        NoveliaAuthFailureKind.sessionExpired,
+        NoveliaAuthFailureKind.network,
+      ]) {
+        test('$operation ignores an old account refresh $failure', () async {
+          final pending = Completer<StoredAccountSession>();
+          final store = InMemoryAccountSessionStore(
+            _session('alice', expiresIn: const Duration(seconds: 1)),
+          );
+          final controller = AccountSessionController(
+            gateway: _FakeAuthGateway(refreshFuture: pending.future),
+            store: store,
+          );
+          if (operation != 'restore') {
+            await controller.login(username: 'alice', password: 'fixture');
+          }
+          final oldRequest = switch (operation) {
+            'restore' => controller.restore(),
+            'retry' => controller.retry(),
+            _ => controller.accessToken(forceRefresh: true),
+          };
+          await Future<void>.delayed(Duration.zero);
+          await controller.login(username: 'bob', password: 'fixture');
+          final newSession = store.value;
+          pending.completeError(NoveliaAuthException(failure, 'old request'));
+          await oldRequest;
+
+          expect(controller.snapshot.status, AccountSessionStatus.signedIn);
+          expect(controller.snapshot.profile?.username, 'bob');
+          expect(store.value, same(newSession));
+        });
+      }
+    }
+
     test('restores by refreshing and persists the rotated session', () async {
       final stored = _session('alice', expiresIn: const Duration(minutes: 1));
       final refreshed = _session('alice', expiresIn: const Duration(hours: 1));
@@ -72,6 +107,28 @@ void main() {
       expect(controller.snapshot.status, AccountSessionStatus.signedOut);
       expect(store.value, isNull);
     });
+
+    test(
+      'a background token network failure retains the signed-in UI',
+      () async {
+        final store = InMemoryAccountSessionStore();
+        final controller = AccountSessionController(
+          gateway: _FakeAuthGateway(
+            refreshError: const NoveliaAuthException(
+              NoveliaAuthFailureKind.network,
+              'offline',
+            ),
+          ),
+          store: store,
+        );
+        await controller.login(username: 'alice', password: 'fixture');
+        final stored = store.value;
+
+        expect(await controller.accessToken(forceRefresh: true), isNull);
+        expect(controller.snapshot.status, AccountSessionStatus.signedIn);
+        expect(store.value, same(stored));
+      },
+    );
 
     test('concurrent token requests share one refresh', () async {
       final completer = Completer<StoredAccountSession>();

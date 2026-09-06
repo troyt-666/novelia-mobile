@@ -38,48 +38,22 @@ class AccountSessionController extends ChangeNotifier {
   }
 
   Future<void> restore() async {
-    _setSnapshot(const AccountSessionSnapshot.restoring());
-    StoredAccountSession? stored;
-    try {
-      stored = await store.read();
-    } on Object {
-      await _clearLocalSession();
-      return;
-    }
-    if (stored == null) {
-      _setSnapshot(const AccountSessionSnapshot.signedOut());
-      return;
-    }
-    ReaderAccountProfile profile;
-    try {
-      profile = decodeNoveliaAccessToken(stored.accessToken);
-    } on FormatException {
-      await _clearLocalSession();
-      return;
-    }
-    _session = stored;
-    _setSnapshot(AccountSessionSnapshot.restoring(profile: profile));
-    try {
-      await _refresh();
-    } on NoveliaAuthException catch (error) {
-      if (_invalidatesSession(error)) {
+    await _enqueueMutation(() async {
+      _setSnapshot(const AccountSessionSnapshot.restoring());
+      try {
+        final stored = await store.read();
+        if (stored == null) {
+          await _clearLocalSession();
+          return;
+        }
+        final profile = decodeNoveliaAccessToken(stored.accessToken);
+        _session = stored;
+        _setSnapshot(AccountSessionSnapshot.restoring(profile: profile));
+      } on Object {
         await _clearLocalSession();
-      } else {
-        _setSnapshot(
-          AccountSessionSnapshot.unavailable(
-            profile,
-            message: '暂时无法连接账号服务，本地阅读仍可使用',
-          ),
-        );
       }
-    } on Object {
-      _setSnapshot(
-        AccountSessionSnapshot.unavailable(
-          profile,
-          message: '暂时无法读取账号状态，本地阅读仍可使用',
-        ),
-      );
-    }
+    });
+    await _refresh();
   }
 
   Future<void> login({
@@ -93,6 +67,7 @@ class AccountSessionController extends ChangeNotifier {
       _epoch += 1;
       await store.write(session);
       _session = session;
+      _refreshInFlight = null;
       _setSnapshot(AccountSessionSnapshot.signedIn(profile));
     });
     if (previous == null) return;
@@ -113,10 +88,7 @@ class AccountSessionController extends ChangeNotifier {
       if (!forceRefresh && _now().toUtc().isBefore(refreshAt)) {
         return session.accessToken;
       }
-      return (await _refresh())?.accessToken;
-    } on NoveliaAuthException catch (error) {
-      if (_invalidatesSession(error)) await _clearLocalSession();
-      return null;
+      return (await _refresh(reportUnavailable: false))?.accessToken;
     } on Object {
       return null;
     }
@@ -125,33 +97,14 @@ class AccountSessionController extends ChangeNotifier {
   Future<void> retry() async {
     if (_session == null) {
       await restore();
-      return;
-    }
-    try {
+    } else {
       await _refresh();
-    } on NoveliaAuthException catch (error) {
-      if (_invalidatesSession(error)) {
-        await _clearLocalSession();
-        return;
-      }
-      final profile = _snapshot.profile;
-      if (profile != null) {
-        _setSnapshot(
-          AccountSessionSnapshot.unavailable(
-            profile,
-            message: '账号服务仍不可用，请稍后重试',
-          ),
-        );
-      }
     }
   }
 
   Future<void> logout() async {
     final session = _session;
-    await _enqueueMutation(() async {
-      _epoch += 1;
-      await _clearLocalSession();
-    });
+    await _enqueueMutation(_clearLocalSession);
     if (session == null) return;
     try {
       await gateway.logout(session);
@@ -161,12 +114,15 @@ class AccountSessionController extends ChangeNotifier {
     }
   }
 
-  Future<StoredAccountSession?> _refresh() {
+  Future<StoredAccountSession?> _refresh({bool reportUnavailable = true}) {
     final existing = _refreshInFlight;
     if (existing != null) return existing;
     final session = _session;
     if (session == null) return Future.value(null);
-    final future = _performRefresh(session);
+    final future = _performRefresh(
+      session,
+      reportUnavailable: reportUnavailable,
+    );
     _refreshInFlight = future;
     return future.whenComplete(() {
       if (identical(_refreshInFlight, future)) _refreshInFlight = null;
@@ -174,22 +130,44 @@ class AccountSessionController extends ChangeNotifier {
   }
 
   Future<StoredAccountSession?> _performRefresh(
-    StoredAccountSession current,
-  ) async {
+    StoredAccountSession current, {
+    required bool reportUnavailable,
+  }) async {
     final epoch = _epoch;
-    final refreshed = await gateway.refresh(current);
-    return _enqueueMutation(() async {
-      if (_epoch != epoch || !identical(_session, current)) return _session;
-      final profile = decodeNoveliaAccessToken(refreshed.accessToken);
-      await store.write(refreshed);
-      if (_epoch != epoch || !identical(_session, current)) return _session;
-      _session = refreshed;
-      _setSnapshot(AccountSessionSnapshot.signedIn(profile));
-      return refreshed;
-    });
+    try {
+      final refreshed = await gateway.refresh(current);
+      return await _enqueueMutation(() async {
+        if (_epoch != epoch || !identical(_session, current)) return null;
+        final profile = decodeNoveliaAccessToken(refreshed.accessToken);
+        await store.write(refreshed);
+        _session = refreshed;
+        _setSnapshot(AccountSessionSnapshot.signedIn(profile));
+        return refreshed;
+      });
+    } on Object catch (error) {
+      // Success and failure belong to the session that started the request.
+      // Serialize both with login/logout so an old response cannot alter a
+      // newer account, including while credential storage is being written.
+      return _enqueueMutation(() async {
+        if (_epoch != epoch || !identical(_session, current)) return null;
+        if (error is NoveliaAuthException && _invalidatesSession(error)) {
+          await _clearLocalSession();
+        } else if (reportUnavailable) {
+          _setSnapshot(
+            AccountSessionSnapshot.unavailable(
+              decodeNoveliaAccessToken(current.accessToken),
+              message: '暂时无法连接账号服务，本地阅读仍可使用',
+            ),
+          );
+        }
+        return null;
+      });
+    }
   }
 
   Future<void> _clearLocalSession() async {
+    _epoch += 1;
+    _refreshInFlight = null;
     _session = null;
     try {
       await store.clear();
