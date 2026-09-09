@@ -15,8 +15,18 @@ dependencies:
   crypto: ^3.0.7
   path: ^1.9.1
   path_provider: ^2.1.6
+  path_provider_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      ref: d4e49daa0acbd0bc419d58b1da27d64d44fab54b
+      path: packages/path_provider/path_provider_ohos
   sqlite3: ^3.5.0
   webview_flutter: ^4.14.1
+  webview_flutter_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      ref: 89476bb7432938a54e5b09b449d1d031e85f0e5c
+      path: packages/webview_flutter/webview_flutter_ohos
   xml: ^6.6.1
 dev_dependencies:
   flutter_test:

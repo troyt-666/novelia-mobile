@@ -11,6 +11,7 @@ import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/features/reader/reader_controls.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 import 'package:jfzreader/gateway/novelia/novelia_account_gateway.dart';
@@ -194,7 +195,16 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
       await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('翻页'));
-      await tester.tap(find.byKey(const ValueKey('reader-palette-sepia')));
+      final sepia = find.byKey(const ValueKey('reader-palette-sepia'));
+      await tester.scrollUntilVisible(
+        sepia,
+        200,
+        scrollable: find.descendant(
+          of: find.byType(ReaderSettingsSheet),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.tap(sepia);
       await tester.tap(find.byKey(const ValueKey('settings-apply')));
       await tester.pumpAndSettle();
 
@@ -376,7 +386,13 @@ Future<void> _pumpApp(
 }
 
 Future<void> _openDetails(WidgetTester tester, CatalogNovel novel) async {
-  await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
+  final title = find.descendant(
+    of: find.byKey(ValueKey('open-details-${novel.id}')).first,
+    matching: find.text(novel.chineseTitle),
+  );
+  await tester.ensureVisible(title);
+  await tester.pumpAndSettle();
+  await tester.tap(title);
   await tester.pumpAndSettle();
 }
 

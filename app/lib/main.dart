@@ -91,9 +91,9 @@ Future<void> main() async {
         wenkuGateway: wenkuGateway,
         downloadCoordinator: downloadCoordinator,
         externalLinkLauncher: const MethodChannelExternalLinkLauncher(),
-        updateChecker: GitHubAppUpdateChecker(
-          platform: AppUpdatePlatform.current(),
-        ),
+        updateChecker: Platform.operatingSystem == 'ohos'
+            ? null
+            : GitHubAppUpdateChecker(platform: AppUpdatePlatform.current()),
         updateInstaller: Platform.isAndroid
             ? AndroidAppUpdateInstaller()
             : Platform.isMacOS

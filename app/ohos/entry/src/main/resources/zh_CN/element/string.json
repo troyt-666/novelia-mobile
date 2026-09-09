@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "离线小说阅读器"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "离线小说阅读器"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "JFZ Reader"
+    }
+  ]
+}
