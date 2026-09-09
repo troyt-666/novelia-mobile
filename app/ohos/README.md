@@ -1,7 +1,8 @@
 # HarmonyOS 真机调试
 
-此目录是 `io.github.troyt666.jfzreader` 的鸿蒙原生入口。Flutter 页面和 SQLite
-数据模型与其他平台共用；增加鸿蒙的路径、WebView、加密会话、版本号和外链实现。
+此目录是 `io.github.troyt666.jfzreader.harmony` 的鸿蒙原生入口，可与安卓版共存。
+Flutter 页面和 SQLite 数据模型与其他平台共用；增加鸿蒙的路径、WebView、加密会话、
+版本号和外链实现。
 
 2026-09-10 已在 HUAWEI Pura X View 上验证主界面加载，并通过原生存储/WebView
 专项测试与登录、搜索、阅读翻页及进度恢复、离线下载四条虚构数据流程。
@@ -28,7 +29,7 @@ source ~/development/harmony-env.sh
 python3 tool/flutter_harmony.py
 hdc list targets
 hdc -t DEVICE_ID install build/harmony/app/build/ohos/hap/entry-default-signed.hap
-hdc -t DEVICE_ID shell aa start -a EntryAbility -b io.github.troyt666.jfzreader
+hdc -t DEVICE_ID shell aa start -a EntryAbility -b io.github.troyt666.jfzreader.harmony
 ```
 
 默认生成 Release 包；需要调试时显式使用
