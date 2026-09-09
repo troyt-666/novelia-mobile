@@ -30,6 +30,13 @@ if 'NativeAssetsManifest.json' not in target.read_text():
     subprocess.run(['git', 'apply', patch], cwd=flutter_sdk, check=True)
     (flutter_sdk / 'bin/cache/flutter_tools.stamp').unlink(missing_ok=True)
 
+# Retaining the OHOS window callback type works around a release AOT crash.
+windowing = flutter_sdk / 'packages/flutter/lib/src/widgets/_window_ohos.dart'
+if "@pragma('vm:entry-point')\nfinal class _Rect" not in windowing.read_text():
+    patch = str(app / 'tool' / 'flutter_ohos_windowing_aot.patch')
+    subprocess.run(['git', 'apply', '--check', patch], cwd=flutter_sdk, check=True)
+    subprocess.run(['git', 'apply', patch], cwd=flutter_sdk, check=True)
+
 # sqlite3's upstream hook sees OHOS as Linux in this Flutter fork. Its default
 # prebuilt library uses the wrong ABI, so compile the official source instead.
 sqlite = work / 'sqlite3.c'
@@ -73,7 +80,7 @@ manifest.write_text(manifest.read_text() + '\nhooks:\n  user_defines:\n    sqlit
                     f'        - {json.dumps("--sysroot=" + str(sdk / "native" / "sysroot"))}\n'
                     '      additional_libraries: [m]\n')
 subprocess.run(['flutter', 'pub', 'get'], cwd=stage, check=True)
-command = sys.argv[1:] or ['build', 'hap', '--debug']
+command = sys.argv[1:] or ['build', 'hap', '--release']
 if not signing and '--no-codesign' not in command:
     subprocess.run(['devecocli', 'signature', 'generate'], cwd=stage / 'ohos', check=True)
 subprocess.run(['flutter', *command], cwd=stage, check=True)

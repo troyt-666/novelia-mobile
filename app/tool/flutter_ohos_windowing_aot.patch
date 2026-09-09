@@ -1,0 +1,12 @@
+diff --git a/packages/flutter/lib/src/widgets/_window_ohos.dart b/packages/flutter/lib/src/widgets/_window_ohos.dart
+--- a/packages/flutter/lib/src/widgets/_window_ohos.dart
++++ b/packages/flutter/lib/src/widgets/_window_ohos.dart
+@@ -1235,6 +1235,8 @@ final class _Size extends Struct {
+   external double height;
+ }
+ 
++// Work around an OHOS release AOT crash involving this FFI callback type.
++@pragma('vm:entry-point')
+ final class _Rect extends Struct {
+   @Double()
+   external double left;
