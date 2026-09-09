@@ -333,7 +333,7 @@ class ReaderChapterBoundary extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Divider(color: foreground.withValues(alpha: 0.15)),
+                Divider(height: 16, color: foreground.withValues(alpha: 0.15)),
                 if (state != TranslationState.complete) ...[
                   const SizedBox(height: 16),
                   _TranslationNotice(
@@ -375,13 +375,14 @@ class _TranslationNotice extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(invalid ? Icons.warning_amber_rounded : Icons.schedule_rounded),
+          Icon(
+            invalid ? Icons.warning_amber_rounded : Icons.schedule_rounded,
+            size: 24,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              invalid
-                  ? '${source.label} 译文结构异常，已完整显示日文原文。'
-                  : '${source.label} 译文尚未生成，现显示完整日文原文；联网后会自动复查。',
+              readerTranslationNoticeText(state, source),
               style: const TextStyle(height: 1.45),
             ),
           ),

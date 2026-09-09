@@ -11,6 +11,7 @@ class ReaderPagination {
     required this.items,
     required this.settings,
     required this.textScaler,
+    this.baseTextStyle = const TextStyle(),
     required double viewportWidth,
     required double availableHeight,
   }) {
@@ -20,6 +21,7 @@ class ReaderPagination {
   final List<ReaderStreamItem?> items;
   final ReaderSettings settings;
   final TextScaler textScaler;
+  final TextStyle baseTextStyle;
   late final List<ReaderHorizontalPage> pages;
   final Map<String, List<_ReaderHorizontalLocation>>
   _horizontalLocationsByStableId = {};
@@ -43,7 +45,7 @@ class ReaderPagination {
   }) {
     if (text.isEmpty) return 0;
     final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
+      text: TextSpan(text: text, style: baseTextStyle.merge(style)),
       textDirection: TextDirection.ltr,
       textScaler: textScaler,
       locale: locale,
@@ -65,7 +67,21 @@ class ReaderPagination {
       final family = settings.fontFamily == ReaderFontFamily.systemSerif
           ? 'serif'
           : null;
-      return 128 +
+      final state = item.chapter.translationState(settings.translationSource);
+      // Match the header's padding, badge, gaps and divider. A single fixed
+      // allowance misses the inherited badge style and wrapped notice text.
+      return 42 +
+          24 +
+          10 +
+          18 +
+          7 +
+          20 +
+          16 +
+          _measureTextHeight(
+            '第 ${item.chapter.index} 章',
+            const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            titleWidth,
+          ) +
           _measureTextHeight(
             item.chapter.chineseTitle,
             TextStyle(
@@ -83,10 +99,21 @@ class ReaderPagination {
             titleWidth,
             locale: const Locale('ja', 'JP'),
           ) +
-          (item.chapter.translationState(settings.translationSource) ==
-                  TranslationState.complete
+          (state == TranslationState.complete
               ? 0
-              : 82);
+              : 16 +
+                    28 +
+                    math.max(
+                      24,
+                      _measureTextHeight(
+                        readerTranslationNoticeText(
+                          state,
+                          settings.translationSource,
+                        ),
+                        const TextStyle(height: 1.45),
+                        titleWidth - 28 - 24 - 10,
+                      ),
+                    ));
     }
     if (item is! AlignedBlockItem) return 0;
     final block = item.block;
@@ -523,3 +550,10 @@ bool usesReaderParallelColumns(ReaderSettings settings, double viewportWidth) {
   return viewportWidth >= 1000 &&
       settings.columnLayout != ReaderColumnLayout.singleColumn;
 }
+
+String readerTranslationNoticeText(
+  TranslationState state,
+  TranslationSource source,
+) => state == TranslationState.invalid
+    ? '${source.label} 译文结构异常，已完整显示日文原文。'
+    : '${source.label} 译文尚未生成，现显示完整日文原文；联网后会自动复查。';

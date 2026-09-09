@@ -1,10 +1,85 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/features/reader/reader_body.dart';
 import 'package:jfzreader/features/reader/reader_pagination.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final state in [TranslationState.complete, TranslationState.pending]) {
+    testWidgets('pagination fits the rendered chapter header: ${state.name}', (
+      tester,
+    ) async {
+      final block = _item('これは原文です。', chinese: '这是正文。').block;
+      final chapter = NovelChapter(
+        id: 'chapter',
+        index: 1,
+        chineseTitle: '章节标题',
+        japaneseTitle: '章のタイトル',
+        publishedAt: DateTime(2026),
+        blocks: [block],
+        translationStates: {TranslationSource.sakura: state},
+      );
+      final header = ChapterBoundaryItem(chapter: chapter);
+      final body = AlignedBlockItem(chapter: chapter, block: block);
+      const settings = ReaderSettings();
+      const inheritedStyle = TextStyle(
+        fontSize: 16,
+        height: 1.8,
+        letterSpacing: .4,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: DefaultTextStyle(
+                style: inheritedStyle,
+                child: SizedBox(
+                  width: 430,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ReaderChapterBoundary(
+                        item: header,
+                        itemKey: GlobalKey(),
+                        settings: settings,
+                        foreground: Colors.black,
+                      ),
+                      ReaderAlignedBlockView(
+                        item: body,
+                        settings: settings,
+                        foreground: Colors.black,
+                        bookmarked: false,
+                        onMounted: (_) {},
+                        onUnmounted: (_) {},
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final actualHeight =
+          tester.getSize(find.byType(ReaderChapterBoundary)).height +
+          tester.getSize(find.byType(ReaderAlignedBlockView)).height;
+      final pagination = ReaderPagination.compose(
+        items: [header, body],
+        settings: settings,
+        textScaler: TextScaler.noScaling,
+        baseTextStyle: inheritedStyle,
+        viewportWidth: 430,
+        availableHeight: actualHeight - 1,
+      );
+      expect(
+        pagination.pages,
+        hasLength(2),
+        reason: 'A header and body taller than the page must not share it.',
+      );
+    });
+  }
 
   for (final width in [430.0, 1100.0]) {
     test('pagination preserves bilingual text and anchors at width $width', () {

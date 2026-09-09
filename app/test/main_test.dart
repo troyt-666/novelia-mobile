@@ -206,6 +206,7 @@ void main() {
     ReadingPosition? initialPosition,
     ValueChanged<ReadingPosition>? onPositionChanged,
     ValueChanged<ReadingPosition>? onExitPosition,
+    ReaderSettings initialSettings = const ReaderSettings(),
   }) async {
     tester.view.physicalSize = const Size(430, 720);
     tester.view.devicePixelRatio = 1;
@@ -222,6 +223,7 @@ void main() {
           initialPosition: initialPosition,
           onPositionChanged: onPositionChanged,
           onExitPosition: onExitPosition,
+          initialSettings: initialSettings,
         ),
       ),
     );
@@ -513,6 +515,203 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.getTopLeft(target).dy, closeTo(expectedTop, 2));
     }
+  });
+
+  testWidgets('finishing a drag publishes the new reading position', (
+    tester,
+  ) async {
+    final reported = <ReadingPosition>[];
+    await pumpReader(tester, onPositionChanged: reported.add);
+    final viewport = tester.getRect(
+      find.byKey(const ValueKey('reader-stream')),
+    );
+    await tester.dragFrom(
+      Offset(viewport.center.dx, viewport.height * .7),
+      Offset(0, -viewport.height * .6),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      _readerScrollable(tester).position.pixels,
+      greaterThan(viewport.height * .4),
+    );
+    expect(reported, isNotEmpty);
+    final saved = reported.last;
+    expect(saved.blockId != 'c1-0' || saved.intraBlockOffset > 0, isTrue);
+  });
+
+  testWidgets('translation refresh preserves the paragraph being read', (
+    tester,
+  ) async {
+    final translated = _windowChapter(1, blockCount: 12);
+    final pending = NovelChapter(
+      id: translated.id,
+      index: translated.index,
+      chineseTitle: translated.chineseTitle,
+      japaneseTitle: translated.japaneseTitle,
+      publishedAt: translated.publishedAt,
+      blocks: translated.blocks,
+      translationStates: const {
+        TranslationSource.sakura: TranslationState.pending,
+      },
+    );
+    final source = ReaderChapterDataSource(
+      catalog: [ReaderChapterCatalogEntry.fromChapter(pending)],
+      loadAround: (_) => throw StateError('not used'),
+      loadAdjacent: (_) => throw StateError('not used'),
+    );
+    final block = pending.blocks[3];
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel([pending]),
+      dataSource: source,
+      initialPosition: ReadingPosition(
+        chapterId: pending.id,
+        blockId: block.id,
+      ),
+    );
+    final anchor = find.byKey(ValueKey('block:${block.id}'));
+    final top = tester.getTopLeft(anchor).dy;
+    source.notifyChapterUpdated(translated);
+    await tester.pumpAndSettle();
+
+    expect(tester.getTopLeft(anchor).dy, closeTo(top, 2));
+    expect(find.byKey(ValueKey('block-${block.id}-chinese')), findsOneWidget);
+  });
+
+  testWidgets(
+    'paged catalog jump displays a loaded chapter outside the window',
+    (tester) async {
+      final chapters = [
+        for (var number = 1; number <= 36; number++) _windowChapter(number),
+      ];
+      final target = chapters[29];
+      await pumpReader(
+        tester,
+        novel: _windowNovel(chapters),
+        initialSettings: const ReaderSettings(
+          layoutMode: ReaderLayoutMode.pages,
+        ),
+        viewSize: const Size(430, 720),
+      );
+      await tester.tap(find.byKey(const ValueKey('catalog-button')));
+      await tester.pumpAndSettle();
+      final tile = find.byKey(ValueKey('catalog-chapter-${target.id}'));
+      await tester.scrollUntilVisible(
+        tile,
+        320,
+        continuous: true,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('chapter-catalog-list')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(ValueKey('chapter-boundary-${target.id}')),
+        findsOneWidget,
+      );
+      final previousPageTap =
+          tester
+              .getRect(find.byKey(const ValueKey('reader-stream')))
+              .centerLeft +
+          const Offset(20, 0);
+      await tester.tapAt(previousPageTap);
+      await tester.pumpAndSettle();
+      await tester.tapAt(previousPageTap);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('第 29 章中文正文'), findsWidgets);
+    },
+  );
+
+  testWidgets('chapter refresh during navigation keeps the selected chapter', (
+    tester,
+  ) async {
+    final chapters = [_windowChapter(1), _windowChapter(2)];
+    final reported = <ReadingPosition>[];
+    final source = ReaderChapterDataSource(
+      catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+      loadAround: (_) => throw StateError('not used'),
+      loadAdjacent: (_) => throw StateError('not used'),
+    );
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel(chapters),
+      dataSource: source,
+      onPositionChanged: reported.add,
+    );
+    await tester.tap(find.byKey(const ValueKey('next-chapter-button')));
+    await tester.pump();
+    source.notifyChapterUpdated(_windowChapter(2, paragraphRepeats: 8));
+    await tester.pumpAndSettle();
+
+    final target = find.byKey(const ValueKey('block:window-c2-b0'));
+    expect(target, findsOneWidget);
+    expect(
+      tester
+          .getRect(target)
+          .overlaps(
+            tester.getRect(find.byKey(const ValueKey('reader-stream'))),
+          ),
+      isTrue,
+    );
+    expect(find.text('第 2 / 2 章 · 本章 0%'), findsOneWidget);
+    expect(reported.last.chapterId, 'window-c2');
+  });
+
+  testWidgets('a delayed edge turn cannot move a newly selected chapter', (
+    tester,
+  ) async {
+    final chapters = [for (var n = 1; n <= 4; n++) _windowChapter(n)];
+    final response = Completer<ReaderChapterWindow>();
+    var requested = false;
+    final source = ReaderChapterDataSource(
+      catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+      loadAround: (_) => throw StateError('not used'),
+      loadAdjacent: (_) {
+        requested = true;
+        return response.future;
+      },
+    );
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel(chapters.sublist(2)),
+      dataSource: source,
+    );
+    expect(requested, isFalse);
+    expect(_readerScrollable(tester).position.extentBefore, closeTo(0, 1));
+    final readingArea = tester.widget<Semantics>(
+      find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == '滚动阅读区域',
+      ),
+    );
+    readingArea.properties.onDecrease!();
+    await tester.pump();
+    expect(requested, isTrue);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('reader-chapter-scrubber')),
+    );
+    slider.onChangeEnd!(3);
+    await tester.pumpAndSettle();
+    final scrollPosition = _readerScrollable(tester).position;
+    final beforeTurn = scrollPosition.pixels;
+    readingArea.properties.onIncrease!();
+    await tester.pumpAndSettle();
+    expect(scrollPosition.pixels, greaterThan(beforeTurn));
+    final afterTurn = scrollPosition.pixels;
+
+    response.complete(
+      ReaderChapterWindow(
+        chapters: [chapters[1]],
+        before: ReaderBoundaryStatus.loadable,
+        after: ReaderBoundaryStatus.loadable,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(scrollPosition.pixels, closeTo(afterTurn, 1));
   });
 
   testWidgets('catalog jump in a long loaded novel lands deterministically', (
@@ -1594,6 +1793,62 @@ void main() {
     expect(
       find.byKey(const ValueKey('reader-boundary-before-unavailable')),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('paged prepend preserves the current block and keeps turning', (
+    tester,
+  ) async {
+    final chapters = [for (var n = 1; n <= 4; n++) _windowChapter(n)];
+    final response = Completer<ReaderChapterWindow>();
+    final reported = <ReadingPosition>[];
+    var requested = false;
+    final source = ReaderChapterDataSource(
+      catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+      loadAround: (_) => throw StateError('not used'),
+      loadAdjacent: (_) {
+        requested = true;
+        return response.future;
+      },
+    );
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel(chapters.sublist(2)),
+      dataSource: source,
+      initialPosition: ReadingPosition(
+        chapterId: chapters[2].id,
+        blockId: chapters[2].blocks[3].id,
+      ),
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+      onPositionChanged: reported.add,
+    );
+    await driveReaderToEdge(
+      tester,
+      direction: ReaderLoadDirection.before,
+      reached: () => requested,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    final anchor = reported.last;
+    final count = reported.length;
+
+    response.complete(
+      ReaderChapterWindow(
+        chapters: [chapters[1]],
+        before: ReaderBoundaryStatus.unavailable,
+        after: ReaderBoundaryStatus.endOfCatalog,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('block:${anchor.blockId}')), findsOneWidget);
+    expect(reported, hasLength(count));
+    final position = _readerScrollable(tester).position;
+    final restoredPage = position.pixels;
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    expect(
+      position.pixels,
+      closeTo(restoredPage - position.viewportDimension, 1),
     );
   });
 
