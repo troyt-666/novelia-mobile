@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
+import 'package:jfzreader/features/reader/reader_body.dart';
 import 'package:jfzreader/features/reader/reader_screen.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 
@@ -248,6 +249,123 @@ void main() {
     expect(reached(), isTrue, reason: '阅读器未触发预期的边界请求');
   }
 
+  testWidgets(
+    'trimming chapters preserves the exact visible paragraph offset',
+    (tester) async {
+      final chapters = [for (var n = 1; n <= 9; n++) _windowChapter(n)];
+      final block = chapters[5].blocks[3];
+      final source = ReaderChapterDataSource(
+        catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+        loadAround: (_) => throw StateError('not used'),
+        loadAdjacent: (_) => throw StateError('not used'),
+      );
+      await pumpWindowReader(
+        tester,
+        novel: _windowNovel(chapters),
+        dataSource: source,
+        initialPosition: ReadingPosition(
+          chapterId: chapters[5].id,
+          blockId: block.id,
+        ),
+      );
+      await tester.tapAt(const Offset(215, 350));
+      await tester.pump();
+      final target = find.byKey(ValueKey('block-${block.id}-chinese'));
+      final top = tester.getTopLeft(target).dy;
+      final scroll = _readerScrollable(tester).position;
+      scroll.jumpTo(scroll.pixels + 40);
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump();
+        expect(tester.getTopLeft(target).dy, closeTo(top - 40, 1));
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final mode in ReaderLayoutMode.values) {
+    testWidgets(
+      'long $mode reading trims old chapters and still loads backwards',
+      (tester) async {
+        final chapters = [for (var n = 1; n <= 18; n++) _windowChapter(n)];
+        final requests = <ReaderAdjacentRequest>[];
+        final positions = <ReadingPosition>[];
+        final source = ReaderChapterDataSource(
+          catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+          loadAround: (_) => throw StateError('not used'),
+          loadAdjacent: (request) async {
+            requests.add(request);
+            final anchor = chapters.indexWhere(
+              (chapter) => chapter.id == request.anchorChapterId,
+            );
+            final index =
+                anchor +
+                (request.direction == ReaderLoadDirection.after ? 1 : -1);
+            return ReaderChapterWindow(
+              chapters: [chapters[index]],
+              before: index == 0
+                  ? ReaderBoundaryStatus.endOfCatalog
+                  : ReaderBoundaryStatus.loadable,
+              after: index == chapters.length - 1
+                  ? ReaderBoundaryStatus.endOfCatalog
+                  : ReaderBoundaryStatus.loadable,
+            );
+          },
+        );
+        await pumpWindowReader(
+          tester,
+          novel: _windowNovel([chapters.first]),
+          dataSource: source,
+          initialSettings: ReaderSettings(layoutMode: mode),
+          onPositionChanged: positions.add,
+        );
+        await tester.drag(
+          find.byKey(const ValueKey('reader-stream')),
+          mode == ReaderLayoutMode.scroll
+              ? const Offset(0, -200)
+              : const Offset(-250, 0),
+        );
+        await tester.pumpAndSettle();
+        for (var n = 1; n < 14; n++) {
+          await driveReaderToEdge(
+            tester,
+            direction: ReaderLoadDirection.after,
+            reached: () => requests.any(
+              (request) =>
+                  request.anchorChapterId == chapters[n - 1].id &&
+                  request.direction == ReaderLoadDirection.after,
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(positions, isNotEmpty);
+        if (mode == ReaderLayoutMode.scroll) {
+          final lists = tester.widgetList<SliverList>(
+            find.descendant(
+              of: find.byKey(const ValueKey('reader-stream')),
+              matching: find.byType(SliverList),
+            ),
+          );
+          expect(
+            lists.fold<int>(
+              0,
+              (sum, list) => sum + list.delegate.estimatedChildCount!,
+            ),
+            lessThanOrEqualTo(8 * 7 + 2),
+          );
+        }
+        await driveReaderToEdge(
+          tester,
+          direction: ReaderLoadDirection.before,
+          reached: () => requests.any(
+            (request) => request.direction == ReaderLoadDirection.before,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   test('reader keyboard arrows follow the active layout axis', () {
     _expectReaderKeyboardMapping();
   });
@@ -405,6 +523,15 @@ void main() {
       ],
     );
 
+    final pixels = (await tester.runAsync(
+      () => createTestImage(width: 40, height: 20, cache: false),
+    ))!;
+    final cachedProvider = ResizeImage(NetworkImage(imageUrl), width: 398);
+    final cacheKey = await cachedProvider.obtainKey(ImageConfiguration.empty);
+    final frame = Completer<ImageInfo>();
+    final completer = OneFrameImageStreamCompleter(frame.future);
+    PaintingBinding.instance.imageCache.putIfAbsent(cacheKey, () => completer);
+    frame.complete(ImageInfo(image: pixels.clone()));
     await pumpReader(tester, novel: novel);
 
     final imageFinder = find.byKey(
@@ -413,7 +540,16 @@ void main() {
     expect(imageFinder, findsOneWidget);
     expect(find.text('<图片>$imageUrl'), findsNothing);
     final image = tester.widget<Image>(imageFinder);
-    expect((image.image as NetworkImage).url, imageUrl);
+    final provider = image.image as ResizeImage;
+    expect((provider.imageProvider as NetworkImage).url, imageUrl);
+    expect(provider.width, 398);
+    expect(tester.getSize(imageFinder).aspectRatio, 2);
+    await tester.pumpWidget(const SizedBox());
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    await tester.pump();
+    expect(pixels.debugGetOpenHandleStackTraces(), hasLength(1));
+    pixels.dispose();
   });
 
   testWidgets('captures and restores intra-block reading position', (
@@ -815,6 +951,9 @@ void main() {
     tester,
   ) async {
     await pumpReader(tester);
+    final body = tester.widget(
+      find.byKey(const ValueKey('block-c1-0-chinese')),
+    );
 
     AnimatedOpacity chrome() => tester.widget<AnimatedOpacity>(
       find.byKey(const ValueKey('reader-bottom-chrome')),
@@ -824,6 +963,10 @@ void main() {
     await tester.tapAt(const Offset(20, 466));
     await tester.pump(const Duration(milliseconds: 220));
     expect(chrome().opacity, 0);
+    expect(
+      tester.widget(find.byKey(const ValueKey('block-c1-0-chinese'))),
+      same(body),
+    );
 
     await tester.tapAt(const Offset(20, 466));
     await tester.pump(const Duration(milliseconds: 220));
@@ -926,6 +1069,42 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(position.pixels, closeTo(horizontalOffset, 1));
+  });
+
+  testWidgets('paged mode reuses measured fragments for bookmark changes', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      novel: _oversizedBlockNovel(),
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tapAt(const Offset(410, 466));
+    await tester.pumpAndSettle();
+    final before = tester.widget<ReaderHorizontalBlockFragmentView>(
+      find.byType(ReaderHorizontalBlockFragmentView).first,
+    );
+    await tester.tapAt(const Offset(215, 466));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bookmark-button')));
+    await tester.pumpAndSettle();
+    final after = tester.widget<ReaderHorizontalBlockFragmentView>(
+      find.byType(ReaderHorizontalBlockFragmentView).first,
+    );
+    expect(after.bookmarked, isTrue);
+    expect(after.fragment, same(before.fragment));
+    tester.view.physicalSize = const Size(500, 932);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ReaderHorizontalBlockFragmentView>(
+            find.byType(ReaderHorizontalBlockFragmentView).first,
+          )
+          .fragment,
+      isNot(same(after.fragment)),
+    );
   });
 
   testWidgets(

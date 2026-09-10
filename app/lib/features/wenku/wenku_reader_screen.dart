@@ -38,6 +38,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   Object? _failure;
   String? _failureDetails;
   var _generation = 0;
+  var _spineGeneration = 0;
   var _spineIndex = 0;
   var _localFraction = 0.0;
   var _overallProgress = 0.0;
@@ -70,6 +71,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
 
   void _initialize() {
     final generation = ++_generation;
+    _spineGeneration++;
     setState(() {
       _failure = null;
       _failureDetails = null;
@@ -180,6 +182,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
     final controller = _controller;
     final document = _document;
     if (controller == null || document == null) return;
+    final generation = ++_spineGeneration;
     setState(() {
       _loading = true;
       _failure = null;
@@ -187,7 +190,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
       _pendingFragment = fragment;
     });
     try {
-      final html = document.htmlForSpine(
+      final html = await document.htmlForSpineAsync(
         _spineIndex,
         dark: Theme.of(context).brightness == Brightness.dark,
         fontSize: _fontSize,
@@ -195,8 +198,10 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
         palette: _palette,
         japaneseOpacity: _japaneseOpacity,
       );
+      if (!mounted || generation != _spineGeneration) return;
       await controller.loadHtmlString(html);
     } on Object catch (error) {
+      if (!mounted || generation != _spineGeneration) return;
       _showFailure(error);
     }
   }

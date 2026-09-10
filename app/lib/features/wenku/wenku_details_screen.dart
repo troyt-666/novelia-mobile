@@ -357,6 +357,8 @@ class _Cover extends StatelessWidget {
             ? placeholder
             : Image.network(
                 uri.toString(),
+                cacheWidth: (104 * MediaQuery.devicePixelRatioOf(context))
+                    .ceil(),
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => placeholder,
               ),

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/model/reader_models.dart';
@@ -710,6 +712,7 @@ class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
 
   ImageStream? _stream;
   ImageStreamListener? _listener;
+  ImageProvider? _imageProvider;
 
   AlignedBlock get _block => widget.block;
 
@@ -722,7 +725,8 @@ class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
   @override
   void didUpdateWidget(_IllustrationBlockView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.block.illustrationUri != _block.illustrationUri) {
+    if (oldWidget.block.illustrationUri != _block.illustrationUri ||
+        oldWidget.readingWidth != widget.readingWidth) {
       _listenForSize();
     }
   }
@@ -734,23 +738,43 @@ class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
   }
 
   void _listenForSize() {
-    _stopListening();
     final uri = _block.illustrationUri;
-    if (uri == null) return;
+    if (uri == null) {
+      _stopListening();
+      _imageProvider = null;
+      return;
+    }
     final key = uri.toString();
-    if (_aspectByUrl.containsKey(key)) return;
-    final provider = NetworkImage(
-      key,
-      headers: uri.host.endsWith('.pximg.net')
-          ? const {'Referer': 'https://www.pixiv.net/'}
-          : null,
+    final width = math.max(
+      1.0,
+      math.min(widget.readingWidth, MediaQuery.sizeOf(context).width) - 32,
     );
+    final provider = ResizeImage.resizeIfNeeded(
+      (width * MediaQuery.devicePixelRatioOf(context)).ceil(),
+      null,
+      NetworkImage(
+        key,
+        headers: uri.host.endsWith('.pximg.net')
+            ? const {'Referer': 'https://www.pixiv.net/'}
+            : null,
+      ),
+    );
+    if (_imageProvider == provider) return;
+    _stopListening();
+    _imageProvider = provider;
+    if (_aspectByUrl.containsKey(key)) return;
     final stream = provider.resolve(createLocalImageConfiguration(context));
     _listener = ImageStreamListener((info, _) {
-      final height = info.image.height;
-      if (height <= 0) return;
-      _aspectByUrl[key] = info.image.width / height;
-      if (mounted) setState(() {});
+      try {
+        final height = info.image.height;
+        if (height <= 0) return;
+        final aspect = info.image.width / height;
+        if (_aspectByUrl[key] == aspect) return;
+        _aspectByUrl[key] = aspect;
+        if (mounted) setState(() {});
+      } finally {
+        info.dispose();
+      }
     }, onError: (_, _) {});
     _stream = stream;
     stream.addListener(_listener!);
@@ -790,14 +814,11 @@ class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
                     borderRadius: BorderRadius.circular(10),
                     child: AspectRatio(
                       aspectRatio: aspect,
-                      child: Image.network(
-                        uri.toString(),
+                      child: Image(
+                        image: _imageProvider!,
                         key: ValueKey('block-${_block.id}-illustration'),
                         width: double.infinity,
                         fit: BoxFit.contain,
-                        headers: uri.host.endsWith('.pximg.net')
-                            ? const {'Referer': 'https://www.pixiv.net/'}
-                            : null,
                         frameBuilder: (context, child, frame, synchronous) {
                           if (synchronous || frame != null) return child;
                           return const Center(

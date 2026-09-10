@@ -207,8 +207,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       initialNovels: _restoreCachedCatalog(),
       canAccessRestrictedContent: () =>
           widget.accountSessionController?.snapshot.isSignedIn == true,
-      onContentChanged: _refreshLibrary,
-    )..addListener(_feedsChanged);
+      onContentChanged: (novels) {
+        if (novels.any((novel) => _library.novelIds.contains(novel.id))) {
+          _refreshLibrary();
+        }
+      },
+    );
     _library = _loadLibrarySnapshot();
     unawaited(_feeds.refreshCatalog());
     unawaited(_feeds.refreshRecentlyUpdated());
@@ -220,7 +224,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.accountSessionController?.removeListener(_accountSessionChanged);
-    _feeds.removeListener(_feedsChanged);
     _feeds.dispose();
     _historySync.dispose();
     widget.onRuntimeDispose?.call();
@@ -415,10 +418,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     return List.unmodifiable(novels);
   }
 
-  void _feedsChanged() {
-    if (mounted) setState(() {});
-  }
-
   Future<void> _refreshDiscoveryFeeds() => Future.wait([
     _feeds.refreshRecentlyUpdated(),
     _feeds.refreshMostClicked(),
@@ -428,32 +427,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       sort == CatalogSort.mostClicked
       ? _feeds.refreshMostClicked(append: true)
       : _feeds.refreshRecentlyUpdated(append: true);
-
-  CatalogAvailability get _discoveryAvailability {
-    final feeds = [
-      _feeds.recentlyUpdated.availability,
-      _feeds.mostClicked.availability,
-    ];
-    if (feeds.contains(CatalogAvailability.available)) {
-      return CatalogAvailability.available;
-    }
-    if (feeds.contains(CatalogAvailability.authenticationRequired)) {
-      return CatalogAvailability.authenticationRequired;
-    }
-    return CatalogAvailability.offline;
-  }
-
-  CatalogAvailability get _searchAvailability {
-    if (_feeds.catalog.availability ==
-        CatalogAvailability.authenticationRequired) {
-      return CatalogAvailability.authenticationRequired;
-    }
-    if (_feeds.catalog.availability == CatalogAvailability.offline &&
-        _discoveryAvailability == CatalogAvailability.available) {
-      return CatalogAvailability.available;
-    }
-    return _feeds.catalog.availability;
-  }
 
   Future<RankingPageView> _loadRankings(RankingsQuery query) async {
     final providerId = _rankingProviderId(query.source);
@@ -699,13 +672,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     final now = DateTime.now().toUtc();
     _saveProgressOnly(novel, position, now);
     if (syncRemoteHistory) _historySync.record(novel, position, now);
-    _touchChapterCopies(novel.id, position.chapterId, now);
-    _repository.evictCacheTo(
-      maxBytes: _cacheLimitBytes,
-      protectedChapters: {
-        ChapterRef(novelId: novel.id, chapterId: position.chapterId),
-      },
-    );
+    _repository.touchChapterCopies(novel.id, position.chapterId, now);
     _repository.saveLastRoute(
       LastRouteState(
         routeName: '/reader',
@@ -714,14 +681,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         updatedAt: now,
       ),
     );
-  }
-
-  void _touchChapterCopies(String novelId, String chapterId, DateTime readAt) {
-    for (final copy in _repository.listCopies(novelId: novelId)) {
-      if (copy.chapterId == chapterId && !readAt.isBefore(copy.lastReadAt)) {
-        _repository.touchCopy(copy.id, readAt);
-      }
-    }
   }
 
   void _saveProgressOnly(
@@ -862,10 +821,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
 
   @override
   Widget build(BuildContext context) {
-    final awaitingInitialReaderCatalog =
-        _initialReaderNovelId != null &&
-        _feeds.catalog.loading &&
-        !_catalogNovels.any((novel) => novel.id == _initialReaderNovelId);
     return MaterialApp(
       title: 'JFZ Reader',
       debugShowCheckedModeBanner: false,
@@ -880,174 +835,181 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       themeMode: _themeMode,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
-      home: awaitingInitialReaderCatalog
-          ? Scaffold(
-              key: const ValueKey('reader-restore-placeholder'),
-              body: Center(
-                child: Semantics(
-                  label: '正在恢复阅读位置',
-                  child: SizedBox.square(
-                    dimension: 28,
-                    child: CircularProgressIndicator(strokeWidth: 2.5),
+      home: ListenableBuilder(
+        listenable: _feeds.catalog,
+        builder: (context, child) =>
+            _initialReaderNovelId != null &&
+                _feeds.catalog.loading &&
+                !_catalogNovels.any(
+                  (novel) => novel.id == _initialReaderNovelId,
+                )
+            ? Scaffold(
+                key: const ValueKey('reader-restore-placeholder'),
+                body: Center(
+                  child: Semantics(
+                    label: '正在恢复阅读位置',
+                    child: SizedBox.square(
+                      dimension: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
                   ),
                 ),
-              ),
-            )
-          : NoveliaShell(
-              wenkuGateway: widget.wenkuGateway,
-              appVersion: widget.appVersion,
-              novels: _catalogNovels,
-              catalogAvailability: _searchAvailability,
-              discoveryAvailability: _discoveryAvailability,
-              continuedReads: _library.continuedReads,
-              protectedDownloads: _library.downloads,
-              bookmarks: _library.bookmarks,
-              remoteFavorites: _remoteFavorites,
-              favoriteFolderLoader: widget.accountGateway == null
-                  ? null
-                  : _loadFavoriteFolderPage,
-              readingHistoryLoader: widget.accountGateway == null
-                  ? null
-                  : _loadReadingHistoryPage,
-              accountSession:
-                  widget.accountSessionController?.snapshot ??
-                  const AccountSessionSnapshot.signedOut(),
-              onAccountLogin: widget.accountSessionController == null
-                  ? null
-                  : ({required username, required password}) => widget
-                        .accountSessionController!
-                        .login(username: username, password: password),
-              onAccountLogout: widget.accountSessionController == null
-                  ? null
-                  : _logoutAccount,
-              onLoginRequested: widget.accountSessionController?.retry,
-              onHostedAccountHelp: widget.externalLinkLauncher == null
-                  ? null
-                  : () => widget.externalLinkLauncher!.open(
-                      Uri.parse('https://auth.novelia.cc/?app=n'),
-                    ),
-              onReleasesRequested: widget.externalLinkLauncher == null
-                  ? null
-                  : () => widget.externalLinkLauncher!.open(
-                      Uri.parse(defaultReleasesUri),
-                    ),
-              onCheckForUpdate: widget.updateChecker == null
-                  ? null
-                  : () => widget.updateChecker!.check(widget.appVersion),
-              updateInstaller: widget.updateInstaller,
-              onOpenUpdateLink: widget.externalLinkLauncher?.open,
-              onFavoriteToFolderRequested: widget.accountGateway == null
-                  ? null
-                  : _favoriteNovel,
-              onFavoriteFromFolderRemoveRequested: widget.accountGateway == null
-                  ? null
-                  : _unfavoriteNovel,
-              onFavoriteFolderCreateRequested: widget.accountGateway == null
-                  ? null
-                  : _createFavoriteFolder,
-              storageSummary: _library.storageSummary,
-              cacheLimitBytes: _cacheLimitBytes,
-              onCacheLimitChanged: _setCacheLimit,
-              onClearReadingCache: _clearReadingCache,
-              initialCatalogCriteria: _catalogCriteria,
-              onCatalogCriteriaRequested: (criteria) =>
-                  _feeds.refreshCatalog(criteria: criteria),
-              onCatalogLoadMoreRequested: () =>
-                  _feeds.refreshCatalog(append: true),
-              onDiscoveryRefreshRequested: _refreshDiscoveryFeeds,
-              onDiscoveryLoadMoreRequested: _loadMoreDiscovery,
-              catalogHasMore: _feeds.catalog.hasMore,
-              catalogLoading: _feeds.catalog.loading,
-              catalogLoadingMore: _feeds.catalog.loadingMore,
-              catalogLoadMoreFailed: _feeds.catalog.loadMoreFailed,
-              recentlyUpdatedHasMore: _feeds.recentlyUpdated.hasMore,
-              recentlyUpdatedLoadingMore: _feeds.recentlyUpdated.loadingMore,
-              recentlyUpdatedLoadMoreFailed:
-                  _feeds.recentlyUpdated.loadMoreFailed,
-              mostClickedHasMore: _feeds.mostClicked.hasMore,
-              mostClickedLoadingMore: _feeds.mostClicked.loadingMore,
-              mostClickedLoadMoreFailed: _feeds.mostClicked.loadMoreFailed,
-              mostClickedNovels: _feeds.mostClicked.novels,
-              recentlyUpdatedNovels: _feeds.recentlyUpdated.novels,
-              rankingsLoader: _loadRankings,
-              novelDetailsLoader: _loadNovelDetails,
-              readerLaunchLoader: _loadReaderWindow,
-              commentPageLoader: _loadCommentPage,
-              onOpenOriginalRequested: widget.externalLinkLauncher == null
-                  ? null
-                  : (novel) {
-                      final uri = novel.originalUrl;
-                      if (uri == null) {
-                        throw StateError('The novel has no original-site URL.');
-                      }
-                      return widget.externalLinkLauncher!.open(uri);
-                    },
+              )
+            : child!,
+        child: NoveliaShell(
+          catalogController: _feeds,
+          wenkuGateway: widget.wenkuGateway,
+          appVersion: widget.appVersion,
+          novels: _catalogNovels,
+          catalogAvailability: _feeds.searchAvailability,
+          discoveryAvailability: _feeds.discoveryAvailability,
+          continuedReads: _library.continuedReads,
+          protectedDownloads: _library.downloads,
+          bookmarks: _library.bookmarks,
+          remoteFavorites: _remoteFavorites,
+          favoriteFolderLoader: widget.accountGateway == null
+              ? null
+              : _loadFavoriteFolderPage,
+          readingHistoryLoader: widget.accountGateway == null
+              ? null
+              : _loadReadingHistoryPage,
+          accountSession:
+              widget.accountSessionController?.snapshot ??
+              const AccountSessionSnapshot.signedOut(),
+          onAccountLogin: widget.accountSessionController == null
+              ? null
+              : ({required username, required password}) => widget
+                    .accountSessionController!
+                    .login(username: username, password: password),
+          onAccountLogout: widget.accountSessionController == null
+              ? null
+              : _logoutAccount,
+          onLoginRequested: widget.accountSessionController?.retry,
+          onHostedAccountHelp: widget.externalLinkLauncher == null
+              ? null
+              : () => widget.externalLinkLauncher!.open(
+                  Uri.parse('https://auth.novelia.cc/?app=n'),
+                ),
+          onReleasesRequested: widget.externalLinkLauncher == null
+              ? null
+              : () => widget.externalLinkLauncher!.open(
+                  Uri.parse(defaultReleasesUri),
+                ),
+          onCheckForUpdate: widget.updateChecker == null
+              ? null
+              : () => widget.updateChecker!.check(widget.appVersion),
+          updateInstaller: widget.updateInstaller,
+          onOpenUpdateLink: widget.externalLinkLauncher?.open,
+          onFavoriteToFolderRequested: widget.accountGateway == null
+              ? null
+              : _favoriteNovel,
+          onFavoriteFromFolderRemoveRequested: widget.accountGateway == null
+              ? null
+              : _unfavoriteNovel,
+          onFavoriteFolderCreateRequested: widget.accountGateway == null
+              ? null
+              : _createFavoriteFolder,
+          storageSummary: _library.storageSummary,
+          cacheLimitBytes: _cacheLimitBytes,
+          onCacheLimitChanged: _setCacheLimit,
+          onClearReadingCache: _clearReadingCache,
+          initialCatalogCriteria: _catalogCriteria,
+          onCatalogCriteriaRequested: (criteria) =>
+              _feeds.refreshCatalog(criteria: criteria),
+          onCatalogLoadMoreRequested: () => _feeds.refreshCatalog(append: true),
+          onDiscoveryRefreshRequested: _refreshDiscoveryFeeds,
+          onDiscoveryLoadMoreRequested: _loadMoreDiscovery,
+          catalogHasMore: _feeds.catalog.hasMore,
+          catalogLoading: _feeds.catalog.loading,
+          catalogLoadingMore: _feeds.catalog.loadingMore,
+          catalogLoadMoreFailed: _feeds.catalog.loadMoreFailed,
+          recentlyUpdatedHasMore: _feeds.recentlyUpdated.hasMore,
+          recentlyUpdatedLoadingMore: _feeds.recentlyUpdated.loadingMore,
+          recentlyUpdatedLoadMoreFailed: _feeds.recentlyUpdated.loadMoreFailed,
+          mostClickedHasMore: _feeds.mostClicked.hasMore,
+          mostClickedLoadingMore: _feeds.mostClicked.loadingMore,
+          mostClickedLoadMoreFailed: _feeds.mostClicked.loadMoreFailed,
+          mostClickedNovels: _feeds.mostClicked.novels,
+          recentlyUpdatedNovels: _feeds.recentlyUpdated.novels,
+          rankingsLoader: _loadRankings,
+          novelDetailsLoader: _loadNovelDetails,
+          readerLaunchLoader: _loadReaderWindow,
+          commentPageLoader: _loadCommentPage,
+          onOpenOriginalRequested: widget.externalLinkLauncher == null
+              ? null
+              : (novel) {
+                  final uri = novel.originalUrl;
+                  if (uri == null) {
+                    throw StateError('The novel has no original-site URL.');
+                  }
+                  return widget.externalLinkLauncher!.open(uri);
+                },
+          themeMode: _themeMode,
+          initialDestination: _initialDestination,
+          initialRecentSearches: _initialRecentSearches,
+          initialReaderNovelId: _initialReaderNovelId,
+          initialReaderPosition: _initialReaderPosition,
+          onThemeModeChanged: _setThemeMode,
+          onDestinationChanged: _saveTopLevelRoute,
+          onRecentSearchesChanged: _repository.saveRecentSearches,
+          onReaderOpened: (_, data) {
+            _initialReaderNovelId = null;
+            final readerNovel = data.novel;
+            final position = data.initialPosition;
+            if (position != null) {
+              _saveReaderPosition(
+                readerNovel,
+                position,
+                syncRemoteHistory: false,
+              );
+            }
+          },
+          onReaderClosed: () {
+            _initialReaderNovelId = null;
+            _saveTopLevelRoute(_currentDestination);
+          },
+          onDownloadRequested: widget.downloadCoordinator == null
+              ? null
+              : _downloadNovel,
+          onDownloadManagementRequested: _manageDownload,
+          downloadManagementSnapshotLoader: () {
+            // Download Management explicitly requests current task progress.
+            _library = _loadLibrarySnapshot();
+            return _library.downloads;
+          },
+          readerBuilder: (context, data) {
+            final novel = data.novel;
+            // The shell has already resolved explicit chapter selection, saved
+            // progress, and the first-readable-block fallback. Reconsulting the
+            // repository here can override an explicit chapter tap with an older
+            // saved position from a different chapter.
+            final initialPosition = data.initialPosition;
+            final savedBookmarks = _repository.listBookmarks(novelId: novel.id);
+            final bookmarkedBlocks = savedBookmarks
+                .map((bookmark) => bookmark.position.blockId)
+                .toSet();
+            return ReaderScreen(
+              novel: novel,
+              initialPosition: initialPosition,
+              startAtChapterTitle: data.startAtChapterTitle,
+              initialBookmarkedBlockIds: bookmarkedBlocks,
+              initialBookmarks: savedBookmarks
+                  .map((bookmark) => bookmark.position)
+                  .toList(growable: false),
+              initialSettings: _readerSettings,
               themeMode: _themeMode,
-              initialDestination: _initialDestination,
-              initialRecentSearches: _initialRecentSearches,
-              initialReaderNovelId: _initialReaderNovelId,
-              initialReaderPosition: _initialReaderPosition,
               onThemeModeChanged: _setThemeMode,
-              onDestinationChanged: _saveTopLevelRoute,
-              onRecentSearchesChanged: _repository.saveRecentSearches,
-              onReaderOpened: (_, data) {
-                final readerNovel = data.novel;
-                final position = data.initialPosition;
-                if (position != null) {
-                  _saveReaderPosition(
-                    readerNovel,
-                    position,
-                    syncRemoteHistory: false,
-                  );
-                }
-              },
-              onReaderClosed: () {
-                _saveTopLevelRoute(_currentDestination);
-              },
-              onDownloadRequested: widget.downloadCoordinator == null
-                  ? null
-                  : _downloadNovel,
-              onDownloadManagementRequested: _manageDownload,
-              downloadManagementSnapshotLoader: () {
-                // Download Management explicitly requests current task progress.
-                _library = _loadLibrarySnapshot();
-                return _library.downloads;
-              },
-              readerBuilder: (context, data) {
-                final novel = data.novel;
-                // The shell has already resolved explicit chapter selection, saved
-                // progress, and the first-readable-block fallback. Reconsulting the
-                // repository here can override an explicit chapter tap with an older
-                // saved position from a different chapter.
-                final initialPosition = data.initialPosition;
-                final savedBookmarks = _repository.listBookmarks(
-                  novelId: novel.id,
-                );
-                final bookmarkedBlocks = savedBookmarks
-                    .map((bookmark) => bookmark.position.blockId)
-                    .toSet();
-                return ReaderScreen(
-                  novel: novel,
-                  initialPosition: initialPosition,
-                  startAtChapterTitle: data.startAtChapterTitle,
-                  initialBookmarkedBlockIds: bookmarkedBlocks,
-                  initialBookmarks: savedBookmarks
-                      .map((bookmark) => bookmark.position)
-                      .toList(growable: false),
-                  initialSettings: _readerSettings,
-                  themeMode: _themeMode,
-                  onThemeModeChanged: _setThemeMode,
-                  onSettingsChanged: _setReaderSettings,
-                  onPositionChanged: (position) =>
-                      _saveReaderPosition(novel, position),
-                  onExitPosition: (position) =>
-                      _saveProgressOnly(novel, position),
-                  onBookmarkChanged: (position, bookmarked) =>
-                      _saveBookmark(novel, position, bookmarked),
-                  chapterDataSource: data.dataSource,
-                );
-              },
-            ),
+              onSettingsChanged: _setReaderSettings,
+              onPositionChanged: (position) =>
+                  _saveReaderPosition(novel, position),
+              onExitPosition: (position) => _saveProgressOnly(novel, position),
+              onBookmarkChanged: (position, bookmarked) =>
+                  _saveBookmark(novel, position, bookmarked),
+              chapterDataSource: data.dataSource,
+            );
+          },
+        ),
+      ),
     );
   }
 

@@ -114,6 +114,7 @@ class NoveliaReaderWindowFactory {
 
 class _NoveliaReaderWindowSession {
   static const _forwardPrefetchChapterCount = 3;
+  static const _maximumCachedChapters = 12;
 
   _NoveliaReaderWindowSession({
     required this.contentCoordinator,
@@ -137,6 +138,17 @@ class _NoveliaReaderWindowSession {
       <String, Future<NovelChapter?>>{};
   final Set<String> _refreshing = <String>{};
   final Set<String> _unavailable = <String>{};
+  int _prefetchGeneration = 0;
+
+  NovelChapter? _remember(NovelChapter? chapter) {
+    if (chapter == null) return null;
+    _loaded.remove(chapter.id);
+    _loaded[chapter.id] = chapter;
+    while (_loaded.length > _maximumCachedChapters) {
+      _loaded.remove(_loaded.keys.first);
+    }
+    return chapter;
+  }
 
   late final ReaderChapterDataSource dataSource = ReaderChapterDataSource(
     catalog: _catalog,
@@ -255,7 +267,7 @@ class _NoveliaReaderWindowSession {
   Future<NovelChapter?> _loadRequired(int index) async {
     final metadata = chapters[index];
     final memory = _loaded[metadata.id];
-    if (memory != null) return memory;
+    if (memory != null) return _remember(memory);
 
     final existing = _loading[metadata.id];
     if (existing != null) return existing;
@@ -275,7 +287,7 @@ class _NoveliaReaderWindowSession {
 
     final cached = _readCached(metadata);
     if (cached != null) {
-      _loaded[metadata.id] = cached;
+      _remember(cached);
       _unavailable.remove(metadata.id);
       _scheduleRefresh(metadata);
       return cached;
@@ -288,7 +300,7 @@ class _NoveliaReaderWindowSession {
     );
     final loaded = response.data;
     if (loaded != null && loaded.id == metadata.id) {
-      _loaded[metadata.id] = loaded;
+      _remember(loaded);
       _unavailable.remove(metadata.id);
       return loaded;
     }
@@ -315,6 +327,7 @@ class _NoveliaReaderWindowSession {
   }
 
   void _scheduleForwardPrefetch(int anchorIndex) {
+    final generation = ++_prefetchGeneration;
     final endExclusive = (anchorIndex + 1 + _forwardPrefetchChapterCount).clamp(
       0,
       chapters.length,
@@ -324,6 +337,7 @@ class _NoveliaReaderWindowSession {
     unawaited(
       Future<void>(() async {
         for (var index = anchorIndex + 1; index < endExclusive; index++) {
+          if (generation != _prefetchGeneration) return;
           try {
             // Fetch sequentially so ordinary reading gets a useful horizon
             // without producing a burst of chapter requests. An adjacent
@@ -342,10 +356,10 @@ class _NoveliaReaderWindowSession {
   NovelChapter? _loadCachedOptional(int index) {
     final metadata = chapters[index];
     final memory = _loaded[metadata.id];
-    if (memory != null) return memory;
+    if (memory != null) return _remember(memory);
     final cached = _readCached(metadata);
     if (cached == null) return null;
-    _loaded[metadata.id] = cached;
+    _remember(cached);
     _unavailable.remove(metadata.id);
     _scheduleRefresh(metadata);
     return cached;
@@ -371,7 +385,8 @@ class _NoveliaReaderWindowSession {
           final refreshed = response.data;
           if (refreshed != null && refreshed.id == metadata.id) {
             final previous = _loaded[metadata.id];
-            _loaded[metadata.id] = refreshed;
+            if (previous == null) return;
+            _remember(refreshed);
             _unavailable.remove(metadata.id);
             if (_chapterTranslationChanged(
               previous,

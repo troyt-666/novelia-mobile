@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,8 +15,85 @@ import 'package:jfzreader/features/novel_details/novel_details_screen.dart';
 import 'package:jfzreader/features/shell/novelia_shell.dart';
 import 'package:jfzreader/features/shell/shell_view_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
+import 'package:jfzreader/gateway/novelia/novelia_catalog_controller.dart';
+
+import 'support/fixture_content_coordinator.dart';
 
 void main() {
+  testWidgets(
+    'discovery keeps state across fallback and ignores unrelated search updates',
+    (tester) async {
+      final feeds = NoveliaCatalogController(
+        contentCoordinator: FixtureContentCoordinator(fixtureCatalogNovels),
+        canAccessRestrictedContent: () => false,
+      );
+      addTearDown(feeds.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NoveliaShell(
+            novels: const [],
+            catalogController: feeds,
+            catalogAvailability: CatalogAvailability.offline,
+            readerBuilder: (_, _) => const SizedBox(),
+            themeMode: ThemeMode.system,
+            onThemeModeChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final discovery = find.byWidgetPredicate(
+        (widget) =>
+            widget is DiscoverScreen &&
+            widget.mode == DiscoverScreenMode.discovery,
+      );
+      final state = tester.state(discovery);
+      await feeds.refreshCatalog();
+      await tester.pumpAndSettle();
+      expect(tester.widget<DiscoverScreen>(discovery).novels, isNotEmpty);
+      await feeds.refreshRecentlyUpdated();
+      await tester.pumpAndSettle();
+      expect(tester.state(discovery), same(state));
+      final widget = tester.widget<DiscoverScreen>(discovery);
+      await feeds.refreshCatalog(
+        criteria: const CatalogCriteria(search: '不存在'),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.widget(discovery), same(widget));
+    },
+  );
+
+  testWidgets('opening filters reuses results until the query changes', (
+    tester,
+  ) async {
+    final novels = _ObservedNovels(fixtureCatalogNovels);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DiscoverScreen(
+            mode: DiscoverScreenMode.search,
+            novels: novels,
+            catalogAvailability: CatalogAvailability.available,
+            onOpenNovel: (_) {},
+            onOpenRankings: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final reads = novels.reads;
+    expect(reads, greaterThan(0));
+    await tester.tap(find.byKey(const ValueKey('discover-filters-button')));
+    await tester.pumpAndSettle();
+    expect(novels.reads, reads);
+    await tester.enterText(
+      find.byKey(const ValueKey('discover-search-field')),
+      '不存在的标题',
+    );
+    await tester.pumpAndSettle();
+    expect(novels.reads, greaterThan(reads));
+    expect(find.byType(CatalogNovelCard), findsNothing);
+  });
+
   Future<void> pumpShell(
     WidgetTester tester, {
     CatalogAvailability availability = CatalogAvailability.available,
@@ -1393,6 +1471,47 @@ void main() {
     expect(find.byKey(const ValueKey('rankings-previous-page')), findsNothing);
   });
 
+  testWidgets('large rankings create rows only near the viewport', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RankingsScreen(
+          novels: const [],
+          onOpenNovel: (_) {},
+          onTagSelected: (_) {},
+          loader: (_) async => RankingPageView(
+            novels: List.filled(200, fixtureCatalogNovels.first),
+            pageNumber: 1,
+            totalPages: 1,
+            description: 'large fixture',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final list = tester.widget<SliverList>(find.byType(SliverList));
+    expect(list.delegate, isA<SliverChildBuilderDelegate>());
+    expect(
+      find.byType(CatalogNovelCard).evaluate().length,
+      inInclusiveRange(1, 8),
+    );
+    await tester.drag(
+      find.byKey(const PageStorageKey('rankings-scroll')),
+      const Offset(0, -1800),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(CatalogNovelCard).evaluate().length,
+      inInclusiveRange(1, 8),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'remote rankings expose supported sources and clear Kakuyomu state',
     (tester) async {
@@ -1456,4 +1575,23 @@ CatalogNovel _outlineFrom(CatalogNovel hydrated) {
     declaredChapterCount: hydrated.chapterCount,
     originalUrl: hydrated.originalUrl,
   );
+}
+
+class _ObservedNovels extends ListBase<CatalogNovel> {
+  _ObservedNovels(this.values);
+  final List<CatalogNovel> values;
+  int reads = 0;
+  @override
+  int get length => values.length;
+  @override
+  set length(int value) => throw UnsupportedError('read-only');
+  @override
+  CatalogNovel operator [](int index) {
+    reads++;
+    return values[index];
+  }
+
+  @override
+  void operator []=(int index, CatalogNovel value) =>
+      throw UnsupportedError('read-only');
 }

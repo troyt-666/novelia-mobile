@@ -295,6 +295,8 @@ class _CatalogCover extends StatelessWidget {
             ? fallback
             : Image.network(
                 uri.toString(),
+                cacheWidth: (48 * MediaQuery.devicePixelRatioOf(context))
+                    .ceil(),
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => fallback,
               ),

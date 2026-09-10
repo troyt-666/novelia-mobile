@@ -413,6 +413,16 @@ final class SqliteOfflineRepository
     );
   }
 
+  void touchChapterCopies(String novelId, String chapterId, DateTime readAt) {
+    _checkOpen();
+    final timestamp = _timestamp(readAt);
+    _database.execute(
+      'UPDATE offline_chapter_copies SET last_read_at_us = ? '
+      'WHERE novel_id = ? AND chapter_id = ? AND last_read_at_us < ?;',
+      [timestamp, novelId, chapterId, timestamp],
+    );
+  }
+
   @override
   List<OfflineChapterCopy> evictCacheTo({
     required int maxBytes,
@@ -421,14 +431,16 @@ final class SqliteOfflineRepository
     _checkOpen();
     if (maxBytes < 0) throw ArgumentError.value(maxBytes, 'maxBytes');
     return _transaction(() {
-      final cacheCopies = listCopies(kind: OfflineCopyKind.cacheCopy);
-      var cacheBytes = cacheCopies.fold<int>(
-        0,
-        (sum, copy) => sum + copy.totalBytes,
+      var cacheBytes = _int(
+        _database.select(
+          'SELECT COALESCE(SUM(original_bytes + COALESCE(translation_bytes, 0)), 0) '
+          'AS bytes FROM offline_chapter_copies WHERE copy_kind = ?;',
+          [OfflineCopyKind.cacheCopy.name],
+        ).single['bytes'],
       );
       if (cacheBytes <= maxBytes) return const <OfflineChapterCopy>[];
       final candidates =
-          cacheCopies
+          listCopies(kind: OfflineCopyKind.cacheCopy)
               .where((copy) => !protectedChapters.contains(copy.chapter))
               .toList()
             ..sort((a, b) {
@@ -462,13 +474,19 @@ final class SqliteOfflineRepository
   }
 
   @override
-  List<CachedNovelOutline> listCachedNovels() {
+  List<CachedNovelOutline> listCachedNovels({Iterable<String>? novelIds}) {
     _checkOpen();
+    final ids = novelIds?.toSet().toList();
+    if (ids != null && ids.isEmpty) return const [];
+    final where = ids == null
+        ? ''
+        : 'WHERE id IN (${List.filled(ids.length, '?').join(',')}) ';
     return List.unmodifiable(
       _database
           .select(
-            'SELECT * FROM cached_novels '
+            'SELECT * FROM cached_novels $where'
             'ORDER BY fetched_at_us DESC, id;',
+            ids ?? const [],
           )
           .map(_outlineFromRow),
     );
@@ -557,6 +575,16 @@ final class SqliteOfflineRepository
   void upsertNovelOutline(CachedNovelOutline outline) {
     _checkOpen();
     _upsertNovelOutline(outline);
+  }
+
+  @override
+  void upsertNovelOutlines(Iterable<CachedNovelOutline> outlines) {
+    _checkOpen();
+    _transaction(() {
+      for (final outline in outlines) {
+        _upsertNovelOutline(outline);
+      }
+    });
   }
 
   @override

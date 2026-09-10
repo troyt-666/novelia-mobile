@@ -102,6 +102,11 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   CatalogSort _discoverySort = CatalogSort.recentlyUpdated;
   var _showingRankings = false;
   var _rankingsOpened = false;
+  (List<CatalogNovel>, CatalogCriteria, bool, bool)? _filteredInput;
+  List<CatalogNovel> _filtered = const [];
+  List<CatalogNovel>? _discoveryInput;
+  List<CatalogNovel>? _recentlyUpdated;
+  List<CatalogNovel>? _mostClicked;
 
   @override
   bool get wantKeepAlive => true;
@@ -216,16 +221,30 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   List<CatalogNovel> get _filteredNovels {
-    final normalizedQuery = _query.trim().toLowerCase();
     final typedRemoteResultsAreAuthoritative =
         widget.onCriteriaRequested != null &&
         _authoritativeRemoteCriteria == _criteria;
     if (typedRemoteResultsAreAuthoritative) {
-      return List<CatalogNovel>.of(widget.novels);
+      return widget.novels;
     }
     final remoteResultsAreAuthoritative =
         widget.onSearchRequested != null &&
         _authoritativeRemoteQuery == _query.trim();
+    final input = (
+      widget.novels,
+      _criteria,
+      typedRemoteResultsAreAuthoritative,
+      remoteResultsAreAuthoritative,
+    );
+    if (_filteredInput != input) {
+      _filteredInput = input;
+      _filtered = _filterNovels(remoteResultsAreAuthoritative);
+    }
+    return _filtered;
+  }
+
+  List<CatalogNovel> _filterNovels(bool remoteResultsAreAuthoritative) {
+    final normalizedQuery = _query.trim().toLowerCase();
     final result = widget.novels.where((novel) {
       final matchesQuery =
           remoteResultsAreAuthoritative ||
@@ -396,22 +415,42 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final novels = _filteredNovels;
-    final mostClicked = widget.mostClickedNovels.isNotEmpty
-        ? List<CatalogNovel>.of(widget.mostClickedNovels)
-        : (widget.novels.where((novel) => novel.views != null).toList()
-            ..sort((a, b) => _compareNullableDescending(a.views, b.views)));
+    final showDiscovery = widget.mode != DiscoverScreenMode.search;
+    final showSearch = widget.mode != DiscoverScreenMode.discovery;
+    final novels = showSearch ? _filteredNovels : const <CatalogNovel>[];
+    if (!identical(_discoveryInput, widget.novels)) {
+      _discoveryInput = widget.novels;
+      _recentlyUpdated = null;
+      _mostClicked = null;
+    }
+    final mostClicked =
+        !showDiscovery ||
+            (widget.mode != DiscoverScreenMode.combined &&
+                _discoverySort != CatalogSort.mostClicked)
+        ? const <CatalogNovel>[]
+        : widget.mostClickedNovels.isNotEmpty
+        ? widget.mostClickedNovels
+        : _mostClicked ??=
+              (widget.novels.where((novel) => novel.views != null).toList()
+                ..sort((a, b) => _compareNullableDescending(a.views, b.views)));
     final compactTextScale = MediaQuery.textScalerOf(context).scale(16) / 16;
     final mostClickedShelfHeight = (194 + (compactTextScale - 1) * 220)
         .clamp(194, 420)
         .toDouble();
-    final recentlyUpdated = List<CatalogNovel>.of(widget.novels)
-      ..sort((a, b) => _compareNullableDescending(a.updatedAt, b.updatedAt));
+    final recentlyUpdated =
+        !showDiscovery ||
+            (widget.mode != DiscoverScreenMode.combined &&
+                _discoverySort != CatalogSort.recentlyUpdated)
+        ? const <CatalogNovel>[]
+        : widget.onDiscoveryLoadMoreRequested != null
+        ? widget.novels
+        : _recentlyUpdated ??= (List<CatalogNovel>.of(widget.novels)
+            ..sort(
+              (a, b) => _compareNullableDescending(a.updatedAt, b.updatedAt),
+            ));
     final discoveryNovels = _discoverySort == CatalogSort.mostClicked
         ? mostClicked
         : recentlyUpdated;
-    final showDiscovery = widget.mode != DiscoverScreenMode.search;
-    final showSearch = widget.mode != DiscoverScreenMode.discovery;
     final continuedNovel = showDiscovery ? widget.continuedNovel : null;
 
     final scrollView = CustomScrollView(

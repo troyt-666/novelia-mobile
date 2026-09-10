@@ -18,6 +18,7 @@ import '../novel_details/novel_details_loader_screen.dart';
 import '../novel_details/novel_details_screen.dart';
 import '../wenku/wenku_catalog_screen.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
+import '../../gateway/novelia/novelia_catalog_controller.dart';
 import 'download_management_screen.dart';
 import 'library_screen.dart';
 import 'reader_launch_loader_screen.dart';
@@ -53,6 +54,7 @@ class NoveliaShell extends StatefulWidget {
     required this.onThemeModeChanged,
     required this.catalogAvailability,
     this.wenkuGateway,
+    this.catalogController,
     this.discoveryAvailability,
     this.appVersion = const AppVersion.unavailable(),
     this.novelDetailsLoader,
@@ -123,6 +125,7 @@ class NoveliaShell extends StatefulWidget {
   });
 
   final List<CatalogNovel> novels;
+  final NoveliaCatalogController? catalogController;
   final AppVersion appVersion;
   final ReaderPageBuilder readerBuilder;
   final ThemeMode themeMode;
@@ -210,7 +213,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
     super.initState();
     final initialNovelId = widget.initialReaderNovelId;
     if (initialNovelId == null) return;
-    final initialNovel = widget.novels
+    final initialNovel = _catalogNovels
         .where((novel) => novel.id == initialNovelId)
         .firstOrNull;
     if (initialNovel == null) {
@@ -704,7 +707,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
             onAuthorSelected: widget.onCatalogCriteriaRequested == null
                 ? (author) => _openSearchResults(
                     '作者：$author',
-                    widget.novels
+                    _catalogNovels
                         .where((item) => item.author == author)
                         .toList(),
                   )
@@ -768,6 +771,84 @@ class _NoveliaShellState extends State<NoveliaShell> {
     );
   }
 
+  List<CatalogNovel> get _catalogNovels =>
+      widget.catalogController?.catalog.novels ?? widget.novels;
+
+  Widget _buildDiscovery(BuildContext context) {
+    final feeds = widget.catalogController;
+    final recentlyUpdated =
+        feeds?.recentlyUpdated.novels ?? widget.recentlyUpdatedNovels;
+    final continuedRead = widget.continuedReads.firstOrNull;
+    return DiscoverScreen(
+      mode: DiscoverScreenMode.discovery,
+      novels: recentlyUpdated.isEmpty ? _catalogNovels : recentlyUpdated,
+      catalogAvailability:
+          feeds?.discoveryAvailability ??
+          widget.discoveryAvailability ??
+          widget.catalogAvailability,
+      continuedNovel: continuedRead?.novel,
+      continuedProgress: continuedRead?.progress,
+      onContinueReading: continuedRead == null
+          ? null
+          : () => _openReader(
+              continuedRead.novel,
+              null,
+              requestedPosition: continuedRead.position,
+            ),
+      mostClickedNovels: feeds?.mostClicked.novels ?? widget.mostClickedNovels,
+      onRefreshRequested: widget.onDiscoveryRefreshRequested,
+      onDiscoveryLoadMoreRequested: widget.onDiscoveryLoadMoreRequested,
+      recentlyUpdatedHasMore:
+          feeds?.recentlyUpdated.hasMore ?? widget.recentlyUpdatedHasMore,
+      recentlyUpdatedLoadingMore:
+          feeds?.recentlyUpdated.loadingMore ??
+          widget.recentlyUpdatedLoadingMore,
+      recentlyUpdatedLoadMoreFailed:
+          feeds?.recentlyUpdated.loadMoreFailed ??
+          widget.recentlyUpdatedLoadMoreFailed,
+      mostClickedHasMore:
+          feeds?.mostClicked.hasMore ?? widget.mostClickedHasMore,
+      mostClickedLoadingMore:
+          feeds?.mostClicked.loadingMore ?? widget.mostClickedLoadingMore,
+      mostClickedLoadMoreFailed:
+          feeds?.mostClicked.loadMoreFailed ?? widget.mostClickedLoadMoreFailed,
+      rankingsLoader: widget.rankingsLoader,
+      onOpenNovel: _openNovel,
+      onOpenRankings: _openRankings,
+      onOpenWenku: widget.wenkuGateway == null ? null : _openWenku,
+      onTagSelected: _openTag,
+    );
+  }
+
+  Widget _buildSearch(BuildContext context) {
+    final feed = widget.catalogController?.catalog;
+    return DiscoverScreen(
+      mode: DiscoverScreenMode.search,
+      novels: _catalogNovels,
+      catalogAvailability:
+          widget.catalogController?.searchAvailability ??
+          widget.catalogAvailability,
+      initialCriteria: _catalogCriteria,
+      onCriteriaRequested: widget.onCatalogCriteriaRequested == null
+          ? null
+          : _requestCatalogCriteria,
+      onSearchRequested: widget.onCatalogSearchRequested,
+      onLoadMoreRequested: widget.onCatalogLoadMoreRequested,
+      catalogTotalCount: widget.catalogTotalCount,
+      catalogHasMore: feed?.hasMore ?? widget.catalogHasMore,
+      catalogLoading: feed?.loading ?? widget.catalogLoading,
+      catalogLoadingMore: feed?.loadingMore ?? widget.catalogLoadingMore,
+      catalogLoadMoreFailed:
+          feed?.loadMoreFailed ?? widget.catalogLoadMoreFailed,
+      recentSearches: _recentSearches,
+      onSearchCommitted: _rememberSearch,
+      rankingsLoader: widget.rankingsLoader,
+      onOpenNovel: _openNovel,
+      onOpenRankings: _openRankings,
+      onTagSelected: _openTag,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_restoringInitialReader) {
@@ -784,61 +865,31 @@ class _NoveliaShellState extends State<NoveliaShell> {
         ),
       );
     }
-    final continuedRead = widget.continuedReads.firstOrNull;
+    final feeds = widget.catalogController;
     final pages = [
-      DiscoverScreen(
-        mode: DiscoverScreenMode.discovery,
-        novels: widget.recentlyUpdatedNovels.isEmpty
-            ? widget.novels
-            : widget.recentlyUpdatedNovels,
-        catalogAvailability:
-            widget.discoveryAvailability ?? widget.catalogAvailability,
-        continuedNovel: continuedRead?.novel,
-        continuedProgress: continuedRead?.progress,
-        onContinueReading: continuedRead == null
-            ? null
-            : () => _openReader(
-                continuedRead.novel,
-                null,
-                requestedPosition: continuedRead.position,
-              ),
-        mostClickedNovels: widget.mostClickedNovels,
-        onRefreshRequested: widget.onDiscoveryRefreshRequested,
-        onDiscoveryLoadMoreRequested: widget.onDiscoveryLoadMoreRequested,
-        recentlyUpdatedHasMore: widget.recentlyUpdatedHasMore,
-        recentlyUpdatedLoadingMore: widget.recentlyUpdatedLoadingMore,
-        recentlyUpdatedLoadMoreFailed: widget.recentlyUpdatedLoadMoreFailed,
-        mostClickedHasMore: widget.mostClickedHasMore,
-        mostClickedLoadingMore: widget.mostClickedLoadingMore,
-        mostClickedLoadMoreFailed: widget.mostClickedLoadMoreFailed,
-        rankingsLoader: widget.rankingsLoader,
-        onOpenNovel: _openNovel,
-        onOpenRankings: _openRankings,
-        onOpenWenku: widget.wenkuGateway == null ? null : _openWenku,
-        onTagSelected: _openTag,
-      ),
-      DiscoverScreen(
-        mode: DiscoverScreenMode.search,
-        novels: widget.novels,
-        catalogAvailability: widget.catalogAvailability,
-        initialCriteria: _catalogCriteria,
-        onCriteriaRequested: widget.onCatalogCriteriaRequested == null
-            ? null
-            : _requestCatalogCriteria,
-        onSearchRequested: widget.onCatalogSearchRequested,
-        onLoadMoreRequested: widget.onCatalogLoadMoreRequested,
-        catalogTotalCount: widget.catalogTotalCount,
-        catalogHasMore: widget.catalogHasMore,
-        catalogLoading: widget.catalogLoading,
-        catalogLoadingMore: widget.catalogLoadingMore,
-        catalogLoadMoreFailed: widget.catalogLoadMoreFailed,
-        recentSearches: _recentSearches,
-        onSearchCommitted: _rememberSearch,
-        rankingsLoader: widget.rankingsLoader,
-        onOpenNovel: _openNovel,
-        onOpenRankings: _openRankings,
-        onTagSelected: _openTag,
-      ),
+      if (feeds == null)
+        _buildDiscovery(context)
+      else
+        ListenableBuilder(
+          listenable: Listenable.merge([
+            feeds.recentlyUpdated,
+            feeds.mostClicked,
+          ]),
+          builder: (context, _) => ListenableBuilder(
+            listenable: feeds.catalog,
+            child: feeds.recentlyUpdated.novels.isEmpty
+                ? null
+                : _buildDiscovery(context),
+            builder: (context, child) => child ?? _buildDiscovery(context),
+          ),
+        ),
+      if (feeds == null)
+        _buildSearch(context)
+      else
+        ListenableBuilder(
+          listenable: feeds.catalog,
+          builder: (context, _) => _buildSearch(context),
+        ),
       LibraryScreen(
         continuedReads: widget.continuedReads,
         protectedDownloads: widget.protectedDownloads,

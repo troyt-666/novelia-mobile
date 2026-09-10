@@ -46,6 +46,36 @@ void main() {
     expect(html, isNot(contains('</style><script>attack()')));
   });
 
+  test('background chapter rendering preserves output and errors', () async {
+    final document = WenkuEpubDocument.parse(_fixtureEpub(longChapter: true));
+    final expected = document.htmlForSpine(
+      1,
+      dark: true,
+      fontSize: 23,
+      japaneseFirst: true,
+      palette: WenkuEpubPalette.sepia,
+      japaneseOpacity: .9,
+    );
+    final actual = await document.htmlForSpineAsync(
+      1,
+      dark: true,
+      fontSize: 23,
+      japaneseFirst: true,
+      palette: WenkuEpubPalette.sepia,
+      japaneseOpacity: .9,
+    );
+    expect(actual, expected);
+    await expectLater(
+      document.htmlForSpineAsync(
+        2,
+        dark: false,
+        fontSize: 18,
+        japaneseFirst: false,
+      ),
+      throwsRangeError,
+    );
+  });
+
   test(
     'generated EPUB behaves correctly in WKWebView',
     () async {

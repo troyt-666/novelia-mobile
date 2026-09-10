@@ -19,7 +19,7 @@ class LocalLibrarySnapshot {
     final intents = repository.listIntents();
     final copies = repository.listCopies(kind: OfflineCopyKind.offlineDownload);
     final tasks = repository.listTasks();
-    final novelIds = {
+    novelIds = {
       for (final row in progress) row.novelId,
       for (final row in savedBookmarks) row.novelId,
       for (final row in intents) row.novelId,
@@ -66,6 +66,7 @@ class LocalLibrarySnapshot {
   }
 
   late final List<LibraryContinuedRead> continuedReads;
+  late final Set<String> novelIds;
   late final List<LibraryProtectedDownload> downloads;
   late final List<LibraryBookmarkItem> bookmarks;
   late final OfflineStorageSummary storageSummary;
@@ -181,10 +182,15 @@ class LocalLibrarySnapshot {
       final intents = intentsByGroup[group] ?? const [];
       final copies = copiesByGroup[group] ?? const {};
       final tasks = tasksByGroup[group] ?? const {};
+      final catalog = novel.readerNovel?.chapters ?? const [];
+      final chapterOrder = {
+        for (var index = 0; index < catalog.length; index++)
+          catalog[index].id: index,
+      };
       final chapterIds = {...copies.keys, ...tasks.keys}.toList()
         ..sort((a, b) {
-          final aIndex = _chapterCatalogIndex(novel, a);
-          final bIndex = _chapterCatalogIndex(novel, b);
+          final aIndex = chapterOrder[a] ?? 1 << 30;
+          final bIndex = chapterOrder[b] ?? 1 << 30;
           final order = aIndex.compareTo(bIndex);
           return order == 0 ? a.compareTo(b) : order;
         });
@@ -241,13 +247,6 @@ class LocalLibrarySnapshot {
       return DownloadTaskState.stored;
     }
     return task?.state ?? DownloadTaskState.stored;
-  }
-
-  static int _chapterCatalogIndex(CatalogNovel novel, String chapterId) {
-    final chapters = novel.readerNovel?.chapters;
-    if (chapters == null) return 1 << 30;
-    final index = chapters.indexWhere((chapter) => chapter.id == chapterId);
-    return index < 0 ? 1 << 30 : index;
   }
 
   static List<LibraryBookmarkItem> _libraryBookmarks(

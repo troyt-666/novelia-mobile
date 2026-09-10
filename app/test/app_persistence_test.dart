@@ -39,6 +39,11 @@ void main() {
       NoveliaShell shell() =>
           tester.widget<NoveliaShell>(find.byType(NoveliaShell));
       final before = shell().continuedReads;
+      final originalShell = shell();
+      await originalShell.catalogController!.refreshCatalog();
+      await tester.pumpAndSettle();
+      expect(shell(), same(originalShell));
+      expect(shell().continuedReads, same(before));
       shell().onThemeModeChanged(ThemeMode.dark);
       await tester.pumpAndSettle();
       expect(shell().continuedReads, same(before));

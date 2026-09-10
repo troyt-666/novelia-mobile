@@ -89,6 +89,27 @@ void main() {
   });
 
   group('durable offline repository', () {
+    test('touches only the read chapter and never moves time backwards', () {
+      final repository = SqliteOfflineRepository.openInMemory();
+      addTearDown(repository.close);
+      for (final chapter in ['c1', 'c2']) {
+        _saveCacheCopy(
+          repository,
+          id: chapter,
+          chapterId: chapter,
+          storedAt: t0,
+        );
+      }
+      final later = t0.add(const Duration(minutes: 1));
+      repository.touchChapterCopies('novel', 'c1', later);
+      repository.touchChapterCopies('novel', 'c1', t0);
+      repository.touchChapterCopies('other-novel', 'c2', later);
+      expect(repository.copyById('c1')!.lastReadAt, later);
+      expect(repository.copyById('c2')!.lastReadAt, t0);
+      expect(repository.evictCacheTo(maxBytes: 400), isEmpty);
+      expect(repository.evictCacheTo(maxBytes: 200).single.id, 'c2');
+    });
+
     test('rehydrates intent, failed task, copy, and local state from disk', () {
       final directory = Directory.systemTemp.createTempSync('novelia-sqlite-');
       addTearDown(() => directory.deleteSync(recursive: true));

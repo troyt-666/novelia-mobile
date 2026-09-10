@@ -401,7 +401,9 @@ class LiveFirstNoveliaContentCoordinator
     Iterable<NoveliaNovelOutline> outlines,
   ) {
     final novels = <CatalogNovel>[];
-    final cachedById = _cachedOutlinesById();
+    final cachedById = _cachedOutlinesById(
+      outlines.map((outline) => outline.key.stableId),
+    );
     for (final outline in outlines) {
       final novelId = outline.key.stableId;
       final previous = cachedById[novelId];
@@ -425,8 +427,8 @@ class LiveFirstNoveliaContentCoordinator
       );
       novels.add(novel);
       _verifiedNovelIds.add(novel.id);
-      _bestEffortCacheOutline(novel, previous: previous);
     }
+    _bestEffortCacheOutlines(novels, previous: cachedById);
     return List.unmodifiable(novels);
   }
 
@@ -634,12 +636,12 @@ class LiveFirstNoveliaContentCoordinator
     }
   }
 
-  Map<String, CachedNovelOutline> _cachedOutlinesById() {
+  Map<String, CachedNovelOutline> _cachedOutlinesById(Iterable<String> ids) {
     final repository = contentRepository;
     if (repository == null) return const {};
     try {
       return {
-        for (final outline in repository.listCachedNovels())
+        for (final outline in repository.listCachedNovels(novelIds: ids))
           outline.id: outline,
       };
     } on Object {
@@ -647,23 +649,26 @@ class LiveFirstNoveliaContentCoordinator
     }
   }
 
-  void _bestEffortCacheOutline(
-    CatalogNovel outline, {
-    CachedNovelOutline? previous,
+  void _bestEffortCacheOutlines(
+    List<CatalogNovel> outlines, {
+    required Map<String, CachedNovelOutline> previous,
   }) {
     final repository = contentRepository;
-    if (repository == null || _isRevoked(outline.id)) {
-      return;
-    }
+    if (repository == null || outlines.isEmpty) return;
     try {
-      var cached = cacheAdapter.cacheOutline(outline, fetchedAt: clock());
-      if (previous != null) {
-        cached = cacheAdapter.preserveDetailOnlyOutlineFields(
-          cached,
-          from: previous,
-        );
-      }
-      repository.upsertNovelOutline(cached);
+      final fetchedAt = clock();
+      repository.upsertNovelOutlines(
+        outlines.map((outline) {
+          final cached = cacheAdapter.cacheOutline(
+            outline,
+            fetchedAt: fetchedAt,
+          );
+          final old = previous[outline.id];
+          return old == null
+              ? cached
+              : cacheAdapter.preserveDetailOnlyOutlineFields(cached, from: old);
+        }),
+      );
     } on Object {
       // A local cache failure does not invalidate an otherwise valid live read.
     }

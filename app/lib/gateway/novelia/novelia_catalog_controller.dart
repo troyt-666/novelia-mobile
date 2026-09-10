@@ -5,7 +5,7 @@ import 'novelia_content_coordinator.dart';
 import 'novelia_gateway.dart';
 
 /// Read-only view of one independently paginated catalog feed.
-class CatalogFeed {
+class CatalogFeed extends ChangeNotifier {
   CatalogFeed([List<CatalogNovel> initialNovels = const []])
     : _novels = List.unmodifiable(initialNovels);
 
@@ -24,6 +24,8 @@ class CatalogFeed {
   bool get loading => _loading;
   bool get loadingMore => _loadingMore;
   bool get loadMoreFailed => _loadMoreFailed;
+
+  void _changed() => notifyListeners();
 }
 
 /// Owns feed pagination and filtering. Search never writes discovery state.
@@ -40,15 +42,41 @@ class NoveliaCatalogController extends ChangeNotifier {
   final NoveliaContentCoordinator contentCoordinator;
   final bool Function() canAccessRestrictedContent;
   final NoveliaCatalogQuery baseQuery;
-  final VoidCallback? onContentChanged;
+  final ValueChanged<List<CatalogNovel>>? onContentChanged;
   final CatalogFeed catalog;
   final CatalogFeed recentlyUpdated;
   final CatalogFeed mostClicked = CatalogFeed();
   CatalogCriteria _criteria = const CatalogCriteria();
   CatalogCriteria get criteria => _criteria;
   bool _disposed = false;
+  CatalogAvailability _lastSearchAvailability = CatalogAvailability.offline;
   final _requests =
       <String, Future<NoveliaContentResult<NoveliaCatalogSlice>>>{};
+
+  CatalogAvailability get discoveryAvailability {
+    final feeds = [recentlyUpdated.availability, mostClicked.availability];
+    if (feeds.contains(CatalogAvailability.available)) {
+      return CatalogAvailability.available;
+    }
+    if (feeds.contains(CatalogAvailability.authenticationRequired)) {
+      return CatalogAvailability.authenticationRequired;
+    }
+    return CatalogAvailability.offline;
+  }
+
+  CatalogAvailability get searchAvailability =>
+      catalog.availability == CatalogAvailability.offline &&
+          discoveryAvailability == CatalogAvailability.available
+      ? CatalogAvailability.available
+      : catalog.availability;
+
+  void _notifyFeedChanged(CatalogFeed feed) {
+    final availabilityChanged = _lastSearchAvailability != searchAvailability;
+    _lastSearchAvailability = searchAvailability;
+    feed._changed();
+    if (feed != catalog && availabilityChanged) catalog._changed();
+    notifyListeners();
+  }
 
   Future<void> refreshCatalog({
     CatalogCriteria? criteria,
@@ -135,7 +163,7 @@ class NoveliaCatalogController extends ChangeNotifier {
       feed._pageIndex = -1;
       feed._totalPages = 0;
     }
-    notifyListeners();
+    _notifyFeedChanged(feed);
     try {
       final result = await _load(query);
       if (_disposed || generation != feed._generation) return;
@@ -168,7 +196,7 @@ class NoveliaCatalogController extends ChangeNotifier {
         ]);
         feed._pageIndex = slice.pageIndex;
         feed._totalPages = slice.totalPages;
-        onContentChanged?.call();
+        onContentChanged?.call(incoming);
       }
     } on Object {
       if (_disposed || generation != feed._generation) return;
@@ -180,7 +208,7 @@ class NoveliaCatalogController extends ChangeNotifier {
       if (!_disposed && generation == feed._generation) {
         feed._loading = false;
         feed._loadingMore = false;
-        notifyListeners();
+        _notifyFeedChanged(feed);
       }
     }
   }
@@ -208,6 +236,9 @@ class NoveliaCatalogController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    catalog.dispose();
+    recentlyUpdated.dispose();
+    mostClicked.dispose();
     super.dispose();
   }
 

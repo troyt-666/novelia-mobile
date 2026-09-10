@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -22,7 +23,7 @@ class WenkuEpubStore {
     try {
       final bytes = await target.readAsBytes();
       try {
-        return _parseEpub(bytes);
+        return await Isolate.run(() => _parseEpub(bytes));
       } on NoveliaGatewayException {
         await target.delete();
       }
@@ -36,7 +37,7 @@ class WenkuEpubStore {
     WenkuEpubRequest request,
     Uint8List bytes,
   ) async {
-    final document = _parseEpub(bytes);
+    final document = await Isolate.run(() => _parseEpub(bytes));
     final target = await _fileFor(request, createDirectory: true);
     final temporary = File('${target.path}.part');
     await temporary.writeAsBytes(bytes, flush: true);

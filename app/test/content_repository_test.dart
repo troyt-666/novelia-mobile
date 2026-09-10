@@ -43,6 +43,39 @@ void main() {
   });
 
   group('normalized novel content', () {
+    test(
+      'batch writes roll back together and reads select only requested IDs',
+      () {
+        final database = sqlite3.openInMemory();
+        addTearDown(database.close);
+        final repository = SqliteOfflineRepository.fromDatabase(database);
+        addTearDown(repository.close);
+        repository.upsertNovelOutlines([
+          _outline(t0),
+          _outline(t0, id: 'other'),
+        ]);
+        database.execute(
+          "UPDATE cached_novels SET tags_json = 'invalid' WHERE id = 'other';",
+        );
+        expect(repository.listCachedNovels(novelIds: const []), isEmpty);
+        expect(
+          repository.listCachedNovels(novelIds: ['novel', 'missing']).single.id,
+          'novel',
+        );
+        database.execute(
+          "CREATE TRIGGER reject_outline BEFORE INSERT ON cached_novels WHEN NEW.id = 'rejected' BEGIN SELECT RAISE(ABORT, 'rejected'); END;",
+        );
+        expect(
+          () => repository.upsertNovelOutlines([
+            _outline(t0, chineseTitle: 'must roll back'),
+            _outline(t0, id: 'rejected'),
+          ]),
+          throwsA(isA<SqliteException>()),
+        );
+        expect(repository.cachedNovelOutline('novel')!.chineseTitle, '');
+      },
+    );
+
     test('round-trips exact empty strings and ordered sections', () {
       final repository = SqliteOfflineRepository.openInMemory();
       addTearDown(repository.close);
@@ -390,9 +423,13 @@ void main() {
   });
 }
 
-CachedNovelOutline _outline(DateTime fetchedAt, {String chineseTitle = ''}) {
+CachedNovelOutline _outline(
+  DateTime fetchedAt, {
+  String chineseTitle = '',
+  String id = 'novel',
+}) {
   return CachedNovelOutline(
-    id: 'novel',
+    id: id,
     chineseTitle: chineseTitle,
     japaneseTitle: '原題',
     author: '',

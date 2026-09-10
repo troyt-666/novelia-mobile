@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -201,6 +202,28 @@ class WenkuEpubDocument {
         'The downloaded EPUB structure could not be read safely.',
       );
     }
+  }
+
+  Future<String> htmlForSpineAsync(
+    int index, {
+    required bool dark,
+    required double fontSize,
+    required bool japaneseFirst,
+    WenkuEpubPalette palette = WenkuEpubPalette.automatic,
+    double japaneseOpacity = .68,
+  }) {
+    // ponytail: one document copy per chapter; retain a worker if large EPUB
+    // transfer costs become significant in device profiles.
+    return Isolate.run(
+      () => htmlForSpine(
+        index,
+        dark: dark,
+        fontSize: fontSize,
+        japaneseFirst: japaneseFirst,
+        palette: palette,
+        japaneseOpacity: japaneseOpacity,
+      ),
+    );
   }
 
   String htmlForSpine(

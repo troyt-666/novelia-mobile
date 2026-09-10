@@ -10,6 +10,53 @@ import 'package:jfzreader/gateway/novelia/novelia_reader_window.dart';
 
 void main() {
   test(
+    'long reading sessions reuse recent chapters and reload evicted bodies',
+    () async {
+      final chapters = [for (var n = 1; n <= 30; n++) _metadata('c$n', n)];
+      final coordinator = _WindowCoordinator({
+        for (final chapter in chapters)
+          chapter.id: NoveliaContentResult.available(_loaded(chapter)),
+      });
+      final launch =
+          await NoveliaReaderWindowFactory(
+            contentCoordinator: coordinator,
+          ).create(
+            novel: _novel(chapters),
+            selectedChapter: null,
+            requestedPosition: null,
+            translationSource: TranslationSource.sakura,
+          );
+      final source = launch.dataSource!;
+      for (var n = 1; n < 25; n++) {
+        await source.loadAdjacent(
+          ReaderAdjacentRequest(
+            anchorChapterId: 'c$n',
+            direction: ReaderLoadDirection.after,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+      final recentCalls = coordinator.chapterCalls
+          .where((id) => id == 'c25')
+          .length;
+      await source.loadAround('c25');
+      expect(
+        coordinator.chapterCalls.where((id) => id == 'c25'),
+        hasLength(recentCalls),
+      );
+      final oldCalls = coordinator.chapterCalls
+          .where((id) => id == 'c1')
+          .length;
+      await source.loadAround('c1');
+      expect(
+        coordinator.chapterCalls.where((id) => id == 'c1'),
+        hasLength(oldCalls + 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
     'loads the requested target first and prefetches forward in background',
     () async {
       final chapters = [

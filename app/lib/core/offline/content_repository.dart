@@ -3,7 +3,7 @@ import 'offline_models.dart';
 
 /// Local normalized content store, independent of gateway DTOs and UI models.
 abstract interface class ContentRepository {
-  List<CachedNovelOutline> listCachedNovels();
+  List<CachedNovelOutline> listCachedNovels({Iterable<String>? novelIds});
 
   CachedNovelDetail? novelDetail(String novelId);
 
@@ -16,6 +16,8 @@ abstract interface class ContentRepository {
   CachedChapterPayload? chapterPayloadById(String payloadId);
 
   void upsertNovelOutline(CachedNovelOutline outline);
+
+  void upsertNovelOutlines(Iterable<CachedNovelOutline> outlines);
 
   void upsertNovelDetail(CachedNovelDetail detail);
 

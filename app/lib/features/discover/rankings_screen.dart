@@ -279,9 +279,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final novels = _isRemote
-        ? List<CatalogNovel>.of(_remoteNovels)
-        : _fixtureRanked;
+    final novels = _isRemote ? _remoteNovels : _fixtureRanked;
     final showInitialLoading = _isRemote && _loading && novels.isEmpty;
     final showInitialError =
         _isRemote && _remoteError != null && novels.isEmpty && !_loading;
@@ -323,105 +321,139 @@ class _RankingsScreenState extends State<RankingsScreen> {
                 ],
               ),
             )
-          : ListView(
+          : CustomScrollView(
               key: const PageStorageKey('rankings-scroll'),
               controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-              children: [
-                Text(
-                  _isRemote ? _remoteDescription : '保留各来源的原生排序',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+                  sliver: SliverMainAxisGroup(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _isRemote ? _remoteDescription : '保留各来源的原生排序',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                            const SizedBox(height: 16),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                _RankingDropdown<String>(
+                                  key: const ValueKey('ranking-source-filter'),
+                                  label: '来源',
+                                  value: _source,
+                                  allLabel: _isRemote ? null : '全部来源',
+                                  values: _sources,
+                                  itemLabel: (value) => value,
+                                  onChanged: (value) => _applyFilter(() {
+                                    _source = value;
+                                    if (!_supportsPublicationState) {
+                                      _state = null;
+                                    }
+                                  }),
+                                ),
+                                _RankingDropdown<RankingPeriod>(
+                                  key: const ValueKey('ranking-period-filter'),
+                                  label: '时间',
+                                  value: _period,
+                                  values: RankingPeriod.values,
+                                  itemLabel: (value) => value.label,
+                                  onChanged: (value) {
+                                    if (value != null) {
+                                      _applyFilter(() => _period = value);
+                                    }
+                                  },
+                                ),
+                                _RankingDropdown<String>(
+                                  key: const ValueKey('ranking-genre-filter'),
+                                  label: '类型',
+                                  value: _genre,
+                                  allLabel: '全部类型',
+                                  values: _genres,
+                                  itemLabel: (value) => value,
+                                  onChanged: (value) =>
+                                      _applyFilter(() => _genre = value),
+                                ),
+                                if (_supportsPublicationState)
+                                  _RankingDropdown<NovelPublicationState>(
+                                    key: const ValueKey('ranking-state-filter'),
+                                    label: '状态',
+                                    value: _state,
+                                    allLabel: '全部状态',
+                                    values: NovelPublicationState.values,
+                                    itemLabel: (value) => value.label,
+                                    onChanged: (value) =>
+                                        _applyFilter(() => _state = value),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 22),
+                          ],
+                        ),
+                      ),
+                      if (novels.isEmpty)
+                        const SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 48),
+                            child: Center(child: Text('该组合暂无排行数据')),
+                          ),
+                        )
+                      else
+                        SliverList.separated(
+                          itemCount: novels.length,
+                          itemBuilder: (context, index) => _RankedNovelRow(
+                            rank: _firstRank + index,
+                            novel: novels[index],
+                            onOpen: () => widget.onOpenNovel(novels[index]),
+                            onTagSelected: widget.onTagSelected,
+                          ),
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 12),
+                        ),
+                      SliverToBoxAdapter(
+                        child: Column(
+                          children: [
+                            const SizedBox(height: 12),
+                            if (_loadingMore)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    key: ValueKey('rankings-loading-more'),
+                                  ),
+                                ),
+                              ),
+                            if (_loadMoreFailed)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                child: Center(
+                                  child: FilledButton.icon(
+                                    key: const ValueKey(
+                                      'retry-rankings-load-more',
+                                    ),
+                                    onPressed: () => _loadRemote(),
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('重试'),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _RankingDropdown<String>(
-                      key: const ValueKey('ranking-source-filter'),
-                      label: '来源',
-                      value: _source,
-                      allLabel: _isRemote ? null : '全部来源',
-                      values: _sources,
-                      itemLabel: (value) => value,
-                      onChanged: (value) => _applyFilter(() {
-                        _source = value;
-                        if (!_supportsPublicationState) _state = null;
-                      }),
-                    ),
-                    _RankingDropdown<RankingPeriod>(
-                      key: const ValueKey('ranking-period-filter'),
-                      label: '时间',
-                      value: _period,
-                      values: RankingPeriod.values,
-                      itemLabel: (value) => value.label,
-                      onChanged: (value) {
-                        if (value != null) {
-                          _applyFilter(() => _period = value);
-                        }
-                      },
-                    ),
-                    _RankingDropdown<String>(
-                      key: const ValueKey('ranking-genre-filter'),
-                      label: '类型',
-                      value: _genre,
-                      allLabel: '全部类型',
-                      values: _genres,
-                      itemLabel: (value) => value,
-                      onChanged: (value) => _applyFilter(() => _genre = value),
-                    ),
-                    if (_supportsPublicationState)
-                      _RankingDropdown<NovelPublicationState>(
-                        key: const ValueKey('ranking-state-filter'),
-                        label: '状态',
-                        value: _state,
-                        allLabel: '全部状态',
-                        values: NovelPublicationState.values,
-                        itemLabel: (value) => value.label,
-                        onChanged: (value) =>
-                            _applyFilter(() => _state = value),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 22),
-                if (novels.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 48),
-                    child: Center(child: Text('该组合暂无排行数据')),
-                  )
-                else
-                  for (var index = 0; index < novels.length; index++) ...[
-                    _RankedNovelRow(
-                      rank: _firstRank + index,
-                      novel: novels[index],
-                      onOpen: () => widget.onOpenNovel(novels[index]),
-                      onTagSelected: widget.onTagSelected,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                if (_loadingMore)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        key: ValueKey('rankings-loading-more'),
-                      ),
-                    ),
-                  ),
-                if (_loadMoreFailed)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Center(
-                      child: FilledButton.icon(
-                        key: const ValueKey('retry-rankings-load-more'),
-                        onPressed: () => _loadRemote(),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('重试'),
-                      ),
-                    ),
-                  ),
               ],
             ),
     );
