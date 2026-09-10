@@ -1,0 +1,8 @@
+// Opt-in test package; the release application ID remains unchanged.
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        project.androidComponents.finalizeDsl { android ->
+            android.buildTypes.maybeCreate('profile').applicationIdSuffix = '.profile'
+        }
+    }
+}

@@ -18,8 +18,45 @@
 
 验证以相关行为测试、最终静态分析与完整回归为基础；性能记录区分机制验证与实际帧耗时。设备 Profile 数据另行注明设备、构建模式、场景及测量结果，不以测试通过代替帧率结论。
 
-EPUB 当前使用一次性 isolate，每次章节生成会复制文档到后台。这样不新增常驻 worker 生命周期；若设备测量显示大型文库的传输成本明显，再改为后台保留文档。当前未测量移动设备 Profile 帧耗时，本文不宣称 FPS 或掉帧率提升幅度。
+EPUB 当前使用一次性 isolate，每次章节生成会复制文档到后台。这样不新增常驻 worker 生命周期；若设备测量显示大型文库的传输成本明显，再改为后台保留文档。Android 实机 Profile 结果见下文；未进行改动前同机对照，不宣称改善幅度。
 
 最终完整回归：`cd app && flutter --no-version-check test --no-pub`，311 项通过（包含真实 WKWebView EPUB 契约检查）。
 
 静态分析：Dart MCP 对 `lib`、`test`、`integration_test` 返回无错误；`flutter --no-version-check analyze --no-pub lib test integration_test` 返回 `No issues found`。全目录命令会额外扫描 `build/scroll-diagnosis-20260910` 内已有的外部 Flutter SDK 诊断副本；本次不修改这些生成材料。
+
+
+## Android 实机 Profile · 2026-09-10
+
+测量代码为性能优化提交 `e691e5b`，使用 Flutter 3.44.9 / Dart 3.12.2 的 Android ARM64 Profile 构建。设备 PHN110（SM8550）、Android 16 / API 36；外屏 1116×2484，DPR 3.25，Flutter 报告刷新率 120Hz。USB 连接、电量 100%，测量前后电池温度约 36.7→36.4°C。
+
+沿实际应用路由运行：500 条固定目录结果、5 次搜索、200 章中日对照正文（每章 6 段），使用真实阅读窗口和临时磁盘 SQLite 进度保存。各滚动场景先预热 2 次；发现、搜索各采样 16 次手势，阅读前段 18 次、后段 48 次。最终到达第 54 章，未触及书末。五个场景合计 9,273 帧，完整实机测试通过；测量脚本静态检查通过。
+
+下表耗时单位为 ms。UI 包括构建、布局和绘制；“超预算”表示 UI 或 Raster 任一阶段超过阈值，是逐阶段耗时指标，不能直接视为系统实际丢帧率。P95/P99 使用原始帧数组的 nearest-rank 分位数。
+
+| 场景 | 帧数 | UI P95 / P99 | Raster P95 / P99 | UI 最大值 | 超 8.33ms（120Hz） | 超 16.67ms（60Hz） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 发现页滚动 | 1397 | 2.09 / 12.44 | 5.32 / 5.88 | 22.66 | 42（3.01%） | 1（0.07%） |
+| 5 次搜索输入 | 89 | 1.33 / 2.16 | 1.35 / 1.45 | 2.16 | 0（0.00%） | 0（0.00%） |
+| 搜索结果滚动 | 1400 | 2.38 / 11.26 | 5.26 / 5.79 | 19.64 | 41（2.93%） | 2（0.14%） |
+| 阅读前段（第 2→16 章） | 1764 | 1.38 / 12.88 | 3.43 / 3.97 | 22.28 | 28（1.59%） | 9（0.51%） |
+| 阅读后段（第 16→54 章） | 4623 | 1.65 / 14.73 | 3.51 / 4.20 | 29.00 | 83（1.80%） | 33（0.71%） |
+
+连续阅读后段 UI P95 为 1.65ms，Raster P95 为 3.51ms；但 UI P99 达 14.73ms，最大 29.00ms，存在需要继续定位的尾部尖峰。当前数据把下一步关注点指向 UI 阶段，尚未通过调用栈或时间线确认具体函数。固定目录和正文排除了网络等待，本次也未覆盖图片加载、EPUB 或大型既有缓存；这是优化后的设备基线，不能据此计算优化前后的提升比例。
+
+原始逐帧数据保存在本地 `app/build/android-profile/frames.json`，运行日志为同目录 `run.log`，均为生成物。首次 DDS 连接失败的日志与截图也保存在同目录。第一次 40 章试跑触及书末，已被 200 章复测替代，上表仅使用最终有效样本。
+
+复现命令（先用 `flutter --no-version-check devices` 确认设备 ID）：
+
+```sh
+cd app/android
+./gradlew -I ../test_driver/profile-package.gradle \
+  -Ptarget=integration_test/performance_profile_test.dart \
+  -Ptarget-platform=android-arm64 :app:assembleProfile
+cd ..
+flutter --no-version-check drive --profile --no-dds --no-pub \
+  --use-application-binary=build/app/outputs/apk/profile/app-profile.apk \
+  --driver=test_driver/performance_driver.dart \
+  --target=integration_test/performance_profile_test.dart -d DEVICE_ID
+```
+
+`profile-package.gradle` 仅在显式指定时为测试包添加 `.profile` 后缀，发布包标识不变。此次使用独立测试安装，原发布版 `versionCode=8` 及其数据保持不变。测量结束后已确认当前用户下不再安装该测试包。
