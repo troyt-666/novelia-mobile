@@ -34,6 +34,7 @@ void main() {
     RemoteFavoritesViewModel remoteFavorites =
         const RemoteFavoritesViewModel.unavailable(),
     FavoriteToFolderRequested? onFavoriteToFolderRequested,
+    FavoriteFromFolderRemoveRequested? onFavoriteFromFolderRemoveRequested,
     AccountLogin? onAccountLogin,
     FavoriteFolderPageLoader? favoriteFolderLoader,
     RemoteNovelPageLoader? readingHistoryLoader,
@@ -60,6 +61,8 @@ void main() {
           accountSession: accountSession,
           remoteFavorites: remoteFavorites,
           onFavoriteToFolderRequested: onFavoriteToFolderRequested,
+          onFavoriteFromFolderRemoveRequested:
+              onFavoriteFromFolderRemoveRequested,
           onAccountLogin: onAccountLogin,
           favoriteFolderLoader: favoriteFolderLoader,
           readingHistoryLoader: readingHistoryLoader,
@@ -759,6 +762,8 @@ void main() {
     );
     CatalogNovel? favorite;
     String? folderId;
+    String? removedFolderId;
+    var failRemoval = true;
     final novel = fixtureCatalogNovels.first;
     await pumpShell(
       tester,
@@ -770,6 +775,10 @@ void main() {
       onFavoriteToFolderRequested: (value, selectedFolderId) {
         favorite = value;
         folderId = selectedFolderId;
+      },
+      onFavoriteFromFolderRemoveRequested: (value, selectedFolderId) async {
+        if (failRemoval) throw StateError('offline');
+        removedFolderId = selectedFolderId;
       },
     );
 
@@ -788,6 +797,91 @@ void main() {
 
     expect(favorite, same(novel));
     expect(folderId, 'later');
+    final favoriteButton = find.byKey(const ValueKey('favorite-novel-button'));
+    final button = tester.widget<IconButton>(favoriteButton);
+    expect(button.onPressed, isNotNull);
+    expect(button.tooltip, '取消收藏');
+    expect(
+      button.color,
+      Theme.of(tester.element(favoriteButton)).colorScheme.primary,
+    );
+
+    await tester.tap(favoriteButton);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('favorite-icon-solid')), findsOneWidget);
+    expect(find.text('收藏更新失败，请检查网络后重试'), findsOneWidget);
+    failRemoval = false;
+    await tester.tap(favoriteButton);
+    await tester.pumpAndSettle();
+    expect(removedFolderId, 'later');
+    expect(find.byKey(const ValueKey('favorite-icon-hollow')), findsOneWidget);
+  });
+
+  testWidgets('removing a favorite in details refreshes its cloud folder', (
+    tester,
+  ) async {
+    final novel = fixtureCatalogNovels.first.copyWith(
+      isFavorite: true,
+      favoriteFolderId: 'later',
+    );
+    var removed = false;
+    final requests = <int>[];
+    await pumpShell(
+      tester,
+      accountSession: AccountSessionSnapshot.signedIn(
+        ReaderAccountProfile(
+          username: 'reader',
+          role: 'member',
+          expiresAt: DateTime.utc(2030),
+        ),
+      ),
+      remoteFavorites: RemoteFavoritesViewModel.available(const [
+        LibraryFavoriteFolder(id: 'later', title: '以后读'),
+      ]),
+      favoriteFolderLoader: (_, page) async {
+        requests.add(page);
+        return RemoteNovelPageView(
+          novels: removed ? [] : [novel],
+          pageNumber: page,
+          totalPages: 1,
+        );
+      },
+      novelDetailsLoader: (_) async => novel,
+      onFavoriteToFolderRequested: (_, _) async {},
+      onFavoriteFromFolderRemoveRequested: (value, folderId) async {
+        expect(value.id, novel.id);
+        expect(folderId, 'later');
+        removed = true;
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('favorite-folder-later')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('favorite-novel-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('favorite-icon-hollow')), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(requests, [1, 1]);
+    expect(find.text('这里还没有小说'), findsOneWidget);
+  });
+
+  testWidgets('fresh details override stale favorite status in an outline', (
+    tester,
+  ) async {
+    final novel = fixtureCatalogNovels.first;
+    await pumpShell(
+      tester,
+      novels: [novel.copyWith(isFavorite: true, favoriteFolderId: 'later')],
+      novelDetailsLoader: (_) async => novel,
+      onFavoriteRequested: (_) {},
+    );
+    await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('favorite-icon-hollow')), findsOneWidget);
   });
 
   testWidgets('opening a filtered result commits local search history', (

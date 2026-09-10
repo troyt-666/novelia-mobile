@@ -39,7 +39,7 @@ class RemoteNovelListScreen extends StatefulWidget {
 
   final String title;
   final RemoteNovelPageLoader loader;
-  final ValueChanged<CatalogNovel> onOpenNovel;
+  final FutureOr<void> Function(CatalogNovel novel) onOpenNovel;
   final ValueChanged<String> onTagSelected;
   final RemoteNovelRemoveHandler? onRemoveNovel;
 
@@ -47,7 +47,8 @@ class RemoteNovelListScreen extends StatefulWidget {
   State<RemoteNovelListScreen> createState() => _RemoteNovelListScreenState();
 }
 
-class _RemoteNovelListScreenState extends State<RemoteNovelListScreen> {
+class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
+    with WidgetsBindingObserver {
   RemoteNovelPageView? _page;
   Object? _error;
   var _requestedPage = 1;
@@ -57,7 +58,24 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_load(1));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_load(1));
+  }
+
+  Future<void> _openNovel(CatalogNovel novel) async {
+    await widget.onOpenNovel(novel);
+    if (mounted) await _load(1);
   }
 
   Future<void> _load([int? requestedPage]) async {
@@ -137,7 +155,17 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen> {
     final error = _error;
     return Scaffold(
       key: const ValueKey('remote-novel-list-screen'),
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            key: const ValueKey('refresh-remote-novel-list'),
+            tooltip: '刷新',
+            onPressed: page == null && error == null ? null : () => _load(1),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
       body: page == null
           ? Center(
               child: error == null
@@ -163,7 +191,7 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen> {
             )
           : _RemoteNovelPage(
               page: page,
-              onOpenNovel: widget.onOpenNovel,
+              onOpenNovel: _openNovel,
               onTagSelected: widget.onTagSelected,
               onRemoveNovel: widget.onRemoveNovel == null ? null : _removeNovel,
               removingNovelIds: _removingNovelIds,

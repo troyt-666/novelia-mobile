@@ -319,57 +319,57 @@ class _NoveliaShellState extends State<NoveliaShell> {
     return mounted && widget.accountSession.isSignedIn;
   }
 
-  Future<bool> _requestFavorite(CatalogNovel novel) async {
+  Future<CatalogNovel?> _requestFavorite(CatalogNovel novel) async {
     if (widget.onFavoriteToFolderRequested == null &&
         widget.onFavoriteRequested != null) {
       widget.onFavoriteRequested!(novel);
-      return true;
+      return novel.copyWith(isFavorite: !novel.isFavorite);
     }
     if (!widget.accountSession.isSignedIn) {
       final signedIn = await _ensureSignedIn();
-      if (!mounted) return false;
-      if (signedIn) {
-        _showFixtureAction('登录成功，请再次点击收藏');
-      }
-      return false;
+      if (!mounted) return null;
+      if (signedIn) _showFixtureAction('登录成功，请再次点击收藏');
+      return null;
     }
-    final callback = widget.onFavoriteToFolderRequested;
-    if (callback == null) {
-      widget.onFavoriteRequested?.call(novel);
-      return widget.onFavoriteRequested != null;
-    }
-    if (widget.remoteFavorites.status == RemoteFavoritesStatus.unavailable) {
-      _showFixtureAction('收藏夹暂不可用，请稍后重试');
-      return false;
-    }
-    final folders = widget.remoteFavorites.folders;
     try {
+      if (novel.isFavorite) {
+        final remove = widget.onFavoriteFromFolderRemoveRequested;
+        final folderId = novel.favoriteFolderId;
+        if (remove == null || folderId == null) {
+          _showFixtureAction('收藏状态暂不可用，请重新打开详情后重试');
+          return null;
+        }
+        await remove(novel, folderId);
+        if (mounted) _showFixtureAction('已取消收藏');
+        return novel.copyWith(isFavorite: false);
+      }
+      final callback = widget.onFavoriteToFolderRequested;
+      if (callback == null) return null;
+      if (widget.remoteFavorites.status == RemoteFavoritesStatus.unavailable) {
+        _showFixtureAction('收藏夹暂不可用，请稍后重试');
+        return null;
+      }
+      final folders = widget.remoteFavorites.folders;
+      String? folderId;
       if (folders.isEmpty) {
-        final created = await _createFavoriteFolder();
-        if (created == null || !mounted) return false;
-        await callback(novel, created.id);
-        _lastFavoriteFolderId = created.id;
+        folderId = (await _createFavoriteFolder())?.id;
       } else if (folders.length == 1) {
-        await callback(novel, folders.single.id);
-        _lastFavoriteFolderId = folders.single.id;
+        folderId = folders.single.id;
       } else {
-        final folderId = await _chooseFavoriteFolder(folders);
-        if (folderId == null || !mounted) return false;
+        folderId = await _chooseFavoriteFolder(folders);
         if (folderId == _createFolderChoice) {
-          final created = await _createFavoriteFolder();
-          if (created == null || !mounted) return false;
-          await callback(novel, created.id);
-          _lastFavoriteFolderId = created.id;
-        } else {
-          await callback(novel, folderId);
-          _lastFavoriteFolderId = folderId;
+          if (!mounted) return null;
+          folderId = (await _createFavoriteFolder())?.id;
         }
       }
+      if (folderId == null || !mounted) return null;
+      await callback(novel, folderId);
+      _lastFavoriteFolderId = folderId;
       if (mounted) _showFixtureAction('已加入收藏夹');
-      return true;
+      return novel.copyWith(isFavorite: true, favoriteFolderId: folderId);
     } on Object {
-      if (mounted) _showFixtureAction('收藏失败，请检查网络后重试');
-      return false;
+      if (mounted) _showFixtureAction('收藏更新失败，请检查网络后重试');
+      return null;
     }
   }
 
@@ -679,7 +679,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
                     widget.onFavoriteToFolderRequested == null &&
                     widget.onAccountLogin == null
                 ? null
-                : () => _requestFavorite(novel),
+                : _requestFavorite,
             onDownload: () async {
               final callback = widget.onDownloadRequested;
               if (callback != null) {

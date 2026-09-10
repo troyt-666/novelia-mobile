@@ -681,6 +681,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
 
   void _saveTopLevelRoute(int destination) {
     _currentDestination = destination;
+    if (destination == 2) unawaited(_refreshFavoriteFolders());
     _repository.saveLastRoute(
       LastRouteState(
         routeName: _routeForDestination(destination),

@@ -80,6 +80,7 @@ class NoveliaDomainAdapter {
       declaredChapterCount: _nonnegative(outline.totalChapters),
       originalUrl: originalUri(outline.key),
       isFavorite: outline.favoriteFolderId != null,
+      favoriteFolderId: outline.favoriteFolderId,
     );
   }
 
@@ -128,6 +129,7 @@ class NoveliaDomainAdapter {
       comments: comments,
       originalUrl: originalUri(details.key),
       isFavorite: details.favoriteFolderId != null,
+      favoriteFolderId: details.favoriteFolderId,
     );
   }
 

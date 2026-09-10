@@ -42,8 +42,39 @@ void main() {
       find.byKey(ValueKey('open-details-${fixtureCatalogNovels[1].id}')),
     );
 
-    expect(requestedPages, [1, 2]);
+    expect(requestedPages, [1, 2, 1]);
     expect(opened, same(fixtureCatalogNovels[1]));
+  });
+
+  testWidgets('refresh and app resume read external additions and removals', (
+    tester,
+  ) async {
+    var novels = <CatalogNovel>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RemoteNovelListScreen(
+          title: '收藏夹',
+          loader: (page) async => RemoteNovelPageView(
+            novels: novels,
+            pageNumber: page,
+            totalPages: 1,
+          ),
+          onOpenNovel: (_) {},
+          onTagSelected: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('这里还没有小说'), findsOneWidget);
+    novels = [fixtureCatalogNovels.first];
+    await tester.tap(find.byKey(const ValueKey('refresh-remote-novel-list')));
+    await tester.pumpAndSettle();
+    expect(find.text(novels.first.chineseTitle), findsOneWidget);
+    novels = [];
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('这里还没有小说'), findsOneWidget);
   });
 
   testWidgets('reports a failed page and retries the same page', (

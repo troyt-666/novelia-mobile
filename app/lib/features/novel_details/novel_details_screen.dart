@@ -22,7 +22,7 @@ class NovelDetailsScreen extends StatefulWidget {
 
   final CatalogNovel novel;
   final ValueChanged<NovelChapter?> onOpenReader;
-  final FutureOr<bool> Function()? onFavorite;
+  final FutureOr<CatalogNovel?> Function(CatalogNovel novel)? onFavorite;
   final FutureOr<void> Function()? onDownload;
   final FutureOr<void> Function()? onOpenOriginal;
   final ValueChanged<String>? onAuthorSelected;
@@ -45,7 +45,8 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
   int _requestedCommentPage = 1;
   bool _downloadStarting = false;
   bool _openingOriginal = false;
-  late bool _isFavorite = widget.novel.isFavorite;
+  late CatalogNovel _favoriteNovel = widget.novel;
+  bool get _isFavorite => _favoriteNovel.isFavorite;
   bool _favoriteStarting = false;
 
   bool get _usesRemoteComments => widget.commentPageLoader != null;
@@ -53,18 +54,27 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
   @override
   void didUpdateWidget(covariant NovelDetailsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.novel.id != widget.novel.id || widget.novel.isFavorite) {
-      _isFavorite = widget.novel.isFavorite;
+    if (oldWidget.novel.id != widget.novel.id ||
+        oldWidget.novel.isFavorite != widget.novel.isFavorite ||
+        oldWidget.novel.favoriteFolderId != widget.novel.favoriteFolderId) {
+      _favoriteNovel = widget.novel;
     }
   }
 
   Future<void> _startFavorite() async {
     final callback = widget.onFavorite;
-    if (callback == null || _isFavorite || _favoriteStarting) return;
+    if (callback == null || _favoriteStarting) return;
     setState(() => _favoriteStarting = true);
     try {
-      final added = await callback();
-      if (mounted && added) setState(() => _isFavorite = true);
+      final updated = await callback(_favoriteNovel);
+      if (mounted && updated != null) {
+        setState(() => _favoriteNovel = updated);
+      }
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('收藏更新失败，请检查网络后重试')));
     } finally {
       if (mounted) setState(() => _favoriteStarting = false);
     }
@@ -289,8 +299,9 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
           if (widget.onFavorite != null)
             IconButton(
               key: const ValueKey('favorite-novel-button'),
-              tooltip: _isFavorite ? '已收藏' : '加入收藏',
-              onPressed: _isFavorite || _favoriteStarting
+              tooltip: _isFavorite ? '取消收藏' : '加入收藏',
+              color: _isFavorite ? colors.primary : null,
+              onPressed: _favoriteStarting
                   ? null
                   : () => unawaited(_startFavorite()),
               icon: Icon(

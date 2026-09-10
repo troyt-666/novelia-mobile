@@ -276,6 +276,7 @@ class CatalogNovel {
     this.comments = const [],
     this.originalUrl,
     this.isFavorite = false,
+    this.favoriteFolderId,
   }) : assert(
          declaredChapterCount == null || declaredChapterCount >= 0,
          'declaredChapterCount cannot be negative.',
@@ -306,6 +307,7 @@ class CatalogNovel {
   final List<NovelComment> comments;
   final Uri? originalUrl;
   final bool isFavorite;
+  final String? favoriteFolderId;
 
   /// Known chapter total, or null when neither service metadata nor a hydrated
   /// catalog establishes it.
@@ -319,7 +321,7 @@ class CatalogNovel {
 
   bool get hasChapterCatalog => readerNovel != null;
 
-  CatalogNovel copyWith({bool? isFavorite}) {
+  CatalogNovel copyWith({bool? isFavorite, String? favoriteFolderId}) {
     return CatalogNovel(
       id: id,
       chineseTitle: chineseTitle,
@@ -340,6 +342,9 @@ class CatalogNovel {
       comments: comments,
       originalUrl: originalUrl,
       isFavorite: isFavorite ?? this.isFavorite,
+      favoriteFolderId: isFavorite == false
+          ? null
+          : favoriteFolderId ?? this.favoriteFolderId,
     );
   }
 

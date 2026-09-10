@@ -37,6 +37,18 @@ void main() {
       expect(novel.originalUrl, Uri.parse('https://ncode.syosetu.com/n8439ed'));
     });
 
+    test('preserves the folder identity needed to cancel a favorite', () {
+      final outline = adapter.mapOutline(_outline(favoriteFolderId: 'later'));
+      final details = adapter.mapDetails(_details(favoriteFolderId: 'later'));
+      for (final novel in [outline, details]) {
+        expect(novel.isFavorite, isTrue);
+        expect(novel.favoriteFolderId, 'later');
+        final removed = novel.copyWith(isFavorite: false);
+        expect(removed.isFavorite, isFalse);
+        expect(removed.favoriteFolderId, isNull);
+      }
+    });
+
     test('preserves an omitted publication type as unknown', () {
       final novel = adapter.mapOutline(_outline(publicationType: null));
       const cacheAdapter = NoveliaContentCacheAdapter();
@@ -303,9 +315,11 @@ void main() {
 NoveliaNovelOutline _outline({
   List<String> attentions = const ['一般向'],
   String? publicationType = '连载中',
+  String? favoriteFolderId,
 }) {
   return NoveliaNovelOutline(
     key: const NoveliaNovelKey(providerId: 'syosetu', novelId: 'n8439ed'),
+    favoriteFolderId: favoriteFolderId,
     japaneseTitle: '夜の列車',
     chineseTitle: '夜行列车',
     publicationType: publicationType,
@@ -322,9 +336,13 @@ NoveliaNovelOutline _outline({
   );
 }
 
-NoveliaNovelDetails _details({List<String> attentions = const ['一般向']}) {
+NoveliaNovelDetails _details({
+  List<String> attentions = const ['一般向'],
+  String? favoriteFolderId,
+}) {
   return NoveliaNovelDetails(
     key: const NoveliaNovelKey(providerId: 'syosetu', novelId: 'n8439ed'),
+    favoriteFolderId: favoriteFolderId,
     japaneseTitle: '夜の列車',
     chineseTitle: '夜行列车',
     authors: const [NoveliaAuthor(name: '作者')],

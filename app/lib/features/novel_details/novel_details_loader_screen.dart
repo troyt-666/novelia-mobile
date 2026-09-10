@@ -39,9 +39,7 @@ class _NovelDetailsLoaderScreenState extends State<NovelDetailsLoaderScreen> {
     if (novel.id != widget.outline.id) {
       throw StateError('Hydrated novel ID does not match its outline.');
     }
-    return widget.outline.isFavorite && !novel.isFavorite
-        ? novel.copyWith(isFavorite: true)
-        : novel;
+    return novel;
   }
 
   void _retry() => setState(() {
