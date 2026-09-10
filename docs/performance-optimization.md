@@ -43,7 +43,7 @@ EPUB 当前使用一次性 isolate，每次章节生成会复制文档到后台�
 
 连续阅读后段 UI P95 为 1.65ms，Raster P95 为 3.51ms；但 UI P99 达 14.73ms，最大 29.00ms，存在需要继续定位的尾部尖峰。当前数据把下一步关注点指向 UI 阶段，尚未通过调用栈或时间线确认具体函数。固定目录和正文排除了网络等待，本次也未覆盖图片加载、EPUB 或大型既有缓存；这是优化后的设备基线，不能据此计算优化前后的提升比例。
 
-原始逐帧数据保存在本地 `app/build/android-profile/frames.json`，运行日志为同目录 `run.log`，均为生成物。首次 DDS 连接失败的日志与截图也保存在同目录。第一次 40 章试跑触及书末，已被 200 章复测替代，上表仅使用最终有效样本。
+本次基线的原始逐帧数据保存在本地 `app/build/android-profile/baseline-frames.json`，运行日志为同目录 `run.log`，均为生成物。首次 DDS 连接失败的日志与截图也保存在同目录。第一次 40 章试跑触及书末，已被 200 章复测替代，上表仅使用最终有效样本。
 
 复现命令（先用 `flutter --no-version-check devices` 确认设备 ID）：
 
@@ -53,10 +53,79 @@ cd app/android
   -Ptarget=integration_test/performance_profile_test.dart \
   -Ptarget-platform=android-arm64 :app:assembleProfile
 cd ..
-flutter --no-version-check drive --profile --no-dds --no-pub \
+flutter --no-version-check drive --profile --no-dds --no-pub --keep-app-running \
   --use-application-binary=build/app/outputs/apk/profile/app-profile.apk \
   --driver=test_driver/performance_driver.dart \
   --target=integration_test/performance_profile_test.dart -d DEVICE_ID
 ```
 
 `profile-package.gradle` 仅在显式指定时为测试包添加 `.profile` 后缀，发布包标识不变。此次使用独立测试安装，原发布版 `versionCode=8` 及其数据保持不变。测量结束后已确认当前用户下不再安装该测试包。
+
+## UI 尖峰定位 · 2026-09-10
+
+已定位到主要触发链：**切章、追加章节和裁剪窗口触发整个 ReaderScreen 重建，随后更新正文 Sliver 与隐藏菜单；裁剪还会重新布局更多段落。** 此次只做定位，临时事件标记与诊断入口已从产品代码移除。
+
+同一 PHN110、ARM64 Profile 构建，先采集 1ms 周期 CPU 调用栈与 Flutter 时间线，再为切章、追加、裁剪、锚点采集和进度保存加临时标记。第二轮将采样拆成每段 2 次滑动，避免时间线环形缓冲区覆盖较早帧；覆盖第 2→4 章及第 47→54 章。5 段阅读共 964 帧，17 帧 UI 耗时超过 8.33ms，全部与下表操作触发的重建对应。两轮实机测试均通过。
+
+| 触发点 | 对应慢帧 | 本轮 UI 耗时 | 直接证据及代码位置 |
+| --- | ---: | --- | --- |
+| 当前章节改变 | 8 | 10.20–18.11ms | `reader.chapterChanged` 后下一帧出现 `reader.build`；`_recordPosition` 在章节改变时调用整个页面的 `setState`（`app/lib/features/reader/reader_screen.dart:1140`），尽管正文内容并未变化 |
+| 追加章节 | 7 | 13.16–22.13ms | `reader.requestAfter`、`reader.append` 后重建页面；`_applyAppendedWindow` 更新正文列表，新的 Sliver builder 同时更新已有可见及预布局段落（同文件 `:858`、`:1678`） |
+| 裁剪到较小章节窗口 | 2 | 24.63、27.45ms | `reader.trim` 后下一帧最慢；LAYOUT 分别为 18.23、20.83ms。`_trimLoadedWindow` 重建正文索引并改变 Sliver 中心，两侧列表重新分配子项（同文件 `:906`）；27.45ms 帧内另叠加 6.19ms GC |
+
+代表帧：6849 为裁剪后的 27.453ms，7426 为裁剪后的 24.625ms，7271 为追加后的 22.133ms，1292 为切章后的 18.108ms。时间线中的 BUILD 可以嵌套在 LAYOUT 内，表中阶段耗时不能简单相加。
+
+隐藏菜单也参与了这些重建。CPU 栈在阅读慢帧内出现 `_ReaderBottomChromeState.build`、`_ChromeAction.build`、`_SliderState.build`、按钮、Tooltip 和手势组件更新。`ReaderScreen.build` 每次创建新的菜单 builder，而 `reader_controls.dart:219` 的菜单仅用透明度和位移隐藏，子树仍会更新。原有 ValueListenableBuilder 隔离了“菜单显隐引起正文重建”，尚未隔离“页面状态变化引起隐藏菜单重建”。目前确认它是额外工作，未单独测量其耗时占比。
+
+同步 SQLite 保存也有成本，但不是这 17 个 UI 构建尖峰的直接来源。10 次 `reader.savePosition` 为 2.98–9.95ms，中位数 8.13ms；它们均位于 POST_FRAME，与这 17 帧的 buildStart→buildFinish 区间交集为零。锚点采集中位数为 0.273ms，最长调用包含了同步保存。帧后写入仍可能影响下一帧调度，应另看延迟指标。[Flutter 对 buildDuration 的定义](https://api.flutter.dev/flutter/dart-ui/FrameTiming/buildDuration.html)以 `FlutterView.render` 为结束点。
+
+目录列表的第一轮调用栈指向新卡片的创建、标签 Chip/Wrap 布局及文字测量；搜索结果的帧 1790 为 29.732ms，其中 GC 占 19.425ms。采样和导出本身会增加分配量，这个 GC 样本只能证明该诊断帧发生了 GC，不能直接认定它解释了此前所有目录尖峰。发现页的诊断阶段还与安装界面检查有重叠，不用该段耗时作性能结论。
+
+建议首先缩小切章通知范围，并复用隐藏菜单；其次减少追加、裁剪时对未变化段落的更新和重新测量，保留章节窗口上限与位置恢复行为。SQLite 批量持久化属于后续帧间延迟优化，本轮不作产品修改。
+
+这些数据用于定位，含采样和临时标记开销，不替代上文的无增强追踪基线，也不是优化前后对照。[Flutter 文档](https://docs.flutter.dev/tools/devtools/performance#enhance-tracing)同样提醒增强追踪会影响帧耗时。本地证据位于 `app/build/android-profile/`：`diagnosis.json`、`diagnosis-marked.json`、`marked-summary.txt`，以及两轮对应运行日志。临时补丁、测试入口和数据导出脚本也保存在该目录，未保留到产品路径。
+
+安装提示核查：本地 APK 签名与包结构验证通过，首轮已成功运行完整测试；系统日志显示测试结束时 Flutter 自动卸载 `.profile` 包，随后 OPPO 安装器进入包解析页面。因此“安装包已损坏”更可能与安装器在清理后解析失效包有关，未拿到直接的解析错误来最终确认。第二轮使用 `--keep-app-running`，结束后先回桌面再手动卸载，卸载成功；原发布版不受影响。
+
+## UI 尖峰优化实现 · 2026-09-10
+
+根据上述实测触发链完成以下改动，未新增依赖，保留章节窗口上限、即时持久化、阅读位置恢复和交互行为。
+
+| 编号 | 优化 | 实现与验证 |
+| --- | --- | --- |
+| 12 | 切章不重建整个阅读页 | 位置变化只通知可见菜单；回归确认跨章后正文与隐藏菜单 Widget 对象不变，重新打开菜单显示当前章节 |
+| 13 | 隐藏菜单不随正文更新 | 复用菜单根 Widget，使用独立通知器；设置、书签、章节内容刷新及显式跳章仍更新可见菜单 |
+| 14 | 追加、裁剪复用段落 | 按章节对象、设置、颜色及书签状态复用已构建 Widget；稳定键与索引回调保留列表子项；裁剪以较早的已挂载段落作为新原点，减少可见子项跨两侧 Sliver 迁移。逐帧检查段落位置、Widget 和 RenderObject 均保留，双向加载与分页回归通过 |
+| 15 | 合并本地进度写入 | 阅读进度、缓存访问时间和恢复路由在同一个 SQLite 事务提交；注入路由写入失败后，三项状态一起回滚。远端历史同步保持独立 |
+| 16 | 减少目录标签组件 | 使用共享卡片 Material 的 InkWell/Ink 替代每个标签的 ActionChip，保留按钮语义、焦点及点击筛选；原有标签点击回归和新增 Tab/Enter 激活检查通过 |
+
+静态分析：Dart MCP 本轮长时间未返回，改用 Flutter 本地分析器检查全部修改文件，结果为 `No issues found`。最终执行 `flutter --no-version-check test --no-pub`，314 项完整回归通过。解锁后实机完整复测通过，结果如下。
+
+安装准备阶段手机息屏锁定，曾返回 `Failure [-99]`；失败界面保存在 `spike-install-failure.png`，不用于性能结论。解锁后独立测试包安装成功，最终测试在 2 分 11 秒内通过。
+
+## UI 尖峰优化复测 · 2026-09-10
+
+沿用上文 PHN110、ARM64 Profile、500 本目录和 200 章正文，以及相同输入与滑动次数；阅读仍从第 2 章推进到第 54 章。未启用增强追踪或临时诊断标记。采集 6,326 帧，结束时电池 100%、USB 供电、温度 35.3°C。上文基线结束时为 36.4°C；两次并非紧邻交替采样，因此以下是单次前后观测，不将差异全部归因于代码，也不推算实际掉帧率。
+
+各列单位均为 ms；超预算指同一帧 UI 或 Raster 任一阶段超过阈值。
+
+| 场景 | 本轮帧数 | UI P95 / P99 | Raster P95 / P99 | UI 最大值 | 超 8.33ms | 超 16.67ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 发现页滚动 | 1011 | 1.92 / 9.52 | 4.88 / 5.48 | 12.16 | 26（2.57%） | 0（0.00%） |
+| 5 次搜索输入 | 67 | 1.67 / 2.44 | 3.78 / 6.73 | 2.44 | 0（0.00%） | 0（0.00%） |
+| 搜索结果滚动 | 1026 | 4.32 / 7.83 | 4.48 / 5.07 | 13.27 | 8（0.78%） | 0（0.00%） |
+| 阅读前段（第 2→16 章） | 1143 | 2.12 / 11.91 | 3.98 / 4.59 | 18.36 | 14（1.22%） | 1（0.09%） |
+| 阅读后段（第 16→54 章） | 3079 | 1.74 / 11.54 | 3.96 / 4.54 | 18.22 | 38（1.23%） | 3（0.10%） |
+
+| 场景 | UI P99：基线 → 本轮 | UI 最大值：基线 → 本轮 | 超 16.67ms 占比：基线 → 本轮 |
+| --- | ---: | ---: | ---: |
+| 发现页滚动 | 12.44 → 9.52 | 22.66 → 12.16 | 0.07% → 0.00% |
+| 搜索结果滚动 | 11.26 → 7.83 | 19.64 → 13.27 | 0.14% → 0.00% |
+| 阅读前段 | 12.88 → 11.91 | 22.28 → 18.36 | 0.51% → 0.09% |
+| 阅读后段 | 14.73 → 11.54 | 29.00 → 18.22 | 0.71% → 0.10% |
+
+本轮阅读后段的 UI 最大值降低约 37%，P99 降低约 22%；较大的尾部尖峰减少，尚未消除超过 120Hz 帧预算的情况。搜索滚动 UI P95、阅读 Raster P95 反而略高，不能表述为所有耗时分位数均改善。两轮采集帧数不同（9,273 与 6,326），未记录逐帧呈现间隔来解释调度差异，因此按样本占比报告超预算情况，不直接比较慢帧绝对数量。同步 SQLite 的事务合并已由原子性回归验证，本轮没有单独重测 POST_FRAME 保存耗时。
+
+原始结果保存在 `app/build/android-profile/spike-optimized-frames.json`，计算结果为 `spike-comparison.json`，复算脚本为 `compare_spike.py`。本轮进程退出码为 0，`spike-optimized-events.log` 保留全部场景起止和通过信息；`spike-optimized-run.log` 保留完整输出。解锁后的首次启动被重复启动中断，其输出保存在 `spike-interrupted-run.log`，断连错误尾部还混入了最终日志；最终数据来自随后独立完成的进程 PID 7170，所有场景均有完整起止记录。
+
+测量完成后先回桌面、停止测试包，再卸载 `.profile`，卸载成功且当前用户下已不存在该包；原发布版仍为 `versionCode=8`。

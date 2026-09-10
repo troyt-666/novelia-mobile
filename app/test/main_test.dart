@@ -271,16 +271,46 @@ void main() {
       await tester.tapAt(const Offset(215, 350));
       await tester.pump();
       final target = find.byKey(ValueKey('block-${block.id}-chinese'));
+      final paragraph = tester.renderObject(target);
+      final text = tester.widget(target);
       final top = tester.getTopLeft(target).dy;
       final scroll = _readerScrollable(tester).position;
       scroll.jumpTo(scroll.pixels + 40);
       for (var frame = 0; frame < 4; frame++) {
         await tester.pump();
         expect(tester.getTopLeft(target).dy, closeTo(top - 40, 1));
+        expect(tester.renderObject(target), same(paragraph));
+        expect(tester.widget(target), same(text));
       }
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('scrolling across chapters keeps the reader and hidden chrome', (
+    tester,
+  ) async {
+    final reported = <ReadingPosition>[];
+    await pumpReader(
+      tester,
+      novel: _windowNovel([_windowChapter(1), _windowChapter(2)]),
+      onPositionChanged: reported.add,
+    );
+    await tester.tapAt(const Offset(215, 350));
+    await tester.pumpAndSettle();
+    final stream = find.byKey(const ValueKey('reader-stream'));
+    final chrome = find.byKey(const ValueKey('reader-bottom-chrome'));
+    final streamWidget = tester.widget(stream);
+    final chromeWidget = tester.widget(chrome);
+    final scroll = _readerScrollable(tester).position;
+    scroll.jumpTo(scroll.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(reported.last.chapterId, 'window-c2');
+    expect(tester.widget(stream), same(streamWidget));
+    expect(tester.widget(chrome), same(chromeWidget));
+    await tester.tapAt(const Offset(215, 350));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('第 2 / 2 章'), findsOneWidget);
+  });
 
   for (final mode in ReaderLayoutMode.values) {
     testWidgets(
@@ -1856,6 +1886,11 @@ void main() {
     expect(requests, hasLength(1));
     final beforePixels = _readerScrollable(tester).position.pixels;
     final progressBeforeCompletion = reported.length;
+    final retainedText = find.byKey(
+      ValueKey('block-${chapters[3].blocks.last.id}-chinese'),
+    );
+    final retainedWidget = tester.widget(retainedText);
+    final retainedParagraph = tester.renderObject(retainedText);
 
     response.complete(
       ReaderChapterWindow(
@@ -1871,6 +1906,8 @@ void main() {
       closeTo(beforePixels, 0.5),
     );
     expect(reported, hasLength(progressBeforeCompletion));
+    expect(tester.widget(retainedText), same(retainedWidget));
+    expect(tester.renderObject(retainedText), same(retainedParagraph));
     final position = _readerScrollable(tester).position;
     position.jumpTo(position.maxScrollExtent);
     await tester.pumpAndSettle();

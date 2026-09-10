@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/account/account_models.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
@@ -20,6 +21,39 @@ import 'package:jfzreader/gateway/novelia/novelia_catalog_controller.dart';
 import 'support/fixture_content_coordinator.dart';
 
 void main() {
+  testWidgets('catalog tags keep keyboard activation', (tester) async {
+    final selected = <String>[];
+    var opened = false;
+    const novel = CatalogNovel(
+      id: 'keyboard-tag',
+      chineseTitle: '键盘标签',
+      japaneseTitle: 'タグ',
+      source: 'Kakuyomu',
+      publicationState: NovelPublicationState.ongoing,
+      tags: ['幻想'],
+      translationCoverage: [],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CatalogNovelCard(
+            novel: novel,
+            onOpen: () => opened = true,
+            onTagSelected: selected.add,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(selected, ['幻想']);
+    expect(opened, isFalse);
+  });
+
   testWidgets(
     'discovery keeps state across fallback and ignores unrelated search updates',
     (tester) async {
@@ -331,7 +365,6 @@ void main() {
 
     final tag = tags.last;
     final tagFinder = find.byKey(ValueKey('catalog-tag-${novel.id}-$tag'));
-    expect(tester.widget<ActionChip>(tagFinder).onPressed, isNotNull);
     await tester.scrollUntilVisible(
       tagFinder,
       500,

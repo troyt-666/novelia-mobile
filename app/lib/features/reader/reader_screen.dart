@@ -113,6 +113,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   late List<ReaderStreamItem> _items;
   late Map<String, int> _itemIndices;
   final Map<String, GlobalKey> _itemKeys = {};
+  final Map<String, (Record, Widget)> _itemWidgets = {};
   final Map<String, BuildContext> _mountedItemContexts = {};
   final _verticalScrollController = ScrollController();
   final _pageController = PageController();
@@ -143,8 +144,20 @@ class _ReaderScreenState extends State<ReaderScreen>
   final Map<String, ReadingPosition> _bookmarkPositions = {};
 
   late ReaderSettings _settings;
-  final _chromeVisibility = ValueNotifier(true);
-  bool get _chromeVisible => _chromeVisibility.value;
+  final _chromeChanges = ValueNotifier(0);
+  bool _chromeVisible = true;
+  late final Widget _readerChrome = Positioned.fill(
+    child: ListenableBuilder(
+      listenable: _chromeChanges,
+      builder: (context, _) {
+        final colors = ReaderPaletteColors.resolve(
+          _settings.palette,
+          Theme.of(context).brightness,
+        );
+        return _buildReaderChrome(colors.chrome, colors.foreground);
+      },
+    ),
+  );
   bool _anchorCaptureScheduled = false;
   bool _publishScheduledAnchor = false;
   bool _restoring = true;
@@ -244,6 +257,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   void didUpdateWidget(ReaderScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.novel != widget.novel) _refreshChrome();
     if (oldWidget.orientationController != widget.orientationController) {
       unawaited(_orientationController.reset());
       _orientationController =
@@ -254,6 +268,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (oldWidget.chapterDataSource == widget.chapterDataSource) return;
     oldWidget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
     widget.chapterDataSource?.addChapterUpdateListener(_onChapterUpdated);
+    _refreshChrome();
   }
 
   void _onChapterUpdated(NovelChapter chapter) {
@@ -274,6 +289,7 @@ class _ReaderScreenState extends State<ReaderScreen>
           ? _windowEnd.clamp(_windowStart, _items.length)
           : lastIndex + 1;
     });
+    _refreshChrome();
     final resolved = _resolvePosition(position);
     if (resolved != null) {
       _recordPosition(resolved, notify: false);
@@ -334,6 +350,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
     }
     _itemKeys.removeWhere((id, _) => !stableIds.contains(id));
+    _itemWidgets.removeWhere((id, _) => !stableIds.contains(id));
   }
 
   BuildContext? _mountedContextFor(String stableId) {
@@ -465,7 +482,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     unawaited(_orientationController.reset());
     _windowGeneration += 1;
     _chromeDismissTimer?.cancel();
-    _chromeVisibility.dispose();
+    _chromeChanges.dispose();
     if (!_restoring) {
       final position = _lastPosition;
       if (position != null) {
@@ -583,6 +600,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
       if (mounted) {
         setState(() => _restoring = false);
+        _refreshChrome();
         _scheduleChromeDismiss();
       }
     });
@@ -927,10 +945,9 @@ class _ReaderScreenState extends State<ReaderScreen>
     final paged = _settings.layoutMode == ReaderLayoutMode.pages;
     final pageLocation = paged ? _pageLocationToPreserve() : null;
     double? newScrollOffset;
+    var originId = 'block:${position.blockId}';
     if (!paged) {
-      final anchor = _mountedContextFor(
-        'block:${position.blockId}',
-      )?.findRenderObject();
+      final anchor = _mountedContextFor(originId)?.findRenderObject();
       final viewport = _viewportKey.currentContext?.findRenderObject();
       if (anchor is! RenderBox ||
           !anchor.hasSize ||
@@ -938,8 +955,30 @@ class _ReaderScreenState extends State<ReaderScreen>
           !viewport.hasSize) {
         return;
       }
+      // Keep the mounted reading cache on the same side of the sliver origin,
+      // so a trim can move keyed children instead of remounting visible text.
+      final retainedIds = {
+        for (final chapter in _loadedChapters.sublist(start, end)) chapter.id,
+      };
+      var originBox = anchor;
+      var originIndex = _itemIndices[originId]!;
+      for (final entry in _mountedItemContexts.entries) {
+        final index = _itemIndices[entry.key];
+        if (index == null ||
+            index >= originIndex ||
+            !entry.value.mounted ||
+            !retainedIds.contains(_items[index].chapter.id)) {
+          continue;
+        }
+        final candidate = entry.value.findRenderObject();
+        if (candidate is RenderBox && candidate.hasSize) {
+          originId = entry.key;
+          originIndex = index;
+          originBox = candidate;
+        }
+      }
       final anchorTop =
-          anchor.localToGlobal(Offset.zero).dy -
+          originBox.localToGlobal(Offset.zero).dy -
           viewport.localToGlobal(Offset.zero).dy;
       newScrollOffset = MediaQuery.paddingOf(context).top + 88 - anchorTop;
     } else if (pageLocation == null) {
@@ -957,7 +996,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _rebuildStream();
       _windowStart = _itemIndices[firstId] ?? 0;
       _windowEnd = (_itemIndices[lastId] ?? (_items.length - 1)) + 1;
-      _verticalCenterId = 'block:${position.blockId}';
+      _verticalCenterId = originId;
       _trimmedPageLocation = pageLocation;
     });
     // Rebase the sliver origin and scroll offset together, before the next
@@ -1133,11 +1172,11 @@ class _ReaderScreenState extends State<ReaderScreen>
     bool notify = true,
     bool updateUi = true,
   }) {
-    final chapterChanged = _activeChapterId != position.chapterId;
+    final changed = _lastPosition != position;
     _anchorBlockId.value = position.blockId;
     _lastPosition = position;
     _activeChapterId = position.chapterId;
-    if (chapterChanged && updateUi) setState(() {});
+    if (changed && updateUi) _refreshChrome();
     // Scroll updates observe the viewport; only completed user actions publish
     // progress. Compare with the last publication, not the last observation.
     if (notify && _lastReportedPosition != position) {
@@ -1177,6 +1216,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _textSelectionEnabled.value = settings.textSelectionEnabled;
       _tapPageTurnEnabled.value = settings.tapPageTurnEnabled;
     });
+    _refreshChrome();
     final restoration = _restoreAfterLayout(
       position == null ? null : 'block:${position.blockId}',
       intraBlockOffset: position?.intraBlockOffset ?? 0,
@@ -1341,7 +1381,8 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   void _showChrome() {
     if (!_chromeVisible) {
-      _chromeVisibility.value = true;
+      _chromeVisible = true;
+      _chromeChanges.value++;
     }
     _scheduleChromeDismiss();
   }
@@ -1349,8 +1390,13 @@ class _ReaderScreenState extends State<ReaderScreen>
   void _hideChrome() {
     _chromeDismissTimer?.cancel();
     if (_chromeVisible && mounted) {
-      _chromeVisibility.value = false;
+      _chromeVisible = false;
+      _chromeChanges.value++;
     }
+  }
+
+  void _refreshChrome() {
+    if (_chromeVisible) _chromeChanges.value++;
   }
 
   void _scheduleChromeDismiss() {
@@ -1540,6 +1586,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (_lastPosition case final position?) {
       _recordPosition(position);
     }
+    _refreshChrome();
   }
 
   void _dismissCatalogError() {
@@ -1613,6 +1660,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         _bookmarkPositions.remove(position.blockId);
       }
     });
+    _refreshChrome();
     widget.onBookmarkChanged?.call(position, bookmarked);
   }
 
@@ -1634,6 +1682,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final showBeforeBoundary = _windowStart == 0;
     if (showBeforeBoundary && index == 0) {
       return ReaderAvailabilityBoundary(
+        key: const ValueKey('reader-availability-before'),
         direction: ReaderLoadDirection.before,
         status: _beforeBoundary,
         loading: _beforeLoading,
@@ -1644,6 +1693,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final streamIndex = index - (showBeforeBoundary ? 1 : 0);
     if (streamIndex >= _windowEnd - _windowStart) {
       return ReaderAvailabilityBoundary(
+        key: const ValueKey('reader-availability-after'),
         direction: ReaderLoadDirection.after,
         status: _afterBoundary,
         loading: _afterLoading,
@@ -1652,8 +1702,14 @@ class _ReaderScreenState extends State<ReaderScreen>
       );
     }
     final item = _items[_windowStart + streamIndex];
-    return switch (item) {
+    final bookmarked =
+        item is AlignedBlockItem && _bookmarks.contains(item.block.id);
+    final inputs = (item.chapter, _settings, foreground, bookmarked);
+    final cached = _itemWidgets[item.stableId];
+    if (cached?.$1 == inputs) return cached!.$2;
+    final child = switch (item) {
       ChapterBoundaryItem() => ReaderChapterBoundary(
+        key: ValueKey(item.stableId),
         item: item,
         itemKey: _itemKeys[item.stableId]!,
         settings: _settings,
@@ -1664,7 +1720,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         item: item,
         settings: _settings,
         foreground: foreground,
-        bookmarked: _bookmarks.contains(item.block.id),
+        bookmarked: bookmarked,
         onMounted: (itemContext) {
           _registerMountedItem(item.stableId, itemContext);
         },
@@ -1673,6 +1729,23 @@ class _ReaderScreenState extends State<ReaderScreen>
         },
       ),
     };
+    _itemWidgets[item.stableId] = (inputs, child);
+    return child;
+  }
+
+  int? _readerIndexForKey(Key key) {
+    if (key == const ValueKey('reader-availability-before')) {
+      return _windowStart == 0 ? 0 : null;
+    }
+    if (key == const ValueKey('reader-availability-after')) {
+      return _windowEnd == _items.length ? _readerItemCount - 1 : null;
+    }
+    if (key is! ValueKey<String>) return null;
+    final index = _itemIndices[key.value];
+    if (index == null || index < _windowStart || index >= _windowEnd) {
+      return null;
+    }
+    return index - _windowStart + (_windowStart == 0 ? 1 : 0);
   }
 
   Widget _buildVerticalReader(Color foreground) {
@@ -1698,6 +1771,12 @@ class _ReaderScreenState extends State<ReaderScreen>
               addAutomaticKeepAlives: false,
               addSemanticIndexes: false,
               itemCount: centerIndex,
+              findChildIndexCallback: (key) {
+                final index = _readerIndexForKey(key);
+                return index != null && index < centerIndex
+                    ? centerIndex - index - 1
+                    : null;
+              },
               itemBuilder: (context, index) => _buildReaderItem(
                 context,
                 centerIndex - index - 1,
@@ -1714,6 +1793,12 @@ class _ReaderScreenState extends State<ReaderScreen>
               addAutomaticKeepAlives: false,
               addSemanticIndexes: false,
               itemCount: _readerItemCount - centerIndex,
+              findChildIndexCallback: (key) {
+                final index = _readerIndexForKey(key);
+                return index != null && index >= centerIndex
+                    ? index - centerIndex
+                    : null;
+              },
               itemBuilder: (context, index) =>
                   _buildReaderItem(context, centerIndex + index, foreground),
             ),
@@ -2024,13 +2109,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                 ),
               ),
             ),
-            Positioned.fill(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _chromeVisibility,
-                builder: (context, _, _) =>
-                    _buildReaderChrome(readerColors.chrome, foreground),
-              ),
-            ),
+            _readerChrome,
             if (_catalogLoading || _catalogLoadError != null)
               ReaderCatalogLoadOverlay(
                 loading: _catalogLoading,

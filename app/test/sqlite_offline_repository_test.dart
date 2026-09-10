@@ -89,6 +89,42 @@ void main() {
   });
 
   group('durable offline repository', () {
+    test('reader stop commits progress, cache time and route atomically', () {
+      final database = sqlite3.openInMemory();
+      addTearDown(database.close);
+      final repository = SqliteOfflineRepository.fromDatabase(database);
+      addTearDown(repository.close);
+      _saveCacheCopy(repository, id: 'c1', chapterId: 'c1', storedAt: t0);
+      final old = LocalReadingProgress(
+        novelId: 'novel',
+        position: const ReadingPosition(chapterId: 'c1', blockId: 'b1'),
+        updatedAt: t0,
+      );
+      repository.saveReaderPosition(old);
+      final next = LocalReadingProgress(
+        novelId: 'novel',
+        position: const ReadingPosition(chapterId: 'c1', blockId: 'b2'),
+        updatedAt: t0.add(const Duration(minutes: 1)),
+      );
+      database.execute('''
+        CREATE TRIGGER reject_reader_route BEFORE INSERT ON last_route_state
+        BEGIN SELECT RAISE(ABORT, 'route write failed'); END;
+      ''');
+      expect(
+        () => repository.saveReaderPosition(next),
+        throwsA(isA<SqliteException>()),
+      );
+      expect(repository.readingProgressFor('novel')!.position, old.position);
+      expect(repository.copyById('c1')!.lastReadAt, t0);
+      expect(repository.lastRoute()!.position, old.position);
+      database.execute('DROP TRIGGER reject_reader_route;');
+      repository.saveReaderPosition(next);
+      expect(repository.readingProgressFor('novel')!.position, next.position);
+      expect(repository.copyById('c1')!.lastReadAt, next.updatedAt);
+      expect(repository.lastRoute()!.routeName, '/reader');
+      expect(repository.lastRoute()!.position, next.position);
+    });
+
     test('touches only the read chapter and never moves time backwards', () {
       final repository = SqliteOfflineRepository.openInMemory();
       addTearDown(repository.close);

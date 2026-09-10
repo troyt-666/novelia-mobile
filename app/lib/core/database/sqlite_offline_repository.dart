@@ -854,6 +854,27 @@ final class SqliteOfflineRepository
     );
   }
 
+  /// Persist a reader stop with one commit and one consistent restore point.
+  void saveReaderPosition(LocalReadingProgress progress) {
+    _checkOpen();
+    _transaction(() {
+      saveReadingProgress(progress);
+      touchChapterCopies(
+        progress.novelId,
+        progress.position.chapterId,
+        progress.updatedAt,
+      );
+      saveLastRoute(
+        LastRouteState(
+          routeName: '/reader',
+          novelId: progress.novelId,
+          position: progress.position,
+          updatedAt: progress.updatedAt,
+        ),
+      );
+    });
+  }
+
   @override
   void queueRemoteHistory(RemoteHistoryOutboxEntry entry) {
     _checkOpen();

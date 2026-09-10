@@ -670,17 +670,14 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     bool syncRemoteHistory = true,
   }) {
     final now = DateTime.now().toUtc();
-    _saveProgressOnly(novel, position, now);
-    if (syncRemoteHistory) _historySync.record(novel, position, now);
-    _repository.touchChapterCopies(novel.id, position.chapterId, now);
-    _repository.saveLastRoute(
-      LastRouteState(
-        routeName: '/reader',
+    _repository.saveReaderPosition(
+      LocalReadingProgress(
         novelId: novel.id,
         position: position,
         updatedAt: now,
       ),
     );
+    if (syncRemoteHistory) _historySync.record(novel, position, now);
   }
 
   void _saveProgressOnly(

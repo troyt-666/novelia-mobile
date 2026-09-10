@@ -110,15 +110,39 @@ class CatalogNovelCard extends StatelessWidget {
                         runSpacing: 2,
                         children: [
                           for (final tag in novel.tags)
-                            ActionChip(
-                              key: ValueKey('catalog-tag-${novel.id}-$tag'),
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              labelPadding: const EdgeInsets.symmetric(
-                                horizontal: 4,
+                            Semantics(
+                              button: true,
+                              child: InkWell(
+                                key: ValueKey('catalog-tag-${novel.id}-$tag'),
+                                onTap: () => onTagSelected(tag),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  child: Ink(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: colorScheme.outline,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      tag,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelLarge
+                                          ?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                              label: Text(tag),
-                              onPressed: () => onTagSelected(tag),
                             ),
                         ],
                       ),
