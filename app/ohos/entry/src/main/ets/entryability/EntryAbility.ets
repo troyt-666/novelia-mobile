@@ -1,5 +1,6 @@
 
-import { FlutterAbility, FlutterEngine, MethodChannel, MethodCall, MethodResult } from '@ohos/flutter_ohos';
+import { FlutterAbility, FlutterEngine, MethodChannel, MethodCall, MethodResult, EventChannel, EventSink, Any } from '@ohos/flutter_ohos';
+import { inputConsumer, KeyCode, KeyEvent } from '@kit.InputKit';
 import bundleManager from '@ohos.bundle.bundleManager';
 import { BusinessError } from '@ohos.base';
 import { GeneratedPluginRegistrant } from '../plugins/GeneratedPluginRegistrant';
@@ -7,11 +8,45 @@ import AccountSessionStore from './AccountSessionStore';
 
 export default class EntryAbility extends FlutterAbility {
   private sessionQueue: Promise<void> = Promise.resolve();
+  private readerVolumeEvents: EventSink | null = null;
+  private volumeUp = (_event: KeyEvent): void => this.readerVolumeEvents?.success(-1);
+  private volumeDown = (_event: KeyEvent): void => this.readerVolumeEvents?.success(1);
+
+  private stopReaderVolumeKeys() {
+    if (this.readerVolumeEvents === null) return;
+    this.readerVolumeEvents = null;
+    inputConsumer.off('keyPressed', this.volumeUp);
+    inputConsumer.off('keyPressed', this.volumeDown);
+  }
+
+  cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+    this.stopReaderVolumeKeys();
+    super.cleanUpFlutterEngine(flutterEngine);
+  }
 
   configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
     GeneratedPluginRegistrant.registerWith(flutterEngine)
     const messenger = flutterEngine.getDartExecutor().getBinaryMessenger();
+    new EventChannel(messenger, 'io.github.troyt666.jfzreader/reader_volume_keys')
+      .setStreamHandler({
+        onListen: (_args: Any, events: EventSink): void => {
+          this.readerVolumeEvents = events;
+          try {
+            inputConsumer.on('keyPressed', {
+              key: KeyCode.KEYCODE_VOLUME_UP, action: 1, isRepeat: false
+            }, this.volumeUp);
+            inputConsumer.on('keyPressed', {
+              key: KeyCode.KEYCODE_VOLUME_DOWN, action: 1, isRepeat: false
+            }, this.volumeDown);
+          } catch (error) {
+            this.stopReaderVolumeKeys();
+            const failure = error as BusinessError;
+            events.error('volume_keys', 'Unable to listen for volume keys', failure.code);
+          }
+        },
+        onCancel: (_args: Any): void => this.stopReaderVolumeKeys()
+      });
     const sessions = new AccountSessionStore(this.context);
     new MethodChannel(messenger, 'io.github.troyt666.jfzreader/account_session')
       .setMethodCallHandler({ onMethodCall: (call: MethodCall, result: MethodResult) => {

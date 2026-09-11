@@ -9,10 +9,12 @@ import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.view.KeyEvent
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.EventChannel
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -22,11 +24,24 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : FlutterActivity() {
+    private var readerVolumeEvents: EventChannel.EventSink? = null
     private val accountKeyAlias = "io.github.troyt666.jfzreader.account.v1"
     private val accountPreferences = "jfzreader_encrypted_account"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "io.github.troyt666.jfzreader/reader_volume_keys",
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                readerVolumeEvents = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                readerVolumeEvents = null
+            }
+        })
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "io.github.troyt666.jfzreader/external_links",
@@ -183,6 +198,21 @@ class MainActivity : FlutterActivity() {
                 )
             }
         }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val events = readerVolumeEvents
+        if (events != null && hasWindowFocus() &&
+            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+                event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                events.success(if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) -1 else 1)
+            }
+            // Consume the whole press, including repeats and release.
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun accountKey(): SecretKey {

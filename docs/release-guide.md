@@ -9,6 +9,15 @@ GitHub Releases are the install and sideload channel:
 - signed Android APK
 - unsigned iOS IPA for Sideloadly / AltStore
 - un-notarized macOS DMG
+- unsigned HarmonyOS HAP for developers to sign with their own certificates
+  and registered devices
+
+The HarmonyOS HAP is built locally with `app/tool/flutter_harmony.py` and
+attached to the release as `JFZ-Reader-<tag>-harmony-unsigned.hap`. Use the
+`entry-default-unsigned.hap` output. Device-bound debug-signed HAPs remain
+local; they are not public installation packages. See
+[`app/ohos/README.md`](../app/ohos/README.md) for the native build and signing
+requirements. HarmonyOS does not yet use the GitHub update feeds.
 
 The app checks a small HTTPS manifest hosted on GitHub Pages. It reports when a
 new version is available and opens the appropriate signed APK, unsigned IPA,

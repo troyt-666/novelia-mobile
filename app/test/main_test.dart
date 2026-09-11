@@ -404,6 +404,31 @@ void main() {
     testWidgets('Android volume keys turn the reader in ${mode.name} mode', (
       tester,
     ) async {
+      const channel = MethodChannel(
+        'io.github.troyt666.jfzreader/reader_volume_keys',
+      );
+      var listening = false;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        listening = call.method == 'listen';
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      Future<void> press(int direction) async {
+        expect(listening, isTrue);
+        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          channel.name,
+          const StandardMethodCodec().encodeSuccessEnvelope(direction),
+          (_) {},
+        );
+      }
+
       await pumpReader(
         tester,
         novel: _oversizedBlockNovel(),
@@ -413,20 +438,16 @@ void main() {
       final position = _readerScrollable(tester).position;
       final start = position.pixels;
       expect(position.maxScrollExtent, greaterThan(start));
-      expect(
-        await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeDown),
-        isTrue,
-      );
+      await press(1);
       await tester.pumpAndSettle();
       final next = position.pixels;
       expect(next, greaterThan(start));
-      expect(
-        await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeUp),
-        isTrue,
-      );
+      await press(-1);
       await tester.pumpAndSettle();
       expect(position.pixels, lessThan(next));
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
     });
   }
 
