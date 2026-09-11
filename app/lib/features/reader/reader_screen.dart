@@ -512,11 +512,21 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   @override
   void didChangeMetrics() {
-    if (!mounted || _restoring) return;
+    if (!mounted || _restoring || _readerIsInteracting) return;
     final view = View.of(context);
     // Insets and repeated platform notifications do not resize the page.
     // Restoring anyway would realign the paragraph and cancel an active drag.
     if (view.physicalSize / view.devicePixelRatio == MediaQuery.sizeOf(context)) {
+      return;
+    }
+    if (_settings.layoutMode == ReaderLayoutMode.scroll) {
+      final anchor = _captureVerticalAnchor();
+      if (anchor != null) {
+        _rebaseVerticalAnchor(
+          anchor,
+          topPadding: view.padding.top / view.devicePixelRatio + 88,
+        );
+      }
       return;
     }
     final position = _positionToPreserve();
@@ -1105,6 +1115,39 @@ class _ReaderScreenState extends State<ReaderScreen>
     });
   }
 
+  // Layout maintenance uses screen geometry, never the rounded reading
+  // progress. Include a paragraph even when only its last lines remain.
+  (String, double)? _captureVerticalAnchor() {
+    if (_restoring || _settings.layoutMode != ReaderLayoutMode.scroll) {
+      return null;
+    }
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return null;
+    final viewportTop = viewport.localToGlobal(Offset.zero).dy;
+    var firstIndex = _items.length;
+    (String, double)? anchor;
+    for (final entry in _mountedItemContexts.entries) {
+      final index = _itemIndices[entry.key];
+      if (index == null || index >= firstIndex || !entry.value.mounted) {
+        continue;
+      }
+      final box = entry.value.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy - viewportTop;
+      if (top >= viewport.size.height || top + box.size.height <= 0) continue;
+      firstIndex = index;
+      anchor = (entry.key, top);
+    }
+    return anchor;
+  }
+
+  void _rebaseVerticalAnchor((String, double) anchor, {double? topPadding}) {
+    setState(() => _verticalCenterId = anchor.$1);
+    _settleWindowLayout(
+      (topPadding ?? MediaQuery.paddingOf(context).top + 88) - anchor.$2,
+    );
+  }
+
   ReadingPosition? _positionToPreserve() {
     if (!_restoring &&
         !_waitingForUserScrollAfterJump &&
@@ -1515,7 +1558,12 @@ class _ReaderScreenState extends State<ReaderScreen>
             notification.dragDetails != null ||
         notification is UserScrollNotification &&
             notification.direction != ScrollDirection.idle;
-    if (userScrollStarted) _hideChrome();
+    if (userScrollStarted) {
+      // The new gesture owns progress, including a swipe that finishes before
+      // an automatic layout's next-frame cleanup.
+      _preservingDynamicAnchor = false;
+      _hideChrome();
+    }
   }
 
   void _runChromeAction(VoidCallback action) {

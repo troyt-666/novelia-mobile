@@ -1355,6 +1355,41 @@ void main() {
   );
 
   testWidgets(
+    'idle resizing preserves a partially visible paragraph without navigation',
+    (tester) async {
+      final chapter = _windowChapter(1, blockCount: 24);
+      final block = chapter.blocks[12];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([chapter]),
+        initialPosition: ReadingPosition(
+          chapterId: chapter.id,
+          blockId: block.id,
+        ),
+      );
+      final anchor = find.byKey(ValueKey('block:${block.id}'));
+      final rect = tester.getRect(anchor);
+      await tester.dragFrom(
+        const Offset(215, 700),
+        Offset(0, -(rect.bottom - 80)),
+      );
+      await tester.pumpAndSettle();
+      final before = tester.getRect(anchor);
+      expect(before.top, lessThan(0));
+      expect(before.bottom, inInclusiveRange(1, before.height * 0.35));
+
+      for (final height in [800.0, 932.0, 850.0]) {
+        tester.view.physicalSize = Size(430, height);
+        for (var frame = 0; frame < 4; frame++) {
+          await tester.pump();
+          expect(tester.getTopLeft(anchor).dy, closeTo(before.top, 1));
+          expect(find.byKey(const ValueKey('reader-restoring')), findsNothing);
+        }
+      }
+    },
+  );
+
+  testWidgets(
     'window notifications without a resize preserve reader scrolling',
     (tester) async {
       final chapter = _windowChapter(1, blockCount: 24);
@@ -1452,10 +1487,11 @@ void main() {
   );
 
   testWidgets(
-    'a new touch supersedes a queued resize correction',
+    'a touch before resize layout keeps control of scrolling',
     (tester) async {
       final chapter = _windowChapter(1, blockCount: 24);
       final block = chapter.blocks[12];
+      final reported = <ReadingPosition>[];
       await pumpReader(
         tester,
         novel: _windowNovel([chapter]),
@@ -1464,6 +1500,7 @@ void main() {
           blockId: block.id,
           intraBlockOffset: 250,
         ),
+        onPositionChanged: reported.add,
       );
       final anchor = find.byKey(ValueKey('block:${block.id}'));
       final top = tester.getTopLeft(anchor).dy;
@@ -1483,7 +1520,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
 
-      // Input can start and finish before the queued layout callback runs.
+      // Input can start and finish before the resized viewport is laid out.
       tester.view.physicalSize = const Size(430, 850);
       final quickSwipe = await tester.startGesture(const Offset(215, 500));
       await quickSwipe.moveBy(const Offset(0, -20));
@@ -1492,6 +1529,10 @@ void main() {
       final finalPixels = _readerScrollable(tester).position.pixels;
       await tester.pumpAndSettle();
       expect(_readerScrollable(tester).position.pixels, closeTo(finalPixels, 1));
+      final saved = reported.last;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(reported.last, saved);
     },
   );
 
@@ -1568,15 +1609,21 @@ void main() {
       bookmarkAction().onTap!();
       await tester.pump();
 
+      final anchor = find.byKey(ValueKey('block:${targetBlock.id}'));
+      final top = tester.getTopLeft(anchor).dy;
       tester.view.physicalSize = const Size(1200, 760);
       await tester.pump();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
       await tester.pumpAndSettle();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
       bookmarkAction().onTap!();
       await tester.pump();
 
       tester.view.physicalSize = const Size(673, 840);
       await tester.pump();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
       await tester.pumpAndSettle();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
       bookmarkAction().onTap!();
       await tester.pump();
 
