@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/features/reader/reader_body.dart';
+import 'package:jfzreader/features/reader/reader_controls.dart';
 import 'package:jfzreader/features/reader/reader_screen.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 
@@ -1794,19 +1795,37 @@ void main() {
     tester,
   ) async {
     final changes = <ReaderSettings>[];
-    await pumpReader(tester, onSettingsChanged: changes.add);
+    final chapter = _windowChapter(1, blockCount: 24);
+    final block = chapter.blocks[12];
+    await pumpReader(
+      tester,
+      novel: _windowNovel([chapter]),
+      initialPosition: ReadingPosition(
+        chapterId: chapter.id,
+        blockId: block.id,
+        intraBlockOffset: 250,
+      ),
+      onSettingsChanged: changes.add,
+    );
     Scaffold scaffold() => tester.widget<Scaffold>(find.byType(Scaffold));
+    final anchor = find.byKey(ValueKey('block:${block.id}'));
+    final top = tester.getTopLeft(anchor).dy;
 
     expect(scaffold().backgroundColor, const Color(0xFFF5F2E8));
     await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reader-palette-sepia')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('reader-restoring')), findsNothing);
+    expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
     await tester.pumpAndSettle();
+    expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
     expect(scaffold().backgroundColor, const Color(0xFFF0E1C2));
 
     await tester.tap(find.byKey(const ValueKey('settings-cancel')));
     await tester.pumpAndSettle();
     expect(scaffold().backgroundColor, const Color(0xFFF5F2E8));
+    expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
     expect(changes, isEmpty);
 
     await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
@@ -1818,6 +1837,59 @@ void main() {
 
     expect(changes.single.palette, ReaderPalette.sepia);
     expect(scaffold().backgroundColor, const Color(0xFFF0E1C2));
+    expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+  });
+
+  testWidgets('typography previews preserve visual position without a cover', (
+    tester,
+  ) async {
+    final chapter = _windowChapter(1, blockCount: 24);
+    final block = chapter.blocks[12];
+    await pumpReader(
+      tester,
+      novel: _windowNovel([chapter]),
+      initialPosition: ReadingPosition(
+        chapterId: chapter.id,
+        blockId: block.id,
+        intraBlockOffset: 250,
+      ),
+    );
+    final anchor = find.byKey(ValueKey('block:${block.id}'));
+    final before = tester.getRect(anchor);
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    for (final (min, max, value, scrollDelta) in [
+      (17.0, 30.0, 26.0, 250.0),
+      (0.3, 0.85, 0.8, 250.0),
+      (17.0, 30.0, 20.0, -250.0),
+    ]) {
+      final sliderFinder = find.byWidgetPredicate(
+        (widget) => widget is Slider && widget.min == min && widget.max == max,
+      );
+      await tester.scrollUntilVisible(
+        sliderFinder,
+        scrollDelta,
+        scrollable: find.descendant(
+          of: find.byType(ReaderSettingsSheet),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final slider = tester.widget<Slider>(sliderFinder);
+      slider.onChanged!(value);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('reader-restoring')), findsNothing);
+      expect(tester.getTopLeft(anchor).dy, closeTo(before.top, 1));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(anchor).dy, closeTo(before.top, 1));
+      expect(
+        tester.getSize(anchor).height,
+        value == 20 ? lessThan(before.height) : greaterThan(before.height),
+      );
+    }
+    await tester.tap(find.byKey(const ValueKey('settings-cancel')));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(anchor), before);
   });
 
   testWidgets('typography and responsive bilingual columns render directly', (

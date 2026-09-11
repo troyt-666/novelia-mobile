@@ -323,8 +323,11 @@ Acceptance:
   changes restore the captured semantic anchor into the destination surface.
 - Horizontal page composition is bounded to the active render window; it must
   not eagerly load or lay out the complete novel.
-- Settings reflow must capture the anchor before rebuilding and restore it after
-  the next frame.
+- Settings reflow captures the current anchor before rebuilding. Vertical
+  reflow preserves its screen geometry in the next layout; changing layout mode
+  restores the semantic position into the destination surface. Paint-only
+  changes do not initiate position restoration. See
+  [the scroll stability record](reader-scroll-stability.md).
 - Do not add a plugin solely for reader brightness or orientation in this
   program when a Flutter/system API is sufficient.
 - Isolate orientation handling behind a package-neutral interface so widget and

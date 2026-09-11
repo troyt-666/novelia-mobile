@@ -297,22 +297,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       return;
     }
     final position = _positionToPreserve();
-    final anchor = position == null
-        ? null
-        : _mountedContextFor('block:${position.blockId}')?.findRenderObject();
-    final viewport = _viewportKey.currentContext?.findRenderObject();
-    final verticalOffset =
-        !_restoring &&
-            _settings.layoutMode == ReaderLayoutMode.scroll &&
-            anchor is RenderBox &&
-            anchor.hasSize &&
-            viewport is RenderBox &&
-            viewport.hasSize
-        ? MediaQuery.paddingOf(context).top +
-              88 -
-              (anchor.localToGlobal(Offset.zero).dy -
-                  viewport.localToGlobal(Offset.zero).dy)
-        : null;
+    final anchor = _captureVerticalAnchor();
     final firstId = _items.elementAtOrNull(_windowStart)?.stableId;
     final lastId = _items.elementAtOrNull(_windowEnd - 1)?.stableId;
     setState(() {
@@ -333,11 +318,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     final resolved = _resolvePosition(position);
     if (resolved != null) {
       _recordPosition(resolved, notify: false);
-      if (verticalOffset != null && resolved.blockId == position?.blockId) {
-        // Grow the refreshed text around the visible paragraph, just as the
-        // chapter window does when it trims. No intermediate jump is painted.
-        _verticalCenterId = 'block:${resolved.blockId}';
-        _settleWindowLayout(verticalOffset);
+      if (anchor != null && _itemIndices.containsKey(anchor.$1)) {
+        _rebaseVerticalAnchor(anchor);
         return;
       }
       unawaited(
@@ -760,10 +742,6 @@ class _ReaderScreenState extends State<ReaderScreen>
         alignment: alignment,
         duration: Duration.zero,
       );
-      if (preserveUserScroll &&
-          (_readerIsInteracting || !_waitingForUserScrollAfterJump)) {
-        return;
-      }
       if (intraBlockOffset > 0 &&
           _settings.layoutMode == ReaderLayoutMode.scroll &&
           _verticalScrollController.hasClients &&
@@ -1033,7 +1011,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     final end = math.min(_loadedChapters.length, chapterIndex + 4);
     final paged = _settings.layoutMode == ReaderLayoutMode.pages;
     final pageLocation = paged ? _pageLocationToPreserve() : null;
-    double? newScrollOffset;
+    (String, double)? verticalAnchor;
     var originId = 'block:${position.blockId}';
     if (!paged) {
       final anchor = _mountedContextFor(originId)?.findRenderObject();
@@ -1069,7 +1047,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       final anchorTop =
           originBox.localToGlobal(Offset.zero).dy -
           viewport.localToGlobal(Offset.zero).dy;
-      newScrollOffset = MediaQuery.paddingOf(context).top + 88 - anchorTop;
+      verticalAnchor = (originId, anchorTop);
     } else if (pageLocation == null) {
       return;
     }
@@ -1085,10 +1063,13 @@ class _ReaderScreenState extends State<ReaderScreen>
       _rebuildStream();
       _windowStart = _itemIndices[firstId] ?? 0;
       _windowEnd = (_itemIndices[lastId] ?? (_items.length - 1)) + 1;
-      _verticalCenterId = originId;
       _trimmedPageLocation = pageLocation;
     });
-    _settleWindowLayout(newScrollOffset);
+    if (verticalAnchor != null) {
+      _rebaseVerticalAnchor(verticalAnchor);
+    } else {
+      _settleWindowLayout(null);
+    }
   }
 
   void _settleWindowLayout(double? verticalOffset) {
@@ -1116,7 +1097,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   // Layout maintenance uses screen geometry, never the rounded reading
-  // progress. Include a paragraph even when only its last lines remain.
+  // progress. Prefer the visible paragraph starting nearest the viewport top.
   (String, double)? _captureVerticalAnchor() {
     if (_restoring || _settings.layoutMode != ReaderLayoutMode.scroll) {
       return null;
@@ -1125,17 +1106,24 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (viewport is! RenderBox || !viewport.hasSize) return null;
     final viewportTop = viewport.localToGlobal(Offset.zero).dy;
     var firstIndex = _items.length;
+    var nearestDistance = double.infinity;
     (String, double)? anchor;
     for (final entry in _mountedItemContexts.entries) {
       final index = _itemIndices[entry.key];
-      if (index == null || index >= firstIndex || !entry.value.mounted) {
+      if (index == null || !entry.value.mounted) {
         continue;
       }
       final box = entry.value.findRenderObject();
       if (box is! RenderBox || !box.hasSize) continue;
       final top = box.localToGlobal(Offset.zero).dy - viewportTop;
       if (top >= viewport.size.height || top + box.size.height <= 0) continue;
+      final distance = top.abs();
+      if (distance > nearestDistance ||
+          (distance == nearestDistance && index >= firstIndex)) {
+        continue;
+      }
       firstIndex = index;
+      nearestDistance = distance;
       anchor = (entry.key, top);
     }
     return anchor;
@@ -1322,14 +1310,23 @@ class _ReaderScreenState extends State<ReaderScreen>
     ThemeMode? themeMode,
     bool notify = true,
   }) async {
-    final position = _positionToPreserve();
+    final layoutChanged = settings.layoutMode != _settings.layoutMode;
+    final reflow =
+        layoutChanged ||
+        _textLayoutKey(settings) != _textLayoutKey(_settings) ||
+        settings.textSelectionEnabled != _settings.textSelectionEnabled;
+    final position = reflow ? _positionToPreserve() : null;
+    final anchor = reflow && !layoutChanged ? _captureVerticalAnchor() : null;
+    final restore = reflow && anchor == null;
     final orientationChanged =
         settings.orientationPreference != _settings.orientationPreference;
     setState(() {
       _settings = settings;
-      _waitingForUserScrollAfterJump = true;
+      if (restore) {
+        _waitingForUserScrollAfterJump = true;
+        _restoring = true;
+      }
       if (!settings.textSelectionEnabled) _selectionActive = false;
-      _restoring = true;
       _modeIndex.value = settings.readingMode.index;
       _sourceIndex.value = settings.translationSource.index;
       _layoutIndex.value = settings.layoutMode.index;
@@ -1349,10 +1346,13 @@ class _ReaderScreenState extends State<ReaderScreen>
       _tapPageTurnEnabled.value = settings.tapPageTurnEnabled;
     });
     _refreshChrome();
-    final restoration = _restoreAfterLayout(
-      position == null ? null : 'block:${position.blockId}',
-      intraBlockOffset: position?.intraBlockOffset ?? 0,
-    );
+    if (anchor != null) _rebaseVerticalAnchor(anchor);
+    final restoration = restore
+        ? _restoreAfterLayout(
+            position == null ? null : 'block:${position.blockId}',
+            intraBlockOffset: position?.intraBlockOffset ?? 0,
+          )
+        : null;
     if (orientationChanged) {
       unawaited(_orientationController.apply(settings.orientationPreference));
     }
@@ -1360,8 +1360,23 @@ class _ReaderScreenState extends State<ReaderScreen>
       widget.onThemeModeChanged(themeMode);
     }
     if (notify) widget.onSettingsChanged?.call(settings);
-    await restoration;
+    if (restoration != null) await restoration;
   }
+
+  // The same geometry inputs govern reflow and the measured page cache.
+  Record _textLayoutKey(ReaderSettings settings) => (
+    settings.readingMode,
+    settings.translationSource,
+    settings.fontFamily,
+    settings.bodyBold,
+    settings.chineseFontSize,
+    settings.japaneseFontSize,
+    settings.lineHeight,
+    settings.paragraphSpacing,
+    settings.pageMargin,
+    settings.readingWidth,
+    settings.columnLayout,
+  );
 
   void _handlePointerDown(PointerDownEvent event) {
     _readerPointers.add(event.pointer);
@@ -1980,17 +1995,7 @@ class _ReaderScreenState extends State<ReaderScreen>
           _windowStart,
           _windowEnd,
           _readerItemCount,
-          _settings.readingMode,
-          _settings.translationSource,
-          _settings.fontFamily,
-          _settings.bodyBold,
-          _settings.chineseFontSize,
-          _settings.japaneseFontSize,
-          _settings.lineHeight,
-          _settings.paragraphSpacing,
-          _settings.pageMargin,
-          _settings.readingWidth,
-          _settings.columnLayout,
+          _textLayoutKey(_settings),
           textScaler,
           baseTextStyle,
           constraints.maxWidth,
