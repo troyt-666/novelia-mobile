@@ -115,6 +115,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   final Map<String, GlobalKey> _itemKeys = {};
   final Map<String, (Record, Widget)> _itemWidgets = {};
   final Map<String, BuildContext> _mountedItemContexts = {};
+  final Map<String, NovelChapter> _pendingChapterUpdates = {};
   final _verticalScrollController = ScrollController();
   final _pageController = PageController();
   final _keyboardFocusNode = FocusNode(
@@ -267,6 +268,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     }
     if (oldWidget.chapterDataSource == widget.chapterDataSource) return;
     oldWidget.chapterDataSource?.removeChapterUpdateListener(_onChapterUpdated);
+    _pendingChapterUpdates.clear();
     widget.chapterDataSource?.addChapterUpdateListener(_onChapterUpdated);
     _refreshChrome();
   }
@@ -276,11 +278,42 @@ class _ReaderScreenState extends State<ReaderScreen>
     final index = _loadedChapters.indexWhere((item) => item.id == chapter.id);
     if (index < 0) return;
     if (identical(_loadedChapters[index], chapter)) return;
+    _pendingChapterUpdates[chapter.id] = chapter;
+    _applyPendingChapterUpdates();
+  }
+
+  void _applyPendingChapterUpdates() {
+    if (!mounted || _pendingChapterUpdates.isEmpty) return;
+    // A refresh must not cancel a drag or its ballistic continuation.
+    if (_activeScrollController.hasClients &&
+        _activeScrollController.position.isScrollingNotifier.value) {
+      return;
+    }
     final position = _positionToPreserve();
+    final anchor = position == null
+        ? null
+        : _mountedContextFor('block:${position.blockId}')?.findRenderObject();
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    final verticalOffset =
+        !_restoring &&
+            _settings.layoutMode == ReaderLayoutMode.scroll &&
+            anchor is RenderBox &&
+            anchor.hasSize &&
+            viewport is RenderBox &&
+            viewport.hasSize
+        ? MediaQuery.paddingOf(context).top +
+              88 -
+              (anchor.localToGlobal(Offset.zero).dy -
+                  viewport.localToGlobal(Offset.zero).dy)
+        : null;
     final firstId = _items.elementAtOrNull(_windowStart)?.stableId;
     final lastId = _items.elementAtOrNull(_windowEnd - 1)?.stableId;
     setState(() {
-      _loadedChapters[index] = chapter;
+      _loadedChapters = [
+        for (final chapter in _loadedChapters)
+          _pendingChapterUpdates[chapter.id] ?? chapter,
+      ];
+      _pendingChapterUpdates.clear();
       _rebuildStream();
       _windowStart =
           _itemIndices[firstId] ?? _windowStart.clamp(0, _items.length);
@@ -293,6 +326,13 @@ class _ReaderScreenState extends State<ReaderScreen>
     final resolved = _resolvePosition(position);
     if (resolved != null) {
       _recordPosition(resolved, notify: false);
+      if (verticalOffset != null && resolved.blockId == position?.blockId) {
+        // Grow the refreshed text around the visible paragraph, just as the
+        // chapter window does when it trims. No intermediate jump is painted.
+        _verticalCenterId = 'block:${resolved.blockId}';
+        _settleWindowLayout(verticalOffset);
+        return;
+      }
       unawaited(
         _restoreAfterLayout(
           'block:${resolved.blockId}',
@@ -999,19 +1039,29 @@ class _ReaderScreenState extends State<ReaderScreen>
       _verticalCenterId = originId;
       _trimmedPageLocation = pageLocation;
     });
+    _settleWindowLayout(newScrollOffset);
+  }
+
+  void _settleWindowLayout(double? verticalOffset) {
+    final generation = ++_positioningGeneration;
+    _preservingDynamicAnchor = true;
     // Rebase the sliver origin and scroll offset together, before the next
     // paint. Hold until layout updates the scroll bounds; never stop a fling.
     ScrollHoldController? hold;
-    if (newScrollOffset != null) {
-      _verticalScrollController.jumpTo(newScrollOffset);
+    if (verticalOffset != null) {
+      _verticalScrollController.jumpTo(verticalOffset);
       hold = _verticalScrollController.position.hold(() {});
     }
-    final generation = _positioningGeneration;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      hold?.cancel();
-      if (generation == _positioningGeneration) {
-        _preservingDynamicAnchor = false;
+      if (!mounted || generation != _positioningGeneration) return;
+      // A fresh gesture may already have replaced the temporary hold.
+      if (!_activeScrollController.hasClients ||
+          !_activeScrollController.position.isScrollingNotifier.value) {
+        hold?.cancel();
+      }
+      _preservingDynamicAnchor = false;
+      if (!_restoring && !_waitingForUserScrollAfterJump) {
+        _captureAnchor(notify: false);
       }
     });
   }
@@ -2095,6 +2145,12 @@ class _ReaderScreenState extends State<ReaderScreen>
                         _scheduleAnchorCapture(
                           publish: notification is ScrollEndNotification,
                         );
+                      }
+                      if (notification is ScrollEndNotification &&
+                          _pendingChapterUpdates.isNotEmpty) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _applyPendingChapterUpdates();
+                        });
                       }
                       return false;
                     },

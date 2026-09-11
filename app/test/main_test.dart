@@ -745,6 +745,127 @@ void main() {
     expect(find.byKey(ValueKey('block-${block.id}-chinese')), findsOneWidget);
   });
 
+  for (final updatedChapter in [1, 2]) {
+    testWidgets(
+      'chapter $updatedChapter refresh does not rewind or cancel an active drag',
+      (tester) async {
+        final chapters = [_windowChapter(1), _windowChapter(2)];
+        final reported = <ReadingPosition>[];
+        final source = ReaderChapterDataSource(
+          catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+          loadAround: (_) => throw StateError('not used'),
+          loadAdjacent: (_) => throw StateError('not used'),
+        );
+        final block = chapters.first.blocks[3];
+        await pumpWindowReader(
+          tester,
+          novel: _windowNovel(chapters),
+          dataSource: source,
+          onPositionChanged: reported.add,
+          initialPosition: ReadingPosition(
+            chapterId: chapters.first.id,
+            blockId: block.id,
+          ),
+        );
+        final anchor = find.byKey(ValueKey('block:${block.id}'));
+        final gesture = await tester.startGesture(const Offset(215, 500));
+        await gesture.moveBy(const Offset(0, -20));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, -60));
+        await tester.pump();
+        var top = tester.getTopLeft(anchor).dy;
+
+        // Both the current and a later chapter can refresh during the gesture.
+        final updated = _windowChapter(updatedChapter, paragraphRepeats: 8);
+        source.notifyChapterUpdated(updated);
+        for (final delta in [-80.0, -40.0, 30.0]) {
+          await gesture.moveBy(Offset(0, delta));
+          top += delta;
+          for (var frame = 0; frame < 4; frame++) {
+            await tester.pump();
+            expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+          }
+        }
+        await gesture.up();
+        await tester.pump();
+        expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+        if (updatedChapter == 2) {
+          // Start another swipe before the refresh's layout hold is released.
+          final nextGesture = await tester.startGesture(const Offset(215, 500));
+          await nextGesture.moveBy(const Offset(0, -20));
+          await tester.pump();
+          await nextGesture.moveBy(const Offset(0, -40));
+          top -= 40;
+          await tester.pump();
+          expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+          await nextGesture.up();
+        }
+        for (var frame = 0; frame < 4; frame++) {
+          await tester.pump();
+          expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+        }
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+        expect(reported, isNotEmpty);
+        if (updatedChapter == 1) {
+          expect(
+            tester
+                .widget<Text>(find.byKey(ValueKey('block-${block.id}-chinese')))
+                .data,
+            updated.blocks[3].translationFor(TranslationSource.sakura),
+          );
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'chapter refresh preserves the fling through its final position',
+    (tester) async {
+      final chapters = [_windowChapter(1, blockCount: 20), _windowChapter(2)];
+      final traces = <List<double>>[];
+      for (final refresh in [false, true]) {
+        final source = ReaderChapterDataSource(
+          catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+          loadAround: (_) => throw StateError('not used'),
+          loadAdjacent: (_) => throw StateError('not used'),
+        );
+        await pumpWindowReader(
+          tester,
+          novel: _windowNovel(chapters),
+          dataSource: source,
+          initialPosition: ReadingPosition(
+            chapterId: chapters.first.id,
+            blockId: chapters.first.blocks[3].id,
+          ),
+        );
+        await tester.flingFrom(
+          const Offset(215, 500),
+          const Offset(0, -100),
+          1000,
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+        final position = _readerScrollable(tester).position;
+        expect(position.isScrollingNotifier.value, isTrue);
+        final anchor = find.byKey(
+          ValueKey('block:${chapters.first.blocks[3].id}'),
+        );
+        if (refresh) {
+          source.notifyChapterUpdated(_windowChapter(2, paragraphRepeats: 8));
+        }
+        final trace = <double>[];
+        for (var frame = 0; frame < 8; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          trace.add(tester.getTopLeft(anchor).dy);
+        }
+        await tester.pumpAndSettle();
+        trace.add(tester.getTopLeft(anchor).dy);
+        traces.add(trace);
+      }
+      expect(traces.last, orderedEquals(traces.first));
+    },
+  );
+
   testWidgets(
     'paged catalog jump displays a loaded chapter outside the window',
     (tester) async {
