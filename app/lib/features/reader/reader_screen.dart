@@ -1286,10 +1286,22 @@ class _ReaderScreenState extends State<ReaderScreen>
     _waitingForUserScrollAfterJump = false;
     if (!_keyboardFocusNode.hasFocus) _keyboardFocusNode.requestFocus();
     if (_selectionActive) return;
+    if (_activeScrollController.hasClients &&
+        _activeScrollController.position.isScrollingNotifier.value) {
+      return;
+    }
     if (_tapPointer != null) return;
     _tapPointer = event.pointer;
     _tapOrigin = event.position;
     _tapStartedAt = DateTime.now();
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer == _tapPointer &&
+        _tapOrigin != null &&
+        (event.position - _tapOrigin!).distance >= 12) {
+      _clearTapCandidate();
+    }
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
@@ -2098,72 +2110,78 @@ class _ReaderScreenState extends State<ReaderScreen>
                     unawaited(_turnPage(ReaderLoadDirection.after)),
                 onDecrease: () =>
                     unawaited(_turnPage(ReaderLoadDirection.before)),
-                child: Listener(
-                  key: const ValueKey('reader-center-tap-area'),
-                  behavior: HitTestBehavior.translucent,
-                  onPointerDown: _handlePointerDown,
-                  onPointerUp: _handlePointerUp,
-                  onPointerCancel: _handlePointerCancel,
-                  onPointerSignal: _handlePointerSignal,
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      final expectedAxis =
-                          _settings.layoutMode == ReaderLayoutMode.pages
-                          ? Axis.horizontal
-                          : Axis.vertical;
-                      if (notification.metrics.axis != expectedAxis) {
-                        return false;
-                      }
-                      // A restored or catalog-selected window intentionally
-                      // starts close to its semantic anchor. Do not prepend
-                      // older items merely because the reader continues
-                      // forward from that position.
-                      final movingTowardBefore = switch (notification) {
-                        ScrollUpdateNotification(:final scrollDelta) =>
-                          (scrollDelta ?? 0) < 0,
-                        OverscrollNotification(:final overscroll) =>
-                          overscroll < 0,
-                        _ => false,
-                      };
-                      final movingTowardAfter = switch (notification) {
-                        ScrollUpdateNotification(:final scrollDelta) =>
-                          (scrollDelta ?? 0) > 0,
-                        OverscrollNotification(:final overscroll) =>
-                          overscroll > 0,
-                        _ => false,
-                      };
-                      _handleScrollMetrics(
-                        notification.metrics,
-                        movingTowardBefore: movingTowardBefore,
-                        movingTowardAfter: movingTowardAfter,
-                      );
-                      _handleReaderScroll(notification);
-                      if (!_restoring &&
-                          !_waitingForUserScrollAfterJump &&
-                          !_preservingDynamicAnchor &&
-                          (notification is ScrollEndNotification ||
-                              notification is ScrollUpdateNotification)) {
-                        _scheduleAnchorCapture(
-                          publish: notification is ScrollEndNotification,
-                        );
-                      }
-                      if (notification is ScrollEndNotification &&
-                          _pendingChapterUpdates.isNotEmpty) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _applyPendingChapterUpdates();
-                        });
-                      }
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    final expectedAxis =
+                        _settings.layoutMode == ReaderLayoutMode.pages
+                        ? Axis.horizontal
+                        : Axis.vertical;
+                    if (notification.metrics.axis != expectedAxis) {
                       return false;
-                    },
-                    child: _settings.textSelectionEnabled
-                        ? SelectionArea(
-                            key: const ValueKey('reader-selection-area'),
-                            onSelectionChanged: _handleSelectionChanged,
-                            child: readerStream,
-                          )
-                        : readerStream,
-                  ),
+                    }
+                    // A restored or catalog-selected window intentionally
+                    // starts close to its semantic anchor. Do not prepend
+                    // older items merely because the reader continues
+                    // forward from that position.
+                    final movingTowardBefore = switch (notification) {
+                      ScrollUpdateNotification(:final scrollDelta) =>
+                        (scrollDelta ?? 0) < 0,
+                      OverscrollNotification(:final overscroll) =>
+                        overscroll < 0,
+                      _ => false,
+                    };
+                    final movingTowardAfter = switch (notification) {
+                      ScrollUpdateNotification(:final scrollDelta) =>
+                        (scrollDelta ?? 0) > 0,
+                      OverscrollNotification(:final overscroll) =>
+                        overscroll > 0,
+                      _ => false,
+                    };
+                    _handleScrollMetrics(
+                      notification.metrics,
+                      movingTowardBefore: movingTowardBefore,
+                      movingTowardAfter: movingTowardAfter,
+                    );
+                    _handleReaderScroll(notification);
+                    if (!_restoring &&
+                        !_waitingForUserScrollAfterJump &&
+                        !_preservingDynamicAnchor &&
+                        (notification is ScrollEndNotification ||
+                            notification is ScrollUpdateNotification)) {
+                      _scheduleAnchorCapture(
+                        publish: notification is ScrollEndNotification,
+                      );
+                    }
+                    if (notification is ScrollEndNotification &&
+                        _pendingChapterUpdates.isNotEmpty) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _applyPendingChapterUpdates();
+                      });
+                    }
+                    return false;
+                  },
+                  child: _settings.textSelectionEnabled
+                      ? SelectionArea(
+                          key: const ValueKey('reader-selection-area'),
+                          onSelectionChanged: _handleSelectionChanged,
+                          child: readerStream,
+                        )
+                      : readerStream,
                 ),
+              ),
+            ),
+            // Observe the touch before Scrollable holds an active fling. An
+            // ancestor Listener runs after that hold and sees an idle scroll.
+            // Translucent hit testing still delivers the touch to the reader.
+            Positioned.fill(
+              child: Listener(
+                key: const ValueKey('reader-center-tap-area'),
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: _handlePointerDown,
+                onPointerMove: _handlePointerMove,
+                onPointerUp: _handlePointerUp,
+                onPointerCancel: _handlePointerCancel,
+                onPointerSignal: _handlePointerSignal,
               ),
             ),
             _readerChrome,

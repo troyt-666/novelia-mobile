@@ -2,7 +2,7 @@
   "app": {
     "bundleName": "io.github.troyt666.jfzreader.harmony",
     "vendor": "JFZ Reader",
-    "versionCode": 13,
+    "versionCode": 14,
     "versionName": "1.0.0",
     "icon": "$media:app_icon",
     "label": "$string:app_name"

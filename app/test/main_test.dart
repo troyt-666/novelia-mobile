@@ -1435,6 +1435,56 @@ void main() {
     expect(position.pixels, greaterThan(beforeTap));
   });
 
+  testWidgets('stopping a fling does not also activate a reading tap', (
+    tester,
+  ) async {
+    final chapter = _windowChapter(1, blockCount: 24);
+    await pumpReader(
+      tester,
+      novel: _windowNovel([chapter]),
+      initialPosition: ReadingPosition(
+        chapterId: chapter.id,
+        blockId: chapter.blocks[10].id,
+      ),
+    );
+    await tester.flingFrom(const Offset(350, 350), const Offset(0, 220), 1800);
+    await tester.pump(const Duration(milliseconds: 60));
+    final position = _readerScrollable(tester).position;
+    expect(position.isScrollingNotifier.value, isTrue);
+
+    final brake = await tester.startGesture(const Offset(350, 600));
+    await tester.pump(const Duration(milliseconds: 180));
+    final stopped = position.pixels;
+    expect(position.isScrollingNotifier.value, isFalse);
+    await brake.up();
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(stopped, 1));
+
+    // A separate tap after stopping still turns a page normally.
+    await tester.tapAt(const Offset(350, 600));
+    await tester.pumpAndSettle();
+    expect(
+      position.pixels - stopped,
+      closeTo(position.viewportDimension - 72, 1),
+    );
+  });
+
+  testWidgets('a drag returning to its starting point is not a reading tap', (
+    tester,
+  ) async {
+    await pumpReader(tester);
+    final gesture = await tester.startGesture(const Offset(350, 500));
+    await gesture.moveBy(const Offset(0, -100));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 100));
+    await tester.pump();
+    final position = _readerScrollable(tester).position;
+    final stopped = position.pixels;
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(stopped, 1));
+  });
+
   testWidgets('layout setting persists through the reader callback', (
     tester,
   ) async {
