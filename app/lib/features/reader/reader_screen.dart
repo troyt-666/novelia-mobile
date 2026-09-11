@@ -180,6 +180,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   ReadingPosition? _lastReportedPosition;
   var _windowStart = 0;
   var _windowEnd = 0;
+  final _readerPointers = <int>{};
   int? _tapPointer;
   Offset? _tapOrigin;
   DateTime? _tapStartedAt;
@@ -196,6 +197,11 @@ class _ReaderScreenState extends State<ReaderScreen>
       _settings.layoutMode == ReaderLayoutMode.pages
       ? _pageController
       : _verticalScrollController;
+
+  bool get _readerIsInteracting =>
+      _readerPointers.isNotEmpty ||
+      (_activeScrollController.hasClients &&
+          _activeScrollController.position.isScrollingNotifier.value);
 
   @override
   String? get restorationId => 'reader:${widget.novel.id}';
@@ -507,12 +513,19 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   void didChangeMetrics() {
     if (!mounted || _restoring) return;
+    final view = View.of(context);
+    // Insets and repeated platform notifications do not resize the page.
+    // Restoring anyway would realign the paragraph and cancel an active drag.
+    if (view.physicalSize / view.devicePixelRatio == MediaQuery.sizeOf(context)) {
+      return;
+    }
     final position = _positionToPreserve();
     if (position == null) return;
     unawaited(
       _restoreAfterLayout(
         'block:${position.blockId}',
         intraBlockOffset: position.intraBlockOffset,
+        preserveUserScroll: true,
       ),
     );
   }
@@ -651,18 +664,31 @@ class _ReaderScreenState extends State<ReaderScreen>
     String? stableId, {
     int intraBlockOffset = 0,
     double alignment = 0,
+    bool preserveUserScroll = false,
   }) async {
+    // ScrollEnd already records the final visible anchor. A resize must not
+    // replay an older position after the user has continued reading.
+    if (preserveUserScroll && _readerIsInteracting) return false;
     final generation = ++_positioningGeneration;
     _preservingDynamicAnchor = true;
     _waitingForUserScrollAfterJump = true;
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted || generation != _positioningGeneration) return false;
+    // Input clears the wait flag even if its gesture ends before this frame.
+    if (preserveUserScroll &&
+        (_readerIsInteracting || !_waitingForUserScrollAfterJump)) {
+      _preservingDynamicAnchor = false;
+      _waitingForUserScrollAfterJump = false;
+      _captureAnchor(notify: !_readerIsInteracting);
+      return false;
+    }
     if (stableId != null) {
       await _jumpToStableId(
         stableId,
         intraBlockOffset: intraBlockOffset,
         alignment: alignment,
         generation: generation,
+        preserveUserScroll: preserveUserScroll,
       );
     }
     await WidgetsBinding.instance.endOfFrame;
@@ -671,6 +697,9 @@ class _ReaderScreenState extends State<ReaderScreen>
       _preservingDynamicAnchor = false;
       _restoring = false;
     });
+    if (preserveUserScroll && !_waitingForUserScrollAfterJump) {
+      _captureAnchor(notify: !_readerIsInteracting);
+    }
     return true;
   }
 
@@ -679,6 +708,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     required int generation,
     int intraBlockOffset = 0,
     double alignment = 0,
+    bool preserveUserScroll = false,
   }) async {
     if (!mounted || generation != _positioningGeneration) return;
     final targetIndex = _itemIndices[stableId];
@@ -700,6 +730,10 @@ class _ReaderScreenState extends State<ReaderScreen>
       });
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || generation != _positioningGeneration) return;
+      if (preserveUserScroll &&
+          (_readerIsInteracting || !_waitingForUserScrollAfterJump)) {
+        return;
+      }
     }
     if (paged) {
       final page = _pagination?.pageForStableId(stableId, intraBlockOffset);
@@ -716,6 +750,10 @@ class _ReaderScreenState extends State<ReaderScreen>
         alignment: alignment,
         duration: Duration.zero,
       );
+      if (preserveUserScroll &&
+          (_readerIsInteracting || !_waitingForUserScrollAfterJump)) {
+        return;
+      }
       if (intraBlockOffset > 0 &&
           _settings.layoutMode == ReaderLayoutMode.scroll &&
           _verticalScrollController.hasClients &&
@@ -1283,6 +1321,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    _readerPointers.add(event.pointer);
     _waitingForUserScrollAfterJump = false;
     if (!_keyboardFocusNode.hasFocus) _keyboardFocusNode.requestFocus();
     if (_selectionActive) return;
@@ -1305,6 +1344,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
+    _readerPointers.remove(event.pointer);
     if (event.pointer == _tapPointer) {
       _clearTapCandidate();
     }
@@ -1317,6 +1357,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _handlePointerUp(PointerUpEvent event) {
+    _readerPointers.remove(event.pointer);
     if (event.pointer != _tapPointer ||
         _tapOrigin == null ||
         _tapStartedAt == null) {

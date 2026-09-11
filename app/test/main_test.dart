@@ -1355,6 +1355,189 @@ void main() {
   );
 
   testWidgets(
+    'window notifications without a resize preserve reader scrolling',
+    (tester) async {
+      final chapter = _windowChapter(1, blockCount: 24);
+      final block = chapter.blocks[12];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([chapter]),
+        initialPosition: ReadingPosition(
+          chapterId: chapter.id,
+          blockId: block.id,
+          intraBlockOffset: 250,
+        ),
+      );
+      final anchor = find.byKey(ValueKey('block:${block.id}'));
+      final gesture = await tester.startGesture(const Offset(215, 500));
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -60));
+      await tester.pump();
+      var top = tester.getTopLeft(anchor).dy;
+
+      // A platform metrics notification need not change the reading viewport.
+      addTearDown(tester.view.resetSystemGestureInsets);
+      for (final notify in <VoidCallback>[
+        tester.binding.handleMetricsChanged,
+        () => tester.view.systemGestureInsets =
+            const FakeViewPadding(bottom: 24),
+      ]) {
+        notify();
+        for (var frame = 0; frame < 4; frame++) {
+          await tester.pump();
+          expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+        }
+      }
+      await gesture.moveBy(const Offset(0, -40));
+      top -= 40;
+      await tester.pump();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+      tester.binding.handleMetricsChanged();
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+    },
+  );
+
+  testWidgets(
+    'resizing during a drag keeps scrolling and saves the final position',
+    (tester) async {
+      final chapter = _windowChapter(1, blockCount: 24);
+      final block = chapter.blocks[12];
+      final reported = <ReadingPosition>[];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([chapter]),
+        initialPosition: ReadingPosition(
+          chapterId: chapter.id,
+          blockId: block.id,
+          intraBlockOffset: 250,
+        ),
+        onPositionChanged: reported.add,
+      );
+      final anchor = find.byKey(ValueKey('block:${block.id}'));
+      final gesture = await tester.startGesture(const Offset(215, 500));
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -60));
+      await tester.pump();
+
+      tester.view.physicalSize = const Size(500, 800);
+      await tester.pump();
+      var top = tester.getTopLeft(anchor).dy;
+      // Reflow is expected; no later frame may realign or cancel the gesture.
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump();
+        expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+      }
+      await gesture.moveBy(const Offset(0, -180));
+      top -= 180;
+      await tester.pump();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+      final position = _readerScrollable(tester).position;
+      final finalPixels = position.pixels;
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(position.pixels, closeTo(finalPixels, 1));
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+      expect(reported, isNotEmpty);
+      final saved = reported.last;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(reported.last, saved);
+    },
+  );
+
+  testWidgets(
+    'a new touch supersedes a queued resize correction',
+    (tester) async {
+      final chapter = _windowChapter(1, blockCount: 24);
+      final block = chapter.blocks[12];
+      await pumpReader(
+        tester,
+        novel: _windowNovel([chapter]),
+        initialPosition: ReadingPosition(
+          chapterId: chapter.id,
+          blockId: block.id,
+          intraBlockOffset: 250,
+        ),
+      );
+      final anchor = find.byKey(ValueKey('block:${block.id}'));
+      final top = tester.getTopLeft(anchor).dy;
+      tester.view.physicalSize = const Size(430, 800);
+      final gesture = await tester.startGesture(const Offset(215, 500));
+      // The touch is held, before Scrollable has recognized a drag.
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump();
+        expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+      }
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -40));
+      await tester.pump();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
+
+      // Input can start and finish before the queued layout callback runs.
+      tester.view.physicalSize = const Size(430, 850);
+      final quickSwipe = await tester.startGesture(const Offset(215, 500));
+      await quickSwipe.moveBy(const Offset(0, -20));
+      await quickSwipe.moveBy(const Offset(0, -40));
+      await quickSwipe.up();
+      final finalPixels = _readerScrollable(tester).position.pixels;
+      await tester.pumpAndSettle();
+      expect(_readerScrollable(tester).position.pixels, closeTo(finalPixels, 1));
+    },
+  );
+
+  testWidgets('resizing lets a reader fling finish before saving its anchor', (
+    tester,
+  ) async {
+    final chapter = _windowChapter(1, blockCount: 24);
+    final reported = <ReadingPosition>[];
+    await pumpReader(
+      tester,
+      novel: _windowNovel([chapter]),
+      initialPosition: ReadingPosition(
+        chapterId: chapter.id,
+        blockId: chapter.blocks[12].id,
+      ),
+      onPositionChanged: reported.add,
+    );
+    await tester.flingFrom(
+      const Offset(215, 500),
+      const Offset(0, -100),
+      1000,
+    );
+    final position = _readerScrollable(tester).position;
+    expect(position.isScrollingNotifier.value, isTrue);
+    tester.view.physicalSize = const Size(500, 800);
+    var previous = position.pixels;
+    for (var frame = 0; frame < 8; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(position.pixels, greaterThanOrEqualTo(previous));
+      expect(position.isScrollingNotifier.value, isTrue);
+      expect(reported, isEmpty);
+      previous = position.pixels;
+    }
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(previous));
+    expect(position.isScrollingNotifier.value, isFalse);
+    expect(reported, hasLength(1));
+    final saved = reported.single;
+    final finalPixels = position.pixels;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pumpAndSettle();
+    expect(reported.last, saved);
+    expect(position.pixels, finalPixels);
+  });
+
+  testWidgets(
     'scroll mode preserves its semantic anchor across desktop and fold widths',
     (tester) async {
       final bookmarkChanges = <(ReadingPosition, bool)>[];
