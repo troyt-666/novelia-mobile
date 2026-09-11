@@ -12,6 +12,7 @@ import '../../core/model/reader_models.dart';
 import 'reader_body.dart';
 import 'reader_controls.dart';
 import 'reader_pagination.dart';
+import 'reader_volume_keys.dart';
 
 typedef ReaderBookmarkChanged =
     void Function(ReadingPosition position, bool bookmarked);
@@ -2079,7 +2080,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       ),
     );
 
-    return KeyboardListener(
+    final reader = KeyboardListener(
       key: const ValueKey('reader-keyboard-navigation'),
       focusNode: _keyboardFocusNode,
       autofocus: true,
@@ -2187,6 +2188,15 @@ class _ReaderScreenState extends State<ReaderScreen>
           ],
         ),
       ),
+    );
+    return ReaderVolumeKeys(
+      onPrevious: () {
+        if (!_selectionActive) unawaited(_turnPage(ReaderLoadDirection.before));
+      },
+      onNext: () {
+        if (!_selectionActive) unawaited(_turnPage(ReaderLoadDirection.after));
+      },
+      child: reader,
     );
   }
 }

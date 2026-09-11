@@ -400,6 +400,36 @@ void main() {
     _expectReaderKeyboardMapping();
   });
 
+  for (final mode in ReaderLayoutMode.values) {
+    testWidgets('Android volume keys turn the reader in ${mode.name} mode', (
+      tester,
+    ) async {
+      await pumpReader(
+        tester,
+        novel: _oversizedBlockNovel(),
+        initialSettings: ReaderSettings(layoutMode: mode),
+        viewSize: const Size(430, 600),
+      );
+      final position = _readerScrollable(tester).position;
+      final start = position.pixels;
+      expect(position.maxScrollExtent, greaterThan(start));
+      expect(
+        await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeDown),
+        isTrue,
+      );
+      await tester.pumpAndSettle();
+      final next = position.pixels;
+      expect(next, greaterThan(start));
+      expect(
+        await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeUp),
+        isTrue,
+      );
+      await tester.pumpAndSettle();
+      expect(position.pixels, lessThan(next));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('direction keys turn the network reader on its active axis', (
     tester,
   ) async {

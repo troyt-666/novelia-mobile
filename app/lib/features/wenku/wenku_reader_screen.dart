@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
+import '../reader/reader_volume_keys.dart';
 import 'wenku_epub_document.dart';
 
 @visibleForTesting
@@ -355,7 +356,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final readerColors = _resolvedColors();
-    return Focus(
+    final reader = Focus(
       autofocus: true,
       onKeyEvent: _handleKeyEvent,
       child: Scaffold(
@@ -485,6 +486,12 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
           ],
         ),
       ),
+    );
+    return ReaderVolumeKeys(
+      enabled: !_loading && _failure == null && !_fontMenuVisible,
+      onPrevious: () => unawaited(_previous()),
+      onNext: () => unawaited(_next()),
+      child: reader,
     );
   }
 }
