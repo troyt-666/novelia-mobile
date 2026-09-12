@@ -5,7 +5,7 @@
 - This is an independent Flutter implementation. Do not copy code, assets,
   wording, credentials, or identifiers from the reference APK.
 - `io.github.troyt666.jfzreader` is the permanent Android/Apple release
-  identifier. HarmonyOS uses `io.github.troyt666.jfzreader.harmony` so both
+  identifier. HarmonyOS uses `io.github.troyt666.jfzreader.hm` so both
   editions can coexist on one phone. Keep these identifiers stable.
 - Keep secrets out of the repository and use fixture data for agent-driven UI
   work.
