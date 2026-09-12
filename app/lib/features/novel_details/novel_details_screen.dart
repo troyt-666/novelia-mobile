@@ -122,6 +122,10 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
     setState(() => _downloadStarting = true);
     try {
       await callback();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('已加入离线下载')));
     } on Object {
       if (!mounted) return;
       ScaffoldMessenger.of(context)

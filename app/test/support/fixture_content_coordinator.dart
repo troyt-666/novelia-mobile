@@ -21,7 +21,8 @@ class FixtureContentCoordinator implements NoveliaContentCoordinator {
                 (novel) =>
                     novel.chineseTitle.toLowerCase().contains(search) ||
                     novel.japaneseTitle.toLowerCase().contains(search) ||
-                    (novel.author?.toLowerCase().contains(search) ?? false),
+                    (novel.author?.toLowerCase().contains(search) ?? false) ||
+                    novel.tags.any((tag) => tag.toLowerCase().contains(search)),
               )
               .toList();
     return NoveliaContentResult.available(

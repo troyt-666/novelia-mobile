@@ -352,10 +352,10 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     DownloadTask initialTask,
     NovelChapter? metadata,
   ) async {
-    var task = _reloadQueued(initialTask.id);
+    var task = _reloadTask(initialTask.id, DownloadTaskState.queued);
     if (task == null) return;
-    if (!_trySaveTask(task.beginFetching(clock()))) return;
-    task = offlineRepository.taskById(task.id)!;
+    task = task.beginFetching(clock());
+    if (!_trySaveTask(task)) return;
 
     if (metadata == null) {
       _saveFailure(
@@ -393,18 +393,18 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
         },
       );
     } on NoveliaGatewayException catch (failure) {
-      final current = _reloadFetching(taskId);
+      final current = _reloadTask(taskId, DownloadTaskState.fetching);
       if (current == null) return;
       _saveFailure(current, _downloadFailure(failure));
       return;
     }
 
-    task = _reloadFetching(taskId);
+    task = _reloadTask(taskId, DownloadTaskState.fetching);
     if (task == null) return;
+    task = task.beginValidation(clock());
+    if (!_trySaveTask(task)) return;
 
     if (response.key != key || response.chapterId != task.chapterId) {
-      if (!_trySaveTask(task.beginValidation(clock()))) return;
-      task = offlineRepository.taskById(task.id)!;
       _saveFailure(
         task,
         const DownloadFailure(
@@ -424,8 +424,6 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
         fetchedAt: clock(),
       );
     } on NoveliaDomainMappingException catch (failure) {
-      if (!_trySaveTask(task.beginValidation(clock()))) return;
-      task = offlineRepository.taskById(task.id)!;
       _saveFailure(
         task,
         DownloadFailure(
@@ -438,8 +436,6 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     }
 
     final selected = payload.translationFor(task.translationSource)!;
-    if (!_trySaveTask(task.beginValidation(clock()))) return;
-    task = offlineRepository.taskById(task.id)!;
 
     if (selected.availability == TranslationAvailability.invalid) {
       _saveFailure(
@@ -456,8 +452,8 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
 
     // Pending is valid offline data: the protected copy contains the exact
     // Japanese blocks and a null translation byte count.
-    if (!_trySaveTask(task.beginStoring(clock()))) return;
-    task = offlineRepository.taskById(task.id)!;
+    task = task.beginStoring(clock());
+    if (!_trySaveTask(task)) return;
     final storedAt = clock();
     final copy = cacheAdapter.downloadedCopy(
       payload,
@@ -492,29 +488,19 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     }
   }
 
-  DownloadTask? _reloadQueued(String taskId) {
+  DownloadTask? _reloadTask(String taskId, DownloadTaskState expectedState) {
     final task = offlineRepository.taskById(taskId);
-    if (task == null || task.state != DownloadTaskState.queued) return null;
-    final intent = offlineRepository.intentById(task.intentId);
-    if (intent == null || !intent.enabled) return null;
-    return task;
-  }
-
-  DownloadTask? _reloadFetching(String taskId) {
-    final task = offlineRepository.taskById(taskId);
-    if (task == null || task.state != DownloadTaskState.fetching) return null;
+    if (task == null || task.state != expectedState) return null;
     final intent = offlineRepository.intentById(task.intentId);
     if (intent == null || !intent.enabled) return null;
     return task;
   }
 
   void _reportFetchProgress(String taskId, int bytesReceived, int? totalBytes) {
-    final task = _reloadFetching(taskId);
+    final task = _reloadTask(taskId, DownloadTaskState.fetching);
     if (task == null) return;
     if (bytesReceived < task.bytesReceived) return;
-    if (totalBytes == null && task.totalBytes == null) {
-      if (bytesReceived - task.bytesReceived < 4096) return;
-    } else if (bytesReceived - task.bytesReceived < 4096 &&
+    if (bytesReceived - task.bytesReceived < 4096 &&
         (totalBytes == null || bytesReceived < totalBytes)) {
       return;
     }
@@ -556,11 +542,9 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
 
   bool _hasRestrictedMarker(String novelId) {
     try {
-      return contentRepository.listCachedNovels().any(
-        (outline) =>
-            outline.id == novelId &&
-            domainAdapter.isRestrictedAttentions(outline.tags),
-      );
+      return contentRepository
+          .listCachedNovels(novelIds: [novelId])
+          .any((outline) => domainAdapter.isRestrictedAttentions(outline.tags));
     } on Object {
       return false;
     }

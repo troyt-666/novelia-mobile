@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jfzreader/core/database/app_database.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
@@ -16,6 +17,84 @@ void main() {
   final now = DateTime.utc(2026, 8, 17, 12);
 
   group('LiveFirstNoveliaContentCoordinator', () {
+    test(
+      'single-novel reads and revocation ignore unrelated corrupt cache rows',
+      () async {
+        final database = NoveliaDatabase.openInMemory();
+        final store = SqliteOfflineRepository.fromDatabase(
+          database,
+          closeOnDispose: true,
+        );
+        addTearDown(store.close);
+        const cache = NoveliaContentCacheAdapter();
+        final outline = const NoveliaDomainAdapter().mapOutline(_outline());
+        store.upsertNovelOutline(cache.cacheOutline(outline, fetchedAt: now));
+        store.upsertNovelOutline(
+          CachedNovelOutline(
+            id: 'syosetu/unrelated',
+            chineseTitle: '其他作品',
+            japaneseTitle: '別の作品',
+            author: '',
+            contentSource: 'Syosetu',
+            publicationState: CachedNovelState.unknown,
+            chapterCount: null,
+            wordCount: null,
+            updatedAt: null,
+            tags: const [],
+            translationCoverage: const [],
+            fetchedAt: now,
+          ),
+        );
+        database.execute(
+          "UPDATE cached_novels SET coverage_json = 'invalid JSON' WHERE id = 'syosetu/unrelated';",
+        );
+        final gateway = _FakeGateway(
+          catalogPage: const NoveliaPage(items: [], pageCount: 0),
+          details: _details(chapterIds: const ['c1']),
+          chapters: {'c1': _payload('c1')},
+        );
+        final content = LiveFirstNoveliaContentCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+        );
+        expect(
+          (await content.loadDetails(outline)).availability,
+          CatalogAvailability.available,
+        );
+        expect(gateway.detailCalls, 1);
+
+        store.saveIntent(
+          NovelDownloadIntent(
+            id: 'intent',
+            novelId: outline.id,
+            translationSource: TranslationSource.sakura,
+            createdAt: now,
+          ),
+        );
+        final downloader = AsyncNoveliaDownloadCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+          offlineRepository: store,
+        );
+        final downloaded = await downloader.synchronizeIntent('intent');
+        final copyId = downloaded.tasks.single.storedCopyId!;
+        gateway.details = _details(
+          attentions: const ['R18'],
+          chapterIds: const ['c1'],
+        );
+        expect(
+          (await downloader.synchronizeIntent('intent')).availability,
+          CatalogAvailability.authenticationRequired,
+        );
+        expect(store.cachedNovelOutline(outline.id)!.tags, contains('R18'));
+        expect(store.copyById(copyId), isNotNull);
+
+        final detailCalls = gateway.detailCalls;
+        await downloader.synchronizeIntent('intent');
+        expect(gateway.detailCalls, detailCalls);
+      },
+    );
+
     for (final restricted in [false, true]) {
       test(
         'all read entry points follow account access (R18=$restricted)',

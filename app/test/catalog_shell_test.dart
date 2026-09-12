@@ -17,6 +17,9 @@ import 'package:jfzreader/features/shell/novelia_shell.dart';
 import 'package:jfzreader/features/shell/shell_view_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/gateway/novelia/novelia_catalog_controller.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
+import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
+import 'package:jfzreader/gateway/novelia/novelia_reader_window.dart';
 
 import 'support/fixture_content_coordinator.dart';
 
@@ -65,9 +68,10 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: NoveliaShell(
-            novels: const [],
             catalogController: feeds,
-            catalogAvailability: CatalogAvailability.offline,
+            readerLaunchLoader: NoveliaReaderWindowFactory(
+              contentCoordinator: feeds.contentCoordinator,
+            ).loaderFor(TranslationSource.sakura),
             readerBuilder: (_, _) => const SizedBox(),
             themeMode: ThemeMode.system,
             onThemeModeChanged: (_) {},
@@ -93,6 +97,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.widget(discovery), same(widget));
+      await tester.tap(find.byKey(const ValueKey('nav-search')));
+      await tester.pumpAndSettle();
+      expect(find.text('不存在'), findsOneWidget);
     },
   );
 
@@ -108,7 +115,6 @@ void main() {
             novels: novels,
             catalogAvailability: CatalogAvailability.available,
             onOpenNovel: (_) {},
-            onOpenRankings: () {},
           ),
         ),
       ),
@@ -138,9 +144,7 @@ void main() {
     NovelCommentPageLoader? commentPageLoader,
     ReaderRouteOpened? onReaderOpened,
     NovelDownloadRequested? onDownloadRequested,
-    CatalogCriteriaRequested? onCatalogCriteriaRequested,
-    FutureOr<void> Function()? onDiscoveryRefreshRequested,
-    ValueChanged<CatalogNovel>? onFavoriteRequested,
+    _ShellContentCoordinator? contentCoordinator,
     AccountSessionSnapshot accountSession =
         const AccountSessionSnapshot.signedOut(),
     RemoteFavoritesViewModel remoteFavorites =
@@ -157,19 +161,33 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    final coordinator =
+        contentCoordinator ??
+        _ShellContentCoordinator(
+          novels ?? fixtureCatalogNovels,
+          availability: availability,
+        );
+    final feeds = NoveliaCatalogController(
+      contentCoordinator: coordinator,
+      initialNovels: novels ?? fixtureCatalogNovels,
+      canAccessRestrictedContent: () => accountSession.isSignedIn,
+    );
+    addTearDown(feeds.dispose);
+    await feeds.refreshCatalog();
+    await feeds.refreshRecentlyUpdated();
     await tester.pumpWidget(
       MaterialApp(
         home: NoveliaShell(
-          novels: novels ?? fixtureCatalogNovels,
-          catalogAvailability: availability,
+          catalogController: feeds,
           novelDetailsLoader: novelDetailsLoader,
-          readerLaunchLoader: readerLaunchLoader,
+          readerLaunchLoader:
+              readerLaunchLoader ??
+              NoveliaReaderWindowFactory(
+                contentCoordinator: coordinator,
+              ).loaderFor(TranslationSource.sakura),
           commentPageLoader: commentPageLoader,
           onReaderOpened: onReaderOpened,
           onDownloadRequested: onDownloadRequested,
-          onCatalogCriteriaRequested: onCatalogCriteriaRequested,
-          onDiscoveryRefreshRequested: onDiscoveryRefreshRequested,
-          onFavoriteRequested: onFavoriteRequested,
           accountSession: accountSession,
           remoteFavorites: remoteFavorites,
           onFavoriteToFolderRequested: onFavoriteToFolderRequested,
@@ -253,16 +271,14 @@ void main() {
   });
 
   testWidgets('reselecting Discovery refreshes its feed', (tester) async {
-    var refreshCount = 0;
-    await pumpShell(
-      tester,
-      onDiscoveryRefreshRequested: () async => refreshCount += 1,
-    );
+    final coordinator = _ShellContentCoordinator(fixtureCatalogNovels);
+    await pumpShell(tester, contentCoordinator: coordinator);
+    coordinator.queries.clear();
 
     await tester.tap(find.byKey(const ValueKey('nav-discover')));
     await tester.pump();
 
-    expect(refreshCount, 1);
+    expect(coordinator.queries.map((query) => query.sort), [0, 1]);
   });
 
   testWidgets('Discovery supports pull refresh and requests its next page', (
@@ -282,7 +298,6 @@ void main() {
             novels: fixtureCatalogNovels,
             catalogAvailability: CatalogAvailability.available,
             onOpenNovel: (_) {},
-            onOpenRankings: () {},
             onRefreshRequested: () async => refreshCount += 1,
             onDiscoveryLoadMoreRequested: (sort) async {
               requestedSorts.add(sort);
@@ -374,7 +389,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('discover-search-field')), findsOneWidget);
-    expect(find.text('标签“$tag” · 1 部'), findsOneWidget);
+    expect(find.text('标签“$tag” · 已加载 1 部'), findsOneWidget);
   });
 
   testWidgets('favorite folders and Reading History open remote pages', (
@@ -435,7 +450,7 @@ void main() {
     await tester.tap(favoriteTagFinder);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('discover-search-field')), findsOneWidget);
-    expect(find.text('标签“$favoriteTag” · 1 部'), findsOneWidget);
+    expect(find.text('标签“$favoriteTag” · 已加载 1 部'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('阅读历史'));
@@ -525,7 +540,6 @@ void main() {
               mostClickedNovels: [liveNovel],
               catalogAvailability: CatalogAvailability.available,
               onOpenNovel: (_) {},
-              onOpenRankings: () {},
             ),
           ),
         ),
@@ -552,7 +566,7 @@ void main() {
     );
     await tester.enterText(search, '齿轮图书馆');
     await tester.pumpAndSettle();
-    expect(find.text('找到 1 部小说'), findsOneWidget);
+    expect(find.text('已加载 1 部小说'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('discover-filters-button')));
     await tester.pumpAndSettle();
@@ -607,7 +621,6 @@ void main() {
               novels: novels,
               catalogAvailability: CatalogAvailability.available,
               onOpenNovel: (_) {},
-              onOpenRankings: () {},
               onCriteriaRequested: (criteria) {
                 expect(criteria.search, '服务端作者名');
                 setState(() => novels = [remoteMatch]);
@@ -649,7 +662,6 @@ void main() {
             catalogAvailability: CatalogAvailability.available,
             catalogLoading: true,
             onOpenNovel: (_) {},
-            onOpenRankings: () {},
             onCriteriaRequested: (_) {},
           ),
         ),
@@ -681,7 +693,6 @@ void main() {
             novels: fixtureCatalogNovels,
             catalogAvailability: CatalogAvailability.available,
             onOpenNovel: (_) {},
-            onOpenRankings: () {},
             onCriteriaRequested: requests.add,
           ),
         ),
@@ -768,7 +779,6 @@ void main() {
             catalogAvailability: CatalogAvailability.available,
             catalogTotalCount: 37,
             onOpenNovel: (_) {},
-            onOpenRankings: () {},
             onCriteriaRequested: (_) {},
           ),
         ),
@@ -783,8 +793,9 @@ void main() {
   testWidgets('detail author and tag use the remote catalog criteria path', (
     tester,
   ) async {
-    final requests = <CatalogCriteria>[];
-    await pumpShell(tester, onCatalogCriteriaRequested: requests.add);
+    final coordinator = _ShellContentCoordinator(fixtureCatalogNovels);
+    await pumpShell(tester, contentCoordinator: coordinator);
+    final requests = coordinator.queries;
     final novel = fixtureCatalogNovels.first;
 
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
@@ -792,7 +803,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('novel-author-chip')));
     await tester.pumpAndSettle();
     expect(requests.last.search, novel.author);
-    expect(requests.last.sort, CatalogSort.relevance);
+    expect(requests.last.sort, 2);
     expect(find.byKey(const ValueKey('novelia-shell')), findsOneWidget);
 
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
@@ -801,8 +812,7 @@ void main() {
     await tester.scrollUntilVisible(tag, 400);
     await tester.tap(tag);
     await tester.pumpAndSettle();
-    expect(requests.last.search, isEmpty);
-    expect(requests.last.exactTag, '幻想');
+    expect(requests.last.search, '幻想');
     expect(find.byKey(const ValueKey('novelia-shell')), findsOneWidget);
   });
 
@@ -828,6 +838,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('favorite-novel-button')), findsNothing);
       expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('download-novel-button')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
         find.byKey(const ValueKey('open-original-site-button')),
         findsNothing,
       );
@@ -843,7 +861,17 @@ void main() {
     final novel = fixtureCatalogNovels.first;
     await pumpShell(
       tester,
-      onFavoriteRequested: (value) => favorite = value,
+      accountSession: AccountSessionSnapshot.signedIn(
+        ReaderAccountProfile(
+          username: 'reader',
+          role: 'member',
+          expiresAt: DateTime.utc(2030),
+        ),
+      ),
+      remoteFavorites: RemoteFavoritesViewModel.available(const [
+        LibraryFavoriteFolder(id: 'default', title: '默认收藏夹'),
+      ]),
+      onFavoriteToFolderRequested: (value, _) => favorite = value,
       onOpenOriginalRequested: (value) => original = value,
     );
 
@@ -988,7 +1016,7 @@ void main() {
       tester,
       novels: [novel.copyWith(isFavorite: true, favoriteFolderId: 'later')],
       novelDetailsLoader: (_) async => novel,
-      onFavoriteRequested: (_) {},
+      onFavoriteToFolderRequested: (_, _) async {},
     );
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
     await tester.pumpAndSettle();
@@ -1003,11 +1031,21 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    final coordinator = _ShellContentCoordinator(fixtureCatalogNovels);
+    final feeds = NoveliaCatalogController(
+      contentCoordinator: coordinator,
+      initialNovels: fixtureCatalogNovels,
+      canAccessRestrictedContent: () => false,
+    );
+    addTearDown(feeds.dispose);
+    await feeds.refreshCatalog();
     await tester.pumpWidget(
       MaterialApp(
         home: NoveliaShell(
-          novels: fixtureCatalogNovels,
-          catalogAvailability: CatalogAvailability.available,
+          catalogController: feeds,
+          readerLaunchLoader: NoveliaReaderWindowFactory(
+            contentCoordinator: coordinator,
+          ).loaderFor(TranslationSource.sakura),
           themeMode: ThemeMode.system,
           onThemeModeChanged: (_) {},
           onRecentSearchesChanged: (searches) => savedSearches = searches,
@@ -1164,7 +1202,7 @@ void main() {
       tester,
       onDownloadRequested: (_) {
         requests += 1;
-        return download.future;
+        return requests == 1 ? download.future : Future<void>.value();
       },
     );
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
@@ -1186,6 +1224,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('离线下载创建失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const ValueKey('download-novel-loading')), findsNothing);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(find.text('已加入离线下载'), findsOneWidget);
+    expect(find.text('离线下载创建失败，请稍后重试'), findsNothing);
   });
 
   testWidgets('chapter action crosses the readerBuilder boundary with anchor', (
@@ -1627,4 +1670,30 @@ class _ObservedNovels extends ListBase<CatalogNovel> {
   @override
   void operator []=(int index, CatalogNovel value) =>
       throw UnsupportedError('read-only');
+}
+
+class _ShellContentCoordinator extends FixtureContentCoordinator {
+  _ShellContentCoordinator(
+    super.novels, {
+    this.availability = CatalogAvailability.available,
+  });
+
+  final CatalogAvailability availability;
+  final queries = <NoveliaCatalogQuery>[];
+
+  @override
+  Future<NoveliaContentResult<NoveliaCatalogSlice>> loadCatalog(
+    NoveliaCatalogQuery query,
+  ) async {
+    queries.add(query);
+    final result = await super.loadCatalog(query);
+    return switch (availability) {
+      CatalogAvailability.available => result,
+      CatalogAvailability.offline => NoveliaContentResult.offline(
+        cachedData: result.data,
+      ),
+      CatalogAvailability.authenticationRequired =>
+        NoveliaContentResult.authenticationRequired(cachedData: result.data),
+    };
+  }
 }

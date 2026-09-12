@@ -14,16 +14,19 @@ class LocalLibrarySnapshot {
     required Iterable<CatalogNovel> knownNovels,
     required bool allowRestricted,
   }) {
-    final progress = repository.listReadingProgress().toList();
-    final savedBookmarks = repository.listBookmarks().toList();
+    final progress = repository.listReadingProgress();
+    final savedBookmarks = repository.listBookmarks();
     final intents = repository.listIntents();
-    final copies = repository.listCopies(kind: OfflineCopyKind.offlineDownload);
+    final copies = repository.listCopies();
+    final downloadedCopies = copies.where(
+      (copy) => copy.kind == OfflineCopyKind.offlineDownload,
+    );
     final tasks = repository.listTasks();
     novelIds = {
       for (final row in progress) row.novelId,
       for (final row in savedBookmarks) row.novelId,
       for (final row in intents) row.novelId,
-      for (final row in copies) row.novelId,
+      for (final row in downloadedCopies) row.novelId,
       for (final row in tasks)
         if (row.state != DownloadTaskState.removed) row.novelId,
     };
@@ -60,9 +63,9 @@ class LocalLibrarySnapshot {
       }
     }
     continuedReads = _libraryContinuedReads(novels, progress, repository);
-    downloads = _libraryDownloads(novels, intents, copies, tasks);
+    downloads = _libraryDownloads(novels, intents, downloadedCopies, tasks);
     bookmarks = _libraryBookmarks(novels, savedBookmarks);
-    storageSummary = repository.storageSummary();
+    storageSummary = OfflineStorageSummary.fromCopies(copies);
   }
 
   late final List<LibraryContinuedRead> continuedReads;
@@ -76,7 +79,6 @@ class LocalLibrarySnapshot {
     List<LocalReadingProgress> progress,
     SqliteOfflineRepository repository,
   ) {
-    progress.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return List.unmodifiable([
       for (final item in progress)
         if (novelsById[item.novelId] case final novel?)
@@ -131,7 +133,7 @@ class LocalLibrarySnapshot {
   static List<LibraryProtectedDownload> _libraryDownloads(
     Map<String, CatalogNovel> novelsById,
     List<DownloadIntent> intents,
-    List<OfflineChapterCopy> copies,
+    Iterable<OfflineChapterCopy> copies,
     List<DownloadTask> tasks,
   ) {
     final intentsByGroup =
@@ -253,7 +255,6 @@ class LocalLibrarySnapshot {
     Map<String, CatalogNovel> novelsById,
     List<LocalBookmark> bookmarks,
   ) {
-    bookmarks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return List.unmodifiable([
       for (final bookmark in bookmarks)
         if (novelsById[bookmark.novelId] case final novel?)

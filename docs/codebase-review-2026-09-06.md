@@ -274,3 +274,53 @@ script tests use the same local shell, jq, and checksum tools as the scripts.
 All planned implementation and test-cleanup batches are complete. No live
 account/content probes, signing with real credentials, or publication were
 performed as part of these batches.
+
+## Follow-up review and cleanup — 2026-09-12
+
+Reviewed application composition, discovery/search, account and history sync,
+offline storage/downloads, content access and loading, both reader paths,
+updates, platform bridges, and build/release scripts. The review followed the
+actual callers and state transitions: each fact needs one owner, persisted
+changes need a truthful result, and validation should protect a real boundary.
+The main remaining excess was obsolete parallel paths and repeated work inside
+the existing architecture. Another architectural layer was not needed.
+
+### Findings fixed
+
+| Finding | Change and result |
+| --- | --- |
+| Shell accepted a catalog controller plus duplicate feed snapshots, flags, callbacks, and its own criteria copy. | Require the existing controller and read its state directly. Search criteria now follow external controller updates. Keep independent feed notifications so searches do not rebuild populated discovery feeds. |
+| Production widgets retained test-only synchronous reader launch, legacy search/favorite callbacks, an unused results screen, and prototype messages. | Remove the unused paths. Shell tests use the existing controller, reader-window factory, and real favorite-folder flow with fixture services. |
+| A single-title access check decoded all cached titles. One unrelated corrupt row could make an ordinary title appear to require login; the same scan pattern affected restriction markers and revocation. | Use the repository's existing novel-ID filter in all three paths. No new query API or cache layer. A regression reproduces the false denial on the old code and verifies restricted-copy retention and anonymous restart denial. |
+| Offline storage projected the same copies twice, re-sorted already ordered SQL results, maintained duplicate totals, and split one repository into three unused subinterfaces. | Read copies once for shelf and storage summary, derive overall totals from per-title totals, retain SQL ordering, and keep one existing repository interface. |
+| Download execution repeated task reload helpers, synchronous reads immediately after writes, equivalent validation transitions, and resume/retry bodies. The shell and detail screen both caught download errors. | Share the actual state check, remove redundant reads and branches, and let the detail screen own success/failure feedback. Keep task/intent rereads after asynchronous work and atomic completion. |
+| Explicit logout swallowed local credential-deletion failure and presented a signed-out state while credentials remained on disk. History was also cleared before logout succeeded. | Require local deletion to succeed before reporting logout. Show a failure with a working retry button. Clear account history through the existing session listener. Remote logout remains best effort; unusable credentials are still removed from memory even if storage cleanup fails. |
+| Wenku pagination tested vertical alternatives despite a constant horizontal axis. | Remove unreachable branches. Preserve the existing layout, navigation, sanitization, and resource limits. |
+
+### Architecture retained
+
+- Session identity/epoch checks and the mutation queue prevent stale requests
+  from changing a newer account. They address tested races.
+- SQLite transactions, task revisions, cancellation checks after awaits, and
+  protected-copy ownership prevent stale writes and lost offline content.
+- Wire/cache validation, translation alignment, restricted-content rules,
+  EPUB sanitization, and release integrity/signature checks protect distinct
+  boundaries. Removing them would change the product's guarantees.
+- Reader anchor and scroll geometry handle measured layout changes. Splitting
+  more files or replacing these mechanisms solely to reduce file size would
+  not simplify their responsibilities.
+
+### Validation and scope
+
+Static analysis of `lib`, `test`, and `integration_test`: **zero issues**.
+The full local Flutter suite passes **330 tests**, including actual macOS
+WKWebView layout/navigation/sanitization checks. Both the unrelated-corrupt-cache
+case and the failed-local-logout retry case were observed failing before their
+respective fixes. Existing account isolation, download transitions, persistence,
+reader interaction, and release-script tests also pass. Whitespace checks pass.
+
+Production Dart code: **309 net lines removed across 15 files**. This is a code
+size measurement, not a runtime benchmark. No dependencies or database schema
+changes were introduced. Validation was local; no phone deployment, live account
+probe, signing, or publication was performed. Pre-existing HarmonyOS identifier
+and documentation edits were left untouched.

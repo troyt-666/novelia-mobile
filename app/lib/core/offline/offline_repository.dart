@@ -1,6 +1,6 @@
 import 'offline_models.dart';
 
-abstract interface class DownloadIntentRepository {
+abstract interface class OfflineRepository {
   void saveIntent(DownloadIntent intent);
 
   DownloadIntent? intentById(String id);
@@ -28,9 +28,6 @@ abstract interface class DownloadIntentRepository {
   void resumeIntent(String intentId, DateTime now);
 
   void removeIntent(String intentId, DateTime now);
-}
-
-abstract interface class DownloadTaskRepository {
   DownloadTask? taskById(String id);
 
   List<DownloadTask> listTasks({String? intentId, String? novelId});
@@ -42,9 +39,6 @@ abstract interface class DownloadTaskRepository {
     required OfflineChapterCopy copy,
     required DateTime now,
   });
-}
-
-abstract interface class OfflineContentRepository {
   OfflineChapterCopy? copyById(String id);
 
   List<OfflineChapterCopy> listCopies({String? novelId, OfflineCopyKind? kind});
@@ -58,9 +52,3 @@ abstract interface class OfflineContentRepository {
 
   OfflineStorageSummary storageSummary();
 }
-
-abstract interface class OfflineRepository
-    implements
-        DownloadIntentRepository,
-        DownloadTaskRepository,
-        OfflineContentRepository {}

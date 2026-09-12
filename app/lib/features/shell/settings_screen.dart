@@ -459,7 +459,15 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed == true) await onAccountLogout?.call();
+    if (confirmed != true) return;
+    try {
+      await onAccountLogout?.call();
+    } on Object {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('无法清除本机登录信息，请重试退出登录')));
+    }
   }
 }
 

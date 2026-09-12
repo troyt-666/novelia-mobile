@@ -7,6 +7,7 @@ import 'package:jfzreader/core/account/account_models.dart';
 import 'package:jfzreader/core/account/account_session_controller.dart';
 import 'package:jfzreader/core/account/secure_session_store.dart';
 import 'package:jfzreader/features/account/account_screen.dart';
+import 'package:jfzreader/features/shell/settings_screen.dart';
 import 'package:jfzreader/gateway/novelia/novelia_auth_gateway.dart';
 
 void main() {
@@ -199,6 +200,55 @@ void main() {
     });
   });
 
+  testWidgets('failed local logout stays signed in and can be retried', (
+    tester,
+  ) async {
+    final store = _FailingClearStore();
+    final controller = AccountSessionController(
+      gateway: _FakeAuthGateway(),
+      store: store,
+    );
+    addTearDown(controller.dispose);
+    await controller.login(username: 'alice', password: 'fixture');
+    final stored = store.value;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListenableBuilder(
+            listenable: controller,
+            builder: (context, child) => SettingsScreen(
+              themeMode: ThemeMode.system,
+              onThemeModeChanged: (_) {},
+              onClearSearchHistory: () {},
+              accountSession: controller.snapshot,
+              onAccountLogout: controller.logout,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('account-logout-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-account-logout')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('无法清除本机登录信息，请重试退出登录'), findsOneWidget);
+    expect(find.text('@alice'), findsOneWidget);
+    expect(controller.snapshot.status, AccountSessionStatus.signedIn);
+    expect(store.value, same(stored));
+
+    store.failClear = false;
+    await tester.tap(find.byKey(const ValueKey('account-logout-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-account-logout')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('未登录'), findsOneWidget);
+    expect(controller.snapshot.status, AccountSessionStatus.signedOut);
+    expect(store.value, isNull);
+  });
+
   testWidgets('login form reports a rejected credential without leaving', (
     tester,
   ) async {
@@ -261,6 +311,16 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+class _FailingClearStore extends InMemoryAccountSessionStore {
+  bool failClear = true;
+
+  @override
+  Future<void> clear() async {
+    if (failClear) throw StateError('fixture storage unavailable');
+    await super.clear();
+  }
 }
 
 class _FakeAuthGateway implements NoveliaAuthGateway {

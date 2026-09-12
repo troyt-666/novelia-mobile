@@ -561,22 +561,10 @@ class OfflineStorageSummary {
   factory OfflineStorageSummary.fromCopies(
     Iterable<OfflineChapterCopy> copies,
   ) {
-    var cacheBytes = 0;
-    var downloadBytes = 0;
-    final cacheChapters = <ChapterRef>{};
-    final downloadChapters = <ChapterRef>{};
     final groups = <String, List<OfflineChapterCopy>>{};
 
     for (final copy in copies) {
       groups.putIfAbsent(copy.novelId, () => []).add(copy);
-      switch (copy.kind) {
-        case OfflineCopyKind.cacheCopy:
-          cacheBytes += copy.totalBytes;
-          cacheChapters.add(copy.chapter);
-        case OfflineCopyKind.offlineDownload:
-          downloadBytes += copy.totalBytes;
-          downloadChapters.add(copy.chapter);
-      }
     }
 
     final novelIds = groups.keys.toList()..sort();
@@ -586,10 +574,19 @@ class OfflineStorageSummary {
     ];
 
     return OfflineStorageSummary(
-      cacheBytes: cacheBytes,
-      offlineDownloadBytes: downloadBytes,
-      cacheChapterCount: cacheChapters.length,
-      offlineDownloadChapterCount: downloadChapters.length,
+      cacheBytes: perNovel.fold(0, (sum, novel) => sum + novel.cacheBytes),
+      offlineDownloadBytes: perNovel.fold(
+        0,
+        (sum, novel) => sum + novel.offlineDownloadBytes,
+      ),
+      cacheChapterCount: perNovel.fold(
+        0,
+        (sum, novel) => sum + novel.cacheChapterCount,
+      ),
+      offlineDownloadChapterCount: perNovel.fold(
+        0,
+        (sum, novel) => sum + novel.offlineDownloadChapterCount,
+      ),
       perNovel: List.unmodifiable(perNovel),
     );
   }

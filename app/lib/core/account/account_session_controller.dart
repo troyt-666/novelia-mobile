@@ -104,7 +104,10 @@ class AccountSessionController extends ChangeNotifier {
 
   Future<void> logout() async {
     final session = _session;
-    await _enqueueMutation(_clearLocalSession);
+    await _enqueueMutation(() async {
+      await store.clear();
+      _forgetSession();
+    });
     if (session == null) return;
     try {
       await gateway.logout(session);
@@ -166,15 +169,18 @@ class AccountSessionController extends ChangeNotifier {
   }
 
   Future<void> _clearLocalSession() async {
-    _epoch += 1;
-    _refreshInFlight = null;
-    _session = null;
+    _forgetSession();
     try {
       await store.clear();
     } on Object {
-      // The in-memory session is still removed. A later restore will fail
-      // closed if platform storage remains unavailable.
+      // Unusable credentials must leave memory even if storage cleanup fails.
     }
+  }
+
+  void _forgetSession() {
+    _epoch += 1;
+    _refreshInFlight = null;
+    _session = null;
     _setSnapshot(const AccountSessionSnapshot.signedOut());
   }
 

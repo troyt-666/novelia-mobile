@@ -26,12 +26,6 @@ class RemoteHistorySync {
 
   void dispose() => _disposed = true;
 
-  void signedOut() {
-    clear();
-    _owner = null;
-    _ownerInitialized = true;
-  }
-
   void updateSession(AccountSessionSnapshot? session) {
     if (session == null) return;
     if (session.status == AccountSessionStatus.restoring &&

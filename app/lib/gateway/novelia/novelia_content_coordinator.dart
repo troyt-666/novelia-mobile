@@ -473,9 +473,7 @@ class LiveFirstNoveliaContentCoordinator
     final repository = contentRepository;
     if (repository == null) return false;
     try {
-      final cached = repository.listCachedNovels().where(
-        (candidate) => candidate.id == outline.id,
-      );
+      final cached = repository.listCachedNovels(novelIds: [outline.id]);
       if (cached.isEmpty) return false;
       try {
         cacheAdapter.restoreOutline(

@@ -382,11 +382,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     );
   }
 
-  Future<void> _logoutAccount() async {
-    _historySync.signedOut();
-    await widget.accountSessionController?.logout();
-  }
-
   static (String, String)? _serviceNovelKey(String stableId) {
     final separator = stableId.indexOf('/');
     if (separator <= 0 || separator == stableId.length - 1) return null;
@@ -418,16 +413,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     return List.unmodifiable(novels);
   }
 
-  Future<void> _refreshDiscoveryFeeds() => Future.wait([
-    _feeds.refreshRecentlyUpdated(),
-    _feeds.refreshMostClicked(),
-  ]);
-
-  Future<void> _loadMoreDiscovery(CatalogSort sort) =>
-      sort == CatalogSort.mostClicked
-      ? _feeds.refreshMostClicked(append: true)
-      : _feeds.refreshRecentlyUpdated(append: true);
-
   Future<RankingPageView> _loadRankings(RankingsQuery query) async {
     final providerId = _rankingProviderId(query.source);
     final range = _rankingRange(query.period);
@@ -458,7 +443,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         ? _defaultRankingPageSize
         : slice.novels.length;
     final sourceLabel = kakuyomu ? 'Kakuyomu' : 'Syosetu';
-    final genreLabel = query.genre ?? (kakuyomu ? '综合' : '综合');
+    final genreLabel = query.genre ?? '综合';
     return RankingPageView(
       novels: slice.novels,
       pageNumber: kakuyomu ? query.pageNumber : slice.pageIndex + 1,
@@ -776,12 +761,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         }
         break;
       case DownloadManagementAction.resume:
-        for (final intentId in existingIntentIds) {
-          final intent = _repository.intentById(intentId)!;
-          if (!intent.enabled) _repository.resumeIntent(intentId, now);
-          await _synchronizeIntent(intentId, retryFailures: true);
-        }
-        break;
       case DownloadManagementAction.retry:
         for (final intentId in existingIntentIds) {
           final intent = _repository.intentById(intentId)!;
@@ -857,9 +836,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           catalogController: _feeds,
           wenkuGateway: widget.wenkuGateway,
           appVersion: widget.appVersion,
-          novels: _catalogNovels,
-          catalogAvailability: _feeds.searchAvailability,
-          discoveryAvailability: _feeds.discoveryAvailability,
           continuedReads: _library.continuedReads,
           protectedDownloads: _library.downloads,
           bookmarks: _library.bookmarks,
@@ -878,9 +854,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               : ({required username, required password}) => widget
                     .accountSessionController!
                     .login(username: username, password: password),
-          onAccountLogout: widget.accountSessionController == null
-              ? null
-              : _logoutAccount,
+          onAccountLogout: widget.accountSessionController?.logout,
           onLoginRequested: widget.accountSessionController?.retry,
           onHostedAccountHelp: widget.externalLinkLauncher == null
               ? null
@@ -910,24 +884,6 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           cacheLimitBytes: _cacheLimitBytes,
           onCacheLimitChanged: _setCacheLimit,
           onClearReadingCache: _clearReadingCache,
-          initialCatalogCriteria: _catalogCriteria,
-          onCatalogCriteriaRequested: (criteria) =>
-              _feeds.refreshCatalog(criteria: criteria),
-          onCatalogLoadMoreRequested: () => _feeds.refreshCatalog(append: true),
-          onDiscoveryRefreshRequested: _refreshDiscoveryFeeds,
-          onDiscoveryLoadMoreRequested: _loadMoreDiscovery,
-          catalogHasMore: _feeds.catalog.hasMore,
-          catalogLoading: _feeds.catalog.loading,
-          catalogLoadingMore: _feeds.catalog.loadingMore,
-          catalogLoadMoreFailed: _feeds.catalog.loadMoreFailed,
-          recentlyUpdatedHasMore: _feeds.recentlyUpdated.hasMore,
-          recentlyUpdatedLoadingMore: _feeds.recentlyUpdated.loadingMore,
-          recentlyUpdatedLoadMoreFailed: _feeds.recentlyUpdated.loadMoreFailed,
-          mostClickedHasMore: _feeds.mostClicked.hasMore,
-          mostClickedLoadingMore: _feeds.mostClicked.loadingMore,
-          mostClickedLoadMoreFailed: _feeds.mostClicked.loadMoreFailed,
-          mostClickedNovels: _feeds.mostClicked.novels,
-          recentlyUpdatedNovels: _feeds.recentlyUpdated.novels,
           rankingsLoader: _loadRankings,
           novelDetailsLoader: _loadNovelDetails,
           readerLaunchLoader: _loadReaderWindow,

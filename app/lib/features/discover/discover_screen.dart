@@ -13,7 +13,6 @@ class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({
     required this.novels,
     required this.onOpenNovel,
-    required this.onOpenRankings,
     required this.catalogAvailability,
     this.onOpenWenku,
     this.continuedNovel,
@@ -21,7 +20,6 @@ class DiscoverScreen extends StatefulWidget {
     this.onContinueReading,
     this.initialCriteria = const CatalogCriteria(),
     this.onCriteriaRequested,
-    this.onSearchRequested,
     this.onLoadMoreRequested,
     this.onRefreshRequested,
     this.onDiscoveryLoadMoreRequested,
@@ -48,7 +46,6 @@ class DiscoverScreen extends StatefulWidget {
   final List<CatalogNovel> novels;
   final CatalogAvailability catalogAvailability;
   final ValueChanged<CatalogNovel> onOpenNovel;
-  final VoidCallback onOpenRankings;
   final VoidCallback? onOpenWenku;
   final CatalogNovel? continuedNovel;
   final double? continuedProgress;
@@ -56,8 +53,6 @@ class DiscoverScreen extends StatefulWidget {
   final CatalogCriteria initialCriteria;
   final CatalogCriteriaRequested? onCriteriaRequested;
 
-  /// Search-only fallback when [onCriteriaRequested] is absent.
-  final FutureOr<void> Function(String query)? onSearchRequested;
   final FutureOr<void> Function()? onLoadMoreRequested;
   final FutureOr<void> Function()? onRefreshRequested;
   final FutureOr<void> Function(CatalogSort sort)? onDiscoveryLoadMoreRequested;
@@ -90,7 +85,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
   late String _query;
-  String? _authoritativeRemoteQuery;
   CatalogCriteria? _authoritativeRemoteCriteria;
   late Set<String> _sources;
   late NovelPublicationState? _publicationState;
@@ -102,7 +96,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   CatalogSort _discoverySort = CatalogSort.recentlyUpdated;
   var _showingRankings = false;
   var _rankingsOpened = false;
-  (List<CatalogNovel>, CatalogCriteria, bool, bool)? _filteredInput;
+  (List<CatalogNovel>, CatalogCriteria)? _filteredInput;
   List<CatalogNovel> _filtered = const [];
   List<CatalogNovel>? _discoveryInput;
   List<CatalogNovel>? _recentlyUpdated;
@@ -227,27 +221,18 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     if (typedRemoteResultsAreAuthoritative) {
       return widget.novels;
     }
-    final remoteResultsAreAuthoritative =
-        widget.onSearchRequested != null &&
-        _authoritativeRemoteQuery == _query.trim();
-    final input = (
-      widget.novels,
-      _criteria,
-      typedRemoteResultsAreAuthoritative,
-      remoteResultsAreAuthoritative,
-    );
+    final input = (widget.novels, _criteria);
     if (_filteredInput != input) {
       _filteredInput = input;
-      _filtered = _filterNovels(remoteResultsAreAuthoritative);
+      _filtered = _filterNovels();
     }
     return _filtered;
   }
 
-  List<CatalogNovel> _filterNovels(bool remoteResultsAreAuthoritative) {
+  List<CatalogNovel> _filterNovels() {
     final normalizedQuery = _query.trim().toLowerCase();
     final result = widget.novels.where((novel) {
       final matchesQuery =
-          remoteResultsAreAuthoritative ||
           normalizedQuery.isEmpty ||
           novel.chineseTitle.toLowerCase().contains(normalizedQuery) ||
           novel.japaneseTitle.toLowerCase().contains(normalizedQuery) ||
@@ -309,24 +294,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       _exactTag = null;
       if (commit && widget.onCriteriaRequested != null) {
         _authoritativeRemoteCriteria = _criteria;
-      } else if (commit && widget.onSearchRequested != null) {
-        _authoritativeRemoteQuery = value.trim();
-      } else if (_authoritativeRemoteQuery != value.trim()) {
-        _authoritativeRemoteQuery = null;
       }
     });
     if (commit && value.trim().isNotEmpty) {
       widget.onSearchCommitted?.call(value.trim());
     }
-    if (commit) {
-      if (widget.onCriteriaRequested != null) {
-        _requestTypedCriteria();
-      } else if (widget.onSearchRequested case final callback?) {
-        unawaited(
-          Future<void>.sync(() => callback(value.trim())).catchError((_) {}),
-        );
-      }
-    }
+    if (commit) _requestTypedCriteria();
   }
 
   void _selectTag(String tag) {
@@ -400,9 +373,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           ? '找到 $total 部小说'
           : '标签“$_exactTag” · 共 $total 部';
     }
-    final remoteCatalog =
-        widget.onCriteriaRequested != null || widget.onSearchRequested != null;
-    if (remoteCatalog) {
+    if (widget.onCriteriaRequested != null) {
       return _exactTag == null
           ? '已加载 $loadedCount 部小说'
           : '标签“$_exactTag” · 已加载 $loadedCount 部';
@@ -498,7 +469,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       FilledButton.tonalIcon(
                         key: const ValueKey('open-rankings-button'),
                         onPressed: () {
-                          widget.onOpenRankings();
                           setState(() {
                             _showingRankings = true;
                             _rankingsOpened = true;

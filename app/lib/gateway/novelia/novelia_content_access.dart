@@ -12,8 +12,7 @@ void revokeRestrictedNovelCache(
 }) {
   try {
     final outline = repository
-        .listCachedNovels()
-        .where((outline) => outline.id == novelId)
+        .listCachedNovels(novelIds: [novelId])
         .firstOrNull;
     if (outline != null &&
         !domainAdapter.isRestrictedAttentions(outline.tags)) {

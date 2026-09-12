@@ -561,15 +561,14 @@ String _readerScript({required bool japaneseFirst}) {
   return '''
 <script>
 (() => {
-  const axis = 'x';
   const originalIsFirst = $originalIsFirst;
   const root = document.scrollingElement || document.documentElement;
-  const current = () => axis === 'x' ? window.scrollX : window.scrollY;
+  const current = () => window.scrollX;
   // Match mature EPUB engines: the viewport is the fixed pagination delta,
   // content length is divided into complete logical pages, and every move is
   // snapped to an integer multiple of that delta.
-  const pageDelta = () => Math.max(1, axis === 'x' ? window.innerWidth : window.innerHeight);
-  const contentLength = () => axis === 'x' ? root.scrollWidth : root.scrollHeight;
+  const pageDelta = () => Math.max(1, window.innerWidth);
+  const contentLength = () => root.scrollWidth;
   const pageCount = () => Math.max(1, Math.ceil(contentLength() / pageDelta()));
   const lastPageIndex = () => pageCount() - 1;
   const clampPage = page => Math.max(0, Math.min(lastPageIndex(), page));
@@ -585,7 +584,6 @@ String _readerScript({required bool japaneseFirst}) {
     root.style.removeProperty('min-width');
   };
   const normalizePageExtent = () => {
-    if (axis !== 'x') return;
     clearPageExtent();
     const normalizedWidth = Math.ceil(root.scrollWidth / pageDelta()) * pageDelta();
     // WKWebView can omit the final half-column gap from scrollWidth and does
@@ -615,8 +613,8 @@ String _readerScript({required bool japaneseFirst}) {
     if (layoutReady) ReaderBridge.postMessage(JSON.stringify(metrics()));
   };
   const scrollToPage = (page, smooth = true) => window.scrollTo({
-    left: axis === 'x' ? clampPage(page) * pageDelta() : 0,
-    top: axis === 'y' ? clampPage(page) * pageDelta() : 0,
+    left: clampPage(page) * pageDelta(),
+    top: 0,
     behavior: smooth ? 'smooth' : 'auto'
   });
   const moveToPage = (page, smooth = true) => {
@@ -781,7 +779,7 @@ String _readerScript({required bool japaneseFirst}) {
   let wheelReset;
   let wheelCooldownUntil = 0;
   document.addEventListener('wheel', event => {
-    if (axis !== 'x' || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
     event.preventDefault();
     if (Date.now() < wheelCooldownUntil) return;
     wheelDistance += event.deltaX;
