@@ -71,6 +71,75 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> swipe(WidgetTester tester, {required bool left}) async {
+    final pages = find.byKey(const ValueKey('library-tab-pages'));
+    final bounds = tester.getRect(pages);
+    await tester.dragFrom(
+      Offset(bounds.left + bounds.width * (left ? .85 : .15), bounds.center.dy),
+      Offset(bounds.width * (left ? -.7 : .7), 0),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  int selectedTab(WidgetTester tester) =>
+      DefaultTabController.of(tester.element(find.byType(TabBar))).index;
+
+  for (final count in [0, 5]) {
+    testWidgets('swipes and tab taps stay synchronized with $count books', (
+      tester,
+    ) async {
+      await pumpShelf(tester, LibraryFixture(count));
+      await swipe(tester, left: false);
+      expect(selectedTab(tester), 0);
+      await swipe(tester, left: true);
+      expect(selectedTab(tester), 1);
+      expect(
+        find.byKey(const ValueKey('library-downloads-search')).hitTestable(),
+        findsOneWidget,
+      );
+      await swipe(tester, left: true);
+      expect(selectedTab(tester), 2);
+      expect(find.text('远程收藏夹暂不可用').hitTestable(), findsOneWidget);
+      await swipe(tester, left: true);
+      expect(selectedTab(tester), 2);
+      await tab(tester, 'continue');
+      expect(selectedTab(tester), 0);
+      await tab(tester, 'favorites');
+      await swipe(tester, left: false);
+      expect(selectedTab(tester), 1);
+      await swipe(tester, left: false);
+      expect(selectedTab(tester), 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+    'page swipe dismisses search but nested filter drag stays local',
+    (tester) async {
+      await pumpShelf(tester, LibraryFixture(5));
+      final search = find.byKey(const ValueKey('library-continue-search'));
+      await tester.enterText(search, '星港');
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isTrue);
+      await swipe(tester, left: true);
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(selectedTab(tester), 1);
+      await tester.drag(
+        find.byKey(const ValueKey('library-filter-incomplete')),
+        const Offset(-200, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(selectedTab(tester), 1);
+      expect(
+        find.byKey(const ValueKey('library-filter-paused')).hitTestable(),
+        findsOneWidget,
+      );
+      await swipe(tester, left: false);
+      expect(tester.widget<TextField>(search).controller!.text, '星港');
+      expect(tester.testTextInput.isVisible, isFalse);
+    },
+  );
+
   testWidgets(
     '100 books build lazily and keep independent searches sorts and scroll',
     (tester) async {
@@ -99,6 +168,7 @@ void main() {
       await tester.pumpAndSettle();
       final continueOffset = continueController.offset;
       expect(continueOffset, greaterThan(0));
+      expect(selectedTab(tester), 0);
       expect(
         find.byKey(const ValueKey('library-tab-downloads')).hitTestable(),
         findsOneWidget,
@@ -107,7 +177,7 @@ void main() {
         find.byKey(const ValueKey('library-bookmarks-button')).hitTestable(),
         findsOneWidget,
       );
-      await tab(tester, 'downloads');
+      await swipe(tester, left: true);
       await tester.enterText(
         find.byKey(const ValueKey('library-downloads-search')),
         '雨声',
@@ -124,7 +194,11 @@ void main() {
       await tester.drag(downloadList, const Offset(0, -650));
       await tester.pumpAndSettle();
       final downloadOffset = downloadController.offset;
-      await tab(tester, 'continue');
+      expect(downloadOffset, greaterThan(0));
+      expect(selectedTab(tester), 1);
+      await swipe(tester, left: true);
+      await swipe(tester, left: false);
+      await swipe(tester, left: false);
       expect(continueController.offset, closeTo(continueOffset, 1));
       continueController.jumpTo(0);
       await tester.pumpAndSettle();
@@ -138,7 +212,7 @@ void main() {
         '星港',
       );
       expect(find.text('书名排序'), findsOneWidget);
-      await tab(tester, 'downloads');
+      await swipe(tester, left: true);
       expect(downloadController.offset, closeTo(downloadOffset, 1));
       downloadController.jumpTo(0);
       await tester.pumpAndSettle();

@@ -25,11 +25,36 @@ void main() {
       await binding.takeScreenshot(name);
     }
 
+    Future<void> swipeTo(int index, {required bool left}) async {
+      final bounds = tester.getRect(
+        find.byKey(const ValueKey('library-tab-pages')),
+      );
+      await tester.dragFrom(
+        Offset(
+          bounds.left + bounds.width * (left ? .85 : .15),
+          bounds.center.dy,
+        ),
+        Offset(bounds.width * (left ? -.7 : .7), 0),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        DefaultTabController.of(tester.element(find.byType(TabBar))).index,
+        index,
+      );
+    }
+
     for (final count in [0, 5, 100]) {
       await tester.pumpWidget(_shelf(count, key: ValueKey('count-$count')));
       await capture('library-$count-continue');
-      await tester.tap(find.byKey(const ValueKey('library-tab-downloads')));
+      await swipeTo(1, left: true);
       await capture('library-$count-downloads');
+      await swipeTo(2, left: true);
+      await capture('library-$count-swipe-favorites');
+      await swipeTo(1, left: false);
+      await swipeTo(0, left: false);
+      await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+      await tester.pumpAndSettle();
+      await swipeTo(1, left: false);
       if (count == 100) {
         await tester.drag(
           find.byKey(const PageStorageKey('library-downloads-scroll')),
@@ -41,6 +66,15 @@ void main() {
           findsOneWidget,
         );
         await capture('library-100-scrolled');
+        final scroll = tester
+            .widget<CustomScrollView>(
+              find.byKey(const PageStorageKey('library-downloads-scroll')),
+            )
+            .controller!;
+        final offset = scroll.offset;
+        await swipeTo(2, left: true);
+        await swipeTo(1, left: false);
+        expect(scroll.offset, closeTo(offset, 1));
         await tester.tap(
           find.byKey(const ValueKey('library-bookmarks-button')),
         );

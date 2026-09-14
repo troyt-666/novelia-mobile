@@ -65,7 +65,6 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  int _tab = 0;
   final _search = [TextEditingController(), TextEditingController()];
   final _scroll = List.generate(3, (_) => ScrollController());
   final _sort = [_LibrarySort.recent, _LibrarySort.recent];
@@ -157,6 +156,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       bottom: false,
       child: DefaultTabController(
         length: 3,
+        animationDuration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 250),
         child: Column(
           children: [
             Padding(
@@ -189,7 +191,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
             TabBar(
               onTap: (index) {
                 FocusManager.instance.primaryFocus?.unfocus();
-                setState(() => _tab = index);
               },
               tabs: const [
                 Tab(key: ValueKey('library-tab-continue'), text: '续读'),
@@ -198,76 +199,93 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ],
             ),
             Expanded(
-              child: IndexedStack(
-                index: _tab,
-                children: [
-                  _localList(
-                    tab: 0,
-                    count: reads.length,
-                    empty: widget.continuedReads.isEmpty
-                        ? '还没有阅读记录'
-                        : '没有找到这本书，试试其他书名',
-                    builder: (_, index) {
-                      final item = reads[index];
-                      return _ContinuedReadRow(
-                        item: item,
-                        recent:
-                            _sort[0] == _LibrarySort.recent &&
-                            identical(item, widget.continuedReads.firstOrNull),
-                        onResume: () => widget.onOpenPosition != null
-                            ? widget.onOpenPosition!(item.novel, item.position)
-                            : widget.onOpenNovel(item.novel),
-                        onOpenDetails: () => widget.onOpenNovel(item.novel),
-                      );
-                    },
-                  ),
-                  _localList(
-                    tab: 1,
-                    count: downloads.length,
-                    empty: widget.protectedDownloads.isEmpty
-                        ? '还没有离线小说'
-                        : '没有符合条件的下载，试试其他书名或状态',
-                    builder: (_, index) {
-                      final download = downloads[index];
-                      final resume = widget.continuedReads.any(
-                        (item) =>
-                            item.novel.id == download.novel.id &&
-                            download.chapters.any(
-                              (chapter) =>
-                                  chapter.chapterId ==
-                                      item.position.chapterId &&
-                                  chapter.taskState == DownloadTaskState.stored,
-                            ),
-                      );
-                      return _DownloadRow(
-                        download: download,
-                        actionLabel:
-                            download.completedChapterCount > 0 &&
-                                widget.onOpenDownload != null
-                            ? resume
-                                  ? '继续阅读'
-                                  : '阅读已下载章节'
-                            : widget.onDownloadsManageRequested != null &&
-                                  download.completedChapterCount == 0
-                            ? '管理下载'
-                            : '小说详情',
-                        onOpen: () {
-                          if (download.completedChapterCount > 0 &&
-                              widget.onOpenDownload != null) {
-                            widget.onOpenDownload!(download);
-                          } else if (download.completedChapterCount == 0 &&
-                              widget.onDownloadsManageRequested != null) {
-                            widget.onDownloadsManageRequested!();
-                          } else {
-                            widget.onOpenNovel(download.novel);
-                          }
-                        },
-                        onOpenDetails: () => widget.onOpenNovel(download.novel),
-                      );
-                    },
-                  ),
-                  _favorites(),
-                ],
+              child: NotificationListener<ScrollStartNotification>(
+                onNotification: (notification) {
+                  if (notification.depth == 0 &&
+                      notification.metrics.axis == Axis.horizontal) {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                  }
+                  return false;
+                },
+                child: TabBarView(
+                  key: const ValueKey('library-tab-pages'),
+                  children: [
+                    _localList(
+                      tab: 0,
+                      count: reads.length,
+                      empty: widget.continuedReads.isEmpty
+                          ? '还没有阅读记录'
+                          : '没有找到这本书，试试其他书名',
+                      builder: (_, index) {
+                        final item = reads[index];
+                        return _ContinuedReadRow(
+                          item: item,
+                          recent:
+                              _sort[0] == _LibrarySort.recent &&
+                              identical(
+                                item,
+                                widget.continuedReads.firstOrNull,
+                              ),
+                          onResume: () => widget.onOpenPosition != null
+                              ? widget.onOpenPosition!(
+                                  item.novel,
+                                  item.position,
+                                )
+                              : widget.onOpenNovel(item.novel),
+                          onOpenDetails: () => widget.onOpenNovel(item.novel),
+                        );
+                      },
+                    ),
+                    _localList(
+                      tab: 1,
+                      count: downloads.length,
+                      empty: widget.protectedDownloads.isEmpty
+                          ? '还没有离线小说'
+                          : '没有符合条件的下载，试试其他书名或状态',
+                      builder: (_, index) {
+                        final download = downloads[index];
+                        final resume = widget.continuedReads.any(
+                          (item) =>
+                              item.novel.id == download.novel.id &&
+                              download.chapters.any(
+                                (chapter) =>
+                                    chapter.chapterId ==
+                                        item.position.chapterId &&
+                                    chapter.taskState ==
+                                        DownloadTaskState.stored,
+                              ),
+                        );
+                        return _DownloadRow(
+                          download: download,
+                          actionLabel:
+                              download.completedChapterCount > 0 &&
+                                  widget.onOpenDownload != null
+                              ? resume
+                                    ? '继续阅读'
+                                    : '阅读已下载章节'
+                              : widget.onDownloadsManageRequested != null &&
+                                    download.completedChapterCount == 0
+                              ? '管理下载'
+                              : '小说详情',
+                          onOpen: () {
+                            if (download.completedChapterCount > 0 &&
+                                widget.onOpenDownload != null) {
+                              widget.onOpenDownload!(download);
+                            } else if (download.completedChapterCount == 0 &&
+                                widget.onDownloadsManageRequested != null) {
+                              widget.onDownloadsManageRequested!();
+                            } else {
+                              widget.onOpenNovel(download.novel);
+                            }
+                          },
+                          onOpenDetails: () =>
+                              widget.onOpenNovel(download.novel),
+                        );
+                      },
+                    ),
+                    _favorites(),
+                  ].map((child) => _LibraryTabPage(child: child)).toList(),
+                ),
               ),
             ),
           ],
@@ -460,6 +478,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
         );
       },
     );
+  }
+}
+
+class _LibraryTabPage extends StatefulWidget {
+  const _LibraryTabPage({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_LibraryTabPage> createState() => _LibraryTabPageState();
+}
+
+class _LibraryTabPageState extends State<_LibraryTabPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 
