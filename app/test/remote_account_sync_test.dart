@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/account/account_sync_models.dart';
+import 'package:jfzreader/core/account/favorite_query.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/gateway/novelia/http_novelia_account_gateway.dart';
+import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 
 void main() {
   test('history outbox keeps newest activity and compare-deletes', () {
@@ -70,11 +72,13 @@ void main() {
             'kakuyomu,syosetu,novelup,hameln,pixiv,alphapolis',
           );
           expect(request.uri.queryParameters['type'], '0');
-          expect(request.uri.queryParameters['level'], '1');
+          expect(request.uri.queryParameters['level'], '0');
           expect(request.uri.queryParameters['translate'], '0');
           expect(request.uri.queryParameters['sort'], 'update');
           request.response.headers.contentType = ContentType.json;
-          request.response.write(jsonEncode(_novelPage('favorite-novel')));
+          request.response.write(
+            jsonEncode(_novelPage('favorite-novel', includeRestricted: true)),
+          );
         } else if (request.method == 'GET' &&
             request.uri.path.endsWith('/user/read-history')) {
           expect(request.uri.queryParameters['page'], '1');
@@ -143,8 +147,15 @@ void main() {
       );
 
       expect(folders.map((folder) => folder.title), ['默认收藏夹', '以后读']);
-      expect(favorites.items.single.key.novelId, 'favorite-novel');
-      expect(favorites.items.single.favoriteFolderId, 'default');
+      expect(favorites.items.map((item) => item.key.novelId), [
+        'favorite-novel',
+        'restricted-favorite',
+      ]);
+      expect(favorites.items.last.attentions, ['R18']);
+      expect(
+        favorites.items.map((item) => item.favoriteFolderId),
+        everyElement('default'),
+      );
       expect(history.items.single.key.novelId, 'history-novel');
       expect(history.items.single.favoriteFolderId, isNull);
       expect(history.pageCount, 2);
@@ -158,27 +169,136 @@ void main() {
       expect(seen, contains('GET /api/user/read-history'));
     },
   );
+
+  test('all-rating favorites still require an account token', () async {
+    final gateway = HttpNoveliaAccountGateway(
+      accessTokenProvider: ({bool forceRefresh = false}) async => null,
+    );
+    addTearDown(gateway.close);
+    await expectLater(
+      gateway.listFavoriteWebNovels(folderId: 'default'),
+      throwsA(
+        isA<NoveliaGatewayException>().having(
+          (error) => error.kind,
+          'kind',
+          NoveliaGatewayFailureKind.authenticationRequired,
+        ),
+      ),
+    );
+  });
+
+  test(
+    'favorite search filters and sort are sent with each requested page',
+    () async {
+      final seen = <Map<String, String>>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final subscription = server.listen((request) async {
+        expect(request.uri.path, '/api/user/favored-web/folder');
+        expect(
+          request.headers.value(HttpHeaders.authorizationHeader),
+          'Bearer fixture-token',
+        );
+        seen.add(request.uri.queryParameters);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode(_novelPage('result')));
+        await request.response.close();
+      });
+      addTearDown(subscription.cancel);
+      final gateway = HttpNoveliaAccountGateway(
+        baseUri: Uri.parse(
+          'http://${server.address.address}:${server.port}/api/',
+        ),
+        accessTokenProvider: ({bool forceRefresh = false}) async =>
+            'fixture-token',
+      );
+      addTearDown(gateway.close);
+      final cases = [
+        (
+          const FavoriteQuery(
+            search: '  図書館 作者  ',
+            providers: [FavoriteProvider.pixiv, FavoriteProvider.syosetu],
+            publication: FavoritePublication.completed,
+            rating: FavoriteRating.r18,
+            translation: FavoriteTranslation.sakura,
+            sort: FavoriteSort.created,
+          ),
+          {
+            'query': '図書館 作者',
+            'provider': 'syosetu,pixiv',
+            'type': '2',
+            'level': '2',
+            'translate': '2',
+            'sort': 'create',
+          },
+        ),
+        (
+          const FavoriteQuery(
+            providers: [FavoriteProvider.hameln],
+            publication: FavoritePublication.ongoing,
+            rating: FavoriteRating.general,
+            translation: FavoriteTranslation.gpt,
+          ),
+          {
+            'query': '',
+            'provider': 'hameln',
+            'type': '1',
+            'level': '1',
+            'translate': '1',
+            'sort': 'update',
+          },
+        ),
+        (
+          const FavoriteQuery(
+            providers: [],
+            publication: FavoritePublication.shortStory,
+          ),
+          {
+            'query': '',
+            'provider': '',
+            'type': '3',
+            'level': '0',
+            'translate': '0',
+            'sort': 'update',
+          },
+        ),
+      ];
+      for (final (filter, expected) in cases) {
+        await gateway.listFavoriteWebNovels(
+          folderId: 'folder',
+          page: 2,
+          pageSize: 17,
+          filter: filter,
+        );
+        expect(seen.last, {'page': '2', 'pageSize': '17', ...expected});
+      }
+    },
+  );
 }
 
-Map<String, Object?> _novelPage(String novelId) => {
+Map<String, Object?> _novelPage(
+  String novelId, {
+  bool includeRestricted = false,
+}) => {
   'items': [
-    {
-      'providerId': 'syosetu',
-      'novelId': novelId,
-      'titleJp': '題名',
-      'titleZh': '题名',
-      'type': '连载中',
-      'extra': null,
-      'attentions': <String>[],
-      'keywords': <String>[],
-      'total': 2,
-      'jp': 2,
-      'baidu': 0,
-      'youdao': 2,
-      'gpt': 0,
-      'sakura': 2,
-      'updateAt': 1787011200,
-    },
+    for (final id in [novelId, if (includeRestricted) 'restricted-favorite'])
+      {
+        'providerId': 'syosetu',
+        'novelId': id,
+        'titleJp': '題名',
+        'titleZh': '题名',
+        'type': '连载中',
+        'extra': null,
+        'attentions': [if (id == 'restricted-favorite') 'R18'],
+        'keywords': <String>[],
+        'total': 2,
+        'jp': 2,
+        'baidu': 0,
+        'youdao': 2,
+        'gpt': 0,
+        'sakura': 2,
+        'updateAt': 1787011200,
+      },
   ],
   'pageNumber': 2,
 };

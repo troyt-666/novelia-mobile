@@ -73,6 +73,7 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
     required String folderId,
     int page = 0,
     int pageSize = 30,
+    FavoriteQuery filter = const FavoriteQuery(),
   }) async {
     _validatePage(page, pageSize);
     final response = await _request(
@@ -80,12 +81,38 @@ class HttpNoveliaAccountGateway implements NoveliaAccountGateway {
       'user/favored-web/${_segment(folderId)}',
       // The Favorite endpoint reuses the ordinary catalog query contract.
       // Omitting its filter fields currently produces HTTP 404 even though
-      // the folder exists. Keep account rows inside the same general-rated
-      // boundary as anonymous discovery.
-      query: NoveliaCatalogQuery(
-        page: page,
-        pageSize: pageSize,
-      ).toQueryParameters()..['sort'] = 'update',
+      // the folder exists. This authenticated collection includes every rating
+      // available to the account; anonymous catalog defaults would hide R18.
+      query:
+          NoveliaCatalogQuery(
+              page: page,
+              pageSize: pageSize,
+              search: filter.search.trim(),
+              providers: [
+                for (final provider in FavoriteProvider.values)
+                  if (filter.providers.contains(provider)) provider.name,
+              ],
+              publicationType: switch (filter.publication) {
+                FavoritePublication.all => 0,
+                FavoritePublication.ongoing => 1,
+                FavoritePublication.completed => 2,
+                FavoritePublication.shortStory => 3,
+              },
+              contentLevel: switch (filter.rating) {
+                FavoriteRating.all => 0,
+                FavoriteRating.general => 1,
+                FavoriteRating.r18 => 2,
+              },
+              translationFilter: switch (filter.translation) {
+                FavoriteTranslation.all => 0,
+                FavoriteTranslation.gpt => 1,
+                FavoriteTranslation.sakura => 2,
+              },
+            ).toQueryParameters()
+            ..['sort'] = switch (filter.sort) {
+              FavoriteSort.updated => 'update',
+              FavoriteSort.created => 'create',
+            },
     );
     return codec.decodeNovelPage(
       _decodeJson(response.body, 'Favorites page'),

@@ -432,9 +432,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
     if (loader == null) return;
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => RemoteNovelListScreen(
+        builder: (_) => RemoteNovelListScreen.favorites(
           title: folder.title,
-          loader: (page) => loader(folder.id, page),
+          loader: (page, filter) => loader(folder.id, page, filter),
           onOpenNovel: _openNovel,
           onTagSelected: _openTag,
           onRemoveNovel: widget.onFavoriteFromFolderRemoveRequested == null

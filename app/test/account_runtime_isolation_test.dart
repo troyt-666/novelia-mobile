@@ -201,6 +201,7 @@ class _RecordingAccountGateway implements NoveliaAccountGateway {
     required String folderId,
     int page = 0,
     int pageSize = 30,
+    FavoriteQuery filter = const FavoriteQuery(),
   }) async => const NoveliaPage(items: [], pageCount: 0);
 
   @override

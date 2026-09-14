@@ -39,12 +39,21 @@ token value, account identifier, folder title, or novel identity was recorded.
   `sort`). Omitting the catalog filter fields returned HTTP 404 in the owned
   account smoke, while the ordinary catalog's numeric sort code returned HTTP
   500; this endpoint expects the string `sort=update` or `sort=create`. The app
-  fixes `level=1`, `sort=update`, and the six general catalog providers at this
-  boundary. Reading History pages with
+  originally fixed `level=1`, `sort=update`, and the six supported catalog
+  providers at this boundary. As of 2026-09-15, authenticated Favorites use
+  `level=0` (all ratings accessible to the account), matching signed-in catalog
+  behavior; retaining the anonymous `level=1` default hid R18 favorites.
+  Favorite Folder screens now pass title/author search, multi-select providers,
+  publication type, rating, translation and update/creation sorting through to
+  that endpoint. Defaults remain all providers, all ratings and `sort=update`.
+  An empty provider selection stays empty rather than silently broadening the
+  query. The filter snapshot is retained across pages and retries; changes start
+  at page zero. Reading History pages with
   `GET /api/user/read-history?page={zeroBased}&pageSize=30`.
 - Both page responses use the ordinary Web Novel outline page shape (`items`
-  plus `pageNumber`). The app applies its existing general-content validation
-  before displaying or caching an account row.
+  plus `pageNumber`). The app uses the current account session to allow R18
+  rows before displaying or caching them. The Favorites correction is covered
+  by loopback HTTP and signed-in app fixture tests, not a live-account probe.
 - Creating a Web Novel folder uses an exact `application/json` request. Reading
   History updates send the chapter ID as a raw UTF-8 body without inventing a
   content type, matching the current public client.

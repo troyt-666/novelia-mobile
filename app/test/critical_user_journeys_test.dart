@@ -148,6 +148,25 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
       findsOneWidget,
     );
     expect(find.text('我的收藏'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('favorite-folder-fixture-folder')),
+    );
+    await tester.pumpAndSettle();
+    for (final id in ['general-favorite', 'restricted-favorite']) {
+      final book = find.byKey(ValueKey('open-details-syosetu/$id'));
+      await tester.ensureVisible(book);
+      await tester.pumpAndSettle();
+      expect(book.hitTestable(), findsOneWidget);
+    }
+    expect(
+      repository.cachedNovelOutline('syosetu/restricted-favorite')!.tags,
+      contains('R18'),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.enterText(find.byKey(const ValueKey('favorite-search')), '夜间');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(accountGateway.favoriteQueries.last.search, '夜间');
   });
 
   testWidgets('reader discovers and searches the catalog', (tester) async {
@@ -525,6 +544,7 @@ class _AuthJourneyGateway implements NoveliaAuthGateway {
 }
 
 class _AccountJourneyGateway implements NoveliaAccountGateway {
+  final favoriteQueries = <FavoriteQuery>[];
   @override
   Future<List<RemoteFavoriteFolder>> listFavoriteFolders() async => const [
     RemoteFavoriteFolder(id: 'fixture-folder', title: '我的收藏'),
@@ -535,7 +555,36 @@ class _AccountJourneyGateway implements NoveliaAccountGateway {
     required String folderId,
     int page = 0,
     int pageSize = 30,
-  }) async => const NoveliaPage(items: [], pageCount: 0);
+    FavoriteQuery filter = const FavoriteQuery(),
+  }) async {
+    favoriteQueries.add(filter);
+    return NoveliaPage(
+      items: [
+        for (final restricted in [false, true])
+          NoveliaNovelOutline(
+            key: NoveliaNovelKey(
+              providerId: 'syosetu',
+              novelId: restricted ? 'restricted-favorite' : 'general-favorite',
+            ),
+            japaneseTitle: '收藏测试作品',
+            chineseTitle: restricted ? '夜间图书馆' : '清晨列车',
+            publicationType: '连载中',
+            extra: null,
+            attentions: [if (restricted) 'R18'],
+            keywords: const [],
+            totalChapters: 2,
+            originalChapters: 2,
+            baiduChapters: 0,
+            youdaoChapters: 0,
+            gptChapters: 0,
+            sakuraChapters: 2,
+            updatedAt: null,
+            favoriteFolderId: folderId,
+          ),
+      ],
+      pageCount: 1,
+    );
+  }
 
   @override
   Future<NoveliaPage<NoveliaNovelOutline>> listReadHistory({

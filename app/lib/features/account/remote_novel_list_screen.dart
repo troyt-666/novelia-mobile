@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/account/favorite_query.dart';
 import '../discover/catalog_card.dart';
 import '../discover/catalog_models.dart';
+import 'favorite_controls.dart';
 
 class RemoteNovelPageView {
   RemoteNovelPageView({
@@ -24,7 +26,13 @@ class RemoteNovelPageView {
 
 typedef RemoteNovelPageLoader = Future<RemoteNovelPageView> Function(int page);
 typedef FavoriteFolderPageLoader =
-    Future<RemoteNovelPageView> Function(String folderId, int page);
+    Future<RemoteNovelPageView> Function(
+      String folderId,
+      int page,
+      FavoriteQuery filter,
+    );
+typedef FavoriteNovelPageLoader =
+    Future<RemoteNovelPageView> Function(int page, FavoriteQuery filter);
 typedef RemoteNovelRemoveHandler = FutureOr<void> Function(CatalogNovel novel);
 
 class RemoteNovelListScreen extends StatefulWidget {
@@ -35,10 +43,21 @@ class RemoteNovelListScreen extends StatefulWidget {
     required this.onTagSelected,
     this.onRemoveNovel,
     super.key,
-  });
+  }) : favoriteLoader = null;
+
+  const RemoteNovelListScreen.favorites({
+    required this.title,
+    required FavoriteNovelPageLoader loader,
+    required this.onOpenNovel,
+    required this.onTagSelected,
+    this.onRemoveNovel,
+    super.key,
+  }) : favoriteLoader = loader,
+       loader = null;
 
   final String title;
-  final RemoteNovelPageLoader loader;
+  final RemoteNovelPageLoader? loader;
+  final FavoriteNovelPageLoader? favoriteLoader;
   final FutureOr<void> Function(CatalogNovel novel) onOpenNovel;
   final ValueChanged<String> onTagSelected;
   final RemoteNovelRemoveHandler? onRemoveNovel;
@@ -54,6 +73,13 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
   var _requestedPage = 1;
   var _generation = 0;
   final _removingNovelIds = <String>{};
+  final _search = TextEditingController();
+  final _scroll = ScrollController();
+  FavoriteQuery _filter = const FavoriteQuery();
+  bool _loading = false;
+  bool _openingNovel = false;
+
+  bool get _isFavorite => widget.favoriteLoader != null;
 
   @override
   void initState() {
@@ -65,38 +91,79 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _search.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_load(1));
+    if (state == AppLifecycleState.resumed && !_openingNovel) {
+      unawaited(
+        _load(_isFavorite ? _requestedPage : 1, preservePosition: _isFavorite),
+      );
+    }
   }
 
   Future<void> _openNovel(CatalogNovel novel) async {
-    await widget.onOpenNovel(novel);
-    if (mounted) await _load(1);
+    _openingNovel = true;
+    try {
+      await widget.onOpenNovel(novel);
+    } finally {
+      _openingNovel = false;
+    }
+    if (mounted) {
+      await _load(
+        _isFavorite ? _requestedPage : 1,
+        preservePosition: _isFavorite,
+      );
+    }
   }
 
-  Future<void> _load([int? requestedPage]) async {
-    final target = requestedPage ?? _requestedPage;
+  void _changeFilter(FavoriteQuery filter) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _search.text = filter.search;
+    if (filter == _filter) return;
+    setState(() => _filter = filter);
+    unawaited(_load(1));
+  }
+
+  Future<void> _load(int target, {bool preservePosition = false}) async {
     if (target < 1) return;
     final generation = ++_generation;
+    final filter = _filter;
+    if (!preservePosition && _scroll.hasClients) _scroll.jumpTo(0);
     setState(() {
       _requestedPage = target;
-      _page = null;
+      if (!preservePosition) _page = null;
       _error = null;
+      _loading = true;
     });
     try {
-      final page = await widget.loader(target);
+      final page =
+          await (widget.favoriteLoader?.call(target, filter) ??
+              widget.loader!(target));
       if (!mounted || generation != _generation) return;
       if (page.pageNumber != target) {
         throw StateError('Remote collection returned a different page.');
       }
-      setState(() => _page = page);
+      if (_isFavorite &&
+          page.novels.isEmpty &&
+          target > 1 &&
+          page.totalPages < target) {
+        await _load(page.totalPages > 0 ? page.totalPages : 1);
+        return;
+      }
+      setState(() {
+        _page = page;
+        _loading = false;
+      });
     } on Object catch (error) {
       if (!mounted || generation != _generation) return;
-      setState(() => _error = error);
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
     }
   }
 
@@ -161,47 +228,91 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
           IconButton(
             key: const ValueKey('refresh-remote-novel-list'),
             tooltip: '刷新',
-            onPressed: page == null && error == null ? null : () => _load(1),
+            onPressed: _loading ? null : () => _load(1),
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: page == null
-          ? Center(
-              child: error == null
-                  ? const CircularProgressIndicator(
-                      key: ValueKey('remote-novel-list-loading'),
-                    )
-                  : Column(
-                      key: const ValueKey('remote-novel-list-error'),
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.cloud_off_outlined, size: 44),
-                        const SizedBox(height: 12),
-                        const Text('列表暂时无法加载'),
-                        const SizedBox(height: 14),
-                        FilledButton.icon(
-                          key: const ValueKey('retry-remote-novel-list'),
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('重试'),
-                        ),
-                      ],
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            if (_isFavorite)
+              FavoriteToolbar(
+                query: _filter,
+                searchController: _search,
+                onChanged: _changeFilter,
+              ),
+            if (_loading && page != null) const LinearProgressIndicator(),
+            if (error != null && page != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('刷新失败，仍显示上次结果')),
+                    TextButton(
+                      onPressed: () =>
+                          _load(_requestedPage, preservePosition: true),
+                      child: const Text('重试'),
                     ),
-            )
-          : _RemoteNovelPage(
-              page: page,
-              onOpenNovel: _openNovel,
-              onTagSelected: widget.onTagSelected,
-              onRemoveNovel: widget.onRemoveNovel == null ? null : _removeNovel,
-              removingNovelIds: _removingNovelIds,
-              onPrevious: page.pageNumber > 1
-                  ? () => _load(page.pageNumber - 1)
-                  : null,
-              onNext: page.totalPages > 0 && page.pageNumber < page.totalPages
-                  ? () => _load(page.pageNumber + 1)
-                  : null,
+                  ],
+                ),
+              ),
+            Expanded(
+              child: page == null
+                  ? Center(
+                      child: error == null
+                          ? const CircularProgressIndicator(
+                              key: ValueKey('remote-novel-list-loading'),
+                            )
+                          : Column(
+                              key: const ValueKey('remote-novel-list-error'),
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.cloud_off_outlined, size: 44),
+                                const SizedBox(height: 12),
+                                const Text('列表暂时无法加载'),
+                                const SizedBox(height: 14),
+                                FilledButton.icon(
+                                  key: const ValueKey(
+                                    'retry-remote-novel-list',
+                                  ),
+                                  onPressed: () => _load(_requestedPage),
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('重试'),
+                                ),
+                              ],
+                            ),
+                    )
+                  : _RemoteNovelPage(
+                      page: page,
+                      controller: _scroll,
+                      emptyMessage:
+                          _isFavorite &&
+                              (_filter.search.isNotEmpty ||
+                                  _filter.filterCount > 0)
+                          ? '没有符合条件的收藏，试试其他关键词或减少筛选条件'
+                          : '这里还没有小说',
+                      onOpenNovel: _openNovel,
+                      onTagSelected: widget.onTagSelected,
+                      onRemoveNovel: widget.onRemoveNovel == null
+                          ? null
+                          : _removeNovel,
+                      removingNovelIds: _removingNovelIds,
+                      onPrevious: !_loading && page.pageNumber > 1
+                          ? () => _load(page.pageNumber - 1)
+                          : null,
+                      onNext:
+                          !_loading &&
+                              page.totalPages > 0 &&
+                              page.pageNumber < page.totalPages
+                          ? () => _load(page.pageNumber + 1)
+                          : null,
+                    ),
             ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -209,6 +320,8 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
 class _RemoteNovelPage extends StatelessWidget {
   const _RemoteNovelPage({
     required this.page,
+    required this.controller,
+    required this.emptyMessage,
     required this.onOpenNovel,
     required this.onTagSelected,
     required this.onRemoveNovel,
@@ -218,6 +331,8 @@ class _RemoteNovelPage extends StatelessWidget {
   });
 
   final RemoteNovelPageView page;
+  final ScrollController controller;
+  final String emptyMessage;
   final ValueChanged<CatalogNovel> onOpenNovel;
   final ValueChanged<String> onTagSelected;
   final ValueChanged<CatalogNovel>? onRemoveNovel;
@@ -228,12 +343,17 @@ class _RemoteNovelPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
+      key: const ValueKey('remote-novel-page-scroll'),
+      controller: controller,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
       children: [
         if (page.novels.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 56),
-            child: Center(child: Text('这里还没有小说')),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 56),
+            child: Center(
+              child: Text(emptyMessage, textAlign: TextAlign.center),
+            ),
           )
         else
           for (var index = 0; index < page.novels.length; index++) ...[

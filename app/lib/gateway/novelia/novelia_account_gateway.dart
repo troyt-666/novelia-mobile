@@ -1,5 +1,8 @@
 import '../../core/account/account_sync_models.dart';
+import '../../core/account/favorite_query.dart';
 import 'novelia_gateway.dart';
+
+export '../../core/account/favorite_query.dart';
 
 typedef AccountAccessTokenProvider =
     Future<String?> Function({bool forceRefresh});
@@ -11,6 +14,7 @@ abstract interface class NoveliaAccountGateway {
     required String folderId,
     int page = 0,
     int pageSize = 30,
+    FavoriteQuery filter = const FavoriteQuery(),
   });
 
   Future<NoveliaPage<NoveliaNovelOutline>> listReadHistory({

@@ -440,7 +440,7 @@ void main() {
       remoteFavorites: RemoteFavoritesViewModel.available(const [
         LibraryFavoriteFolder(id: 'default', title: '默认收藏夹'),
       ]),
-      favoriteFolderLoader: (folderId, page) async {
+      favoriteFolderLoader: (folderId, page, filter) async {
         favoriteRequests.add((folderId, page));
         return RemoteNovelPageView(
           novels: [favoriteNovel],
@@ -479,7 +479,14 @@ void main() {
     final favoriteTagFinder = find.byKey(
       ValueKey('catalog-tag-${favoriteNovel.id}-$favoriteTag'),
     );
-    await tester.scrollUntilVisible(favoriteTagFinder, 300);
+    await tester.scrollUntilVisible(
+      favoriteTagFinder,
+      300,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('remote-novel-page-scroll')),
+        matching: find.byType(Scrollable),
+      ),
+    );
     await tester.tap(favoriteTagFinder);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('discover-search-field')), findsOneWidget);
@@ -1010,7 +1017,7 @@ void main() {
       remoteFavorites: RemoteFavoritesViewModel.available(const [
         LibraryFavoriteFolder(id: 'later', title: '以后读'),
       ]),
-      favoriteFolderLoader: (_, page) async {
+      favoriteFolderLoader: (_, page, filter) async {
         requests.add(page);
         return RemoteNovelPageView(
           novels: removed ? [] : [novel],

@@ -330,12 +330,14 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   Future<RemoteNovelPageView> _loadFavoriteFolderPage(
     String folderId,
     int pageNumber,
+    FavoriteQuery filter,
   ) async {
     final gateway = widget.accountGateway;
     if (gateway == null) throw StateError('Account gateway is unavailable.');
     final page = await gateway.listFavoriteWebNovels(
       folderId: folderId,
       page: pageNumber - 1,
+      filter: filter,
     );
     return _mapAccountNovelPage(page, pageNumber);
   }
@@ -372,8 +374,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           // A cache failure must not hide an otherwise valid account row.
         }
       } on NoveliaRestrictedContentException {
-        // Phase 3 remains within the general-content boundary established by
-        // the anonymous catalog even if an account contains older R18 rows.
+        // A response arriving after sign-out must not expose restricted rows.
       }
     }
     return RemoteNovelPageView(
