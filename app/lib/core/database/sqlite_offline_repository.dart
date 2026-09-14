@@ -1115,9 +1115,9 @@ final class SqliteOfflineRepository
         reader_palette, font_family, body_bold, chinese_font_size,
         japanese_font_size, line_height, paragraph_spacing, japanese_opacity,
         page_margin, reading_width, column_layout, orientation_preference,
-        text_selection_enabled, tap_page_turn_enabled,
+        text_selection_enabled, tap_page_turn_enabled, one_handed_mode,
         theme_preference, notify_new_chapters, cache_limit_bytes, updated_at_us
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(singleton_id) DO UPDATE SET
         reading_mode = excluded.reading_mode,
         translation_source = excluded.translation_source,
@@ -1136,6 +1136,7 @@ final class SqliteOfflineRepository
         orientation_preference = excluded.orientation_preference,
         text_selection_enabled = excluded.text_selection_enabled,
         tap_page_turn_enabled = excluded.tap_page_turn_enabled,
+        one_handed_mode = excluded.one_handed_mode,
         theme_preference = excluded.theme_preference,
         notify_new_chapters = excluded.notify_new_chapters,
         cache_limit_bytes = excluded.cache_limit_bytes,
@@ -1159,6 +1160,7 @@ final class SqliteOfflineRepository
         reader.orientationPreference.name,
         _boolean(reader.textSelectionEnabled),
         _boolean(reader.tapPageTurnEnabled),
+        _boolean(reader.oneHandedMode),
         settings.themePreference.name,
         0,
         settings.cacheLimitBytes,
@@ -1222,6 +1224,7 @@ final class SqliteOfflineRepository
         ),
         textSelectionEnabled: _int(row['text_selection_enabled']) == 1,
         tapPageTurnEnabled: _int(row['tap_page_turn_enabled']) == 1,
+        oneHandedMode: _int(row['one_handed_mode']) == 1,
       ),
       themePreference: _enumValue(
         ThemePreference.values,

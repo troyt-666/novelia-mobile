@@ -195,6 +195,16 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
       await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('翻页'));
+      final oneHanded = find.byKey(const ValueKey('settings-one-handed-mode'));
+      await tester.scrollUntilVisible(
+        oneHanded,
+        180,
+        scrollable: find.descendant(
+          of: find.byType(ReaderSettingsSheet),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.tap(oneHanded);
       final sepia = find.byKey(const ValueKey('reader-palette-sepia'));
       await tester.scrollUntilVisible(
         sepia,
@@ -220,6 +230,7 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
         repository.appSettings()!.readerSettings.palette,
         ReaderPalette.sepia,
       );
+      expect(repository.appSettings()!.readerSettings.oneHandedMode, isTrue);
 
       final pageScrollable = tester.state<ScrollableState>(
         find
@@ -229,12 +240,24 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
             )
             .first,
       );
-      final beforePage = pageScrollable.position.pixels;
-      final swipe = beforePage < pageScrollable.position.maxScrollExtent
-          ? const Offset(-300, 0)
-          : const Offset(300, 0);
       final pageRect = tester.getRect(
         find.byKey(const ValueKey('reader-stream')),
+      );
+      await tester.tapAt(pageRect.center);
+      await tester.pumpAndSettle();
+      for (final x in [pageRect.left + 8, pageRect.right - 8]) {
+        final beforeTap = pageScrollable.position.pixels;
+        await tester.tapAt(Offset(x, pageRect.center.dy));
+        await tester.pumpAndSettle();
+        expect(pageScrollable.position.pixels, greaterThan(beforeTap));
+      }
+      final beforeSwipe = pageScrollable.position.pixels;
+      final swipe = Offset(
+        pageRect.width *
+            (beforeSwipe < pageScrollable.position.maxScrollExtent - 1
+                ? -0.7
+                : 0.7),
+        0,
       );
       await tester.dragFrom(
         Offset(
@@ -244,7 +267,7 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
         swipe,
       );
       await tester.pumpAndSettle();
-      expect(pageScrollable.position.pixels, isNot(closeTo(beforePage, 1)));
+      expect(pageScrollable.position.pixels, isNot(closeTo(beforeSwipe, 1)));
 
       await _closeReader(tester);
       expect(continued, findsOneWidget);

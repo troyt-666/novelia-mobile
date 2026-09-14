@@ -53,6 +53,7 @@ class ReaderSettings {
     this.orientationPreference = ReaderOrientationPreference.followDevice,
     this.textSelectionEnabled = true,
     this.tapPageTurnEnabled = true,
+    this.oneHandedMode = false,
   });
 
   final ReadingMode readingMode;
@@ -72,6 +73,7 @@ class ReaderSettings {
   final ReaderOrientationPreference orientationPreference;
   final bool textSelectionEnabled;
   final bool tapPageTurnEnabled;
+  final bool oneHandedMode;
 
   ReaderSettings copyWith({
     ReadingMode? readingMode,
@@ -91,6 +93,7 @@ class ReaderSettings {
     ReaderOrientationPreference? orientationPreference,
     bool? textSelectionEnabled,
     bool? tapPageTurnEnabled,
+    bool? oneHandedMode,
   }) {
     return ReaderSettings(
       readingMode: readingMode ?? this.readingMode,
@@ -111,6 +114,7 @@ class ReaderSettings {
           orientationPreference ?? this.orientationPreference,
       textSelectionEnabled: textSelectionEnabled ?? this.textSelectionEnabled,
       tapPageTurnEnabled: tapPageTurnEnabled ?? this.tapPageTurnEnabled,
+      oneHandedMode: oneHandedMode ?? this.oneHandedMode,
     );
   }
 }

@@ -142,6 +142,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   late final RestorableInt _orientationIndex;
   late final RestorableBool _textSelectionEnabled;
   late final RestorableBool _tapPageTurnEnabled;
+  late final RestorableBool _oneHandedMode;
   final Set<String> _bookmarks = {};
   final Map<String, ReadingPosition> _bookmarkPositions = {};
 
@@ -228,6 +229,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     _orientationIndex = RestorableInt(_settings.orientationPreference.index);
     _textSelectionEnabled = RestorableBool(_settings.textSelectionEnabled);
     _tapPageTurnEnabled = RestorableBool(_settings.tapPageTurnEnabled);
+    _oneHandedMode = RestorableBool(_settings.oneHandedMode);
     _orientationController =
         widget.orientationController ??
         const SystemReaderOrientationController();
@@ -452,6 +454,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     registerForRestoration(_orientationIndex, 'orientation-preference');
     registerForRestoration(_textSelectionEnabled, 'text-selection-enabled');
     registerForRestoration(_tapPageTurnEnabled, 'tap-page-turn-enabled');
+    registerForRestoration(_oneHandedMode, 'one-handed-mode');
 
     _anchorBlockId.value ??= widget.initialPosition?.blockId;
     _settings = _settings.copyWith(
@@ -473,6 +476,7 @@ class _ReaderScreenState extends State<ReaderScreen>
           ReaderOrientationPreference.values[_orientationIndex.value],
       textSelectionEnabled: _textSelectionEnabled.value,
       tapPageTurnEnabled: _tapPageTurnEnabled.value,
+      oneHandedMode: _oneHandedMode.value,
     );
     _scheduleInitialRestore();
   }
@@ -557,6 +561,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     _orientationIndex.dispose();
     _textSelectionEnabled.dispose();
     _tapPageTurnEnabled.dispose();
+    _oneHandedMode.dispose();
     super.dispose();
   }
 
@@ -1344,6 +1349,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _orientationIndex.value = settings.orientationPreference.index;
       _textSelectionEnabled.value = settings.textSelectionEnabled;
       _tapPageTurnEnabled.value = settings.tapPageTurnEnabled;
+      _oneHandedMode.value = settings.oneHandedMode;
     });
     _refreshChrome();
     if (anchor != null) _rebaseVerticalAnchor(anchor);
@@ -1456,7 +1462,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (!_settings.tapPageTurnEnabled) return;
     unawaited(
       _turnPage(
-        point.dx < size.width * 0.25
+        !_settings.oneHandedMode && point.dx < size.width * 0.25
             ? ReaderLoadDirection.before
             : ReaderLoadDirection.after,
       ),

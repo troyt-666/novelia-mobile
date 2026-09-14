@@ -21,6 +21,7 @@ void main() {
       DROP INDEX offline_copies_payload_idx;
       ALTER TABLE offline_chapter_copies DROP COLUMN payload_id;
       DROP TABLE remote_history_outbox;
+      ALTER TABLE app_settings DROP COLUMN one_handed_mode;
     ''');
     database.execute(
       'INSERT INTO recent_searches '

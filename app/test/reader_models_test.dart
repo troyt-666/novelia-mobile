@@ -20,6 +20,7 @@ void main() {
       );
       expect(settings.textSelectionEnabled, isTrue);
       expect(settings.tapPageTurnEnabled, isTrue);
+      expect(settings.oneHandedMode, isFalse);
     });
 
     test('reader settings copy all new layout and appearance fields', () {
@@ -34,6 +35,7 @@ void main() {
         orientationPreference: ReaderOrientationPreference.landscape,
         textSelectionEnabled: false,
         tapPageTurnEnabled: false,
+        oneHandedMode: true,
       );
 
       expect(settings.layoutMode, ReaderLayoutMode.pages);
@@ -49,6 +51,12 @@ void main() {
       );
       expect(settings.textSelectionEnabled, isFalse);
       expect(settings.tapPageTurnEnabled, isFalse);
+      expect(
+        settings
+            .copyWith(fontFamily: ReaderFontFamily.systemSans)
+            .oneHandedMode,
+        isTrue,
+      );
       expect(settings.translationSource, TranslationSource.sakura);
     });
 

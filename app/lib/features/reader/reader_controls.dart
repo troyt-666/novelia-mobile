@@ -877,6 +877,17 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
                     _update(_draft.copyWith(tapPageTurnEnabled: value));
                   },
                 ),
+                SwitchListTile(
+                  key: const ValueKey('settings-one-handed-mode'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('单手模式'),
+                  subtitle: const Text('点击左侧或右侧都翻到下一页，中间仍打开菜单'),
+                  value: _draft.oneHandedMode,
+                  onChanged: _draft.tapPageTurnEnabled
+                      ? (value) =>
+                            _update(_draft.copyWith(oneHandedMode: value))
+                      : null,
+                ),
                 const SizedBox(height: 10),
                 _SectionLabel('页面配色'),
                 const SizedBox(height: 10),

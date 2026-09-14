@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 7;
+  static const int currentSchemaVersion = 8;
   static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -104,6 +104,15 @@ final class NoveliaDatabase {
       _transaction(database, () {
         _migrateVersion6To7(database);
         database.userVersion = 7;
+      });
+    }
+    if (database.userVersion == 7) {
+      _transaction(database, () {
+        database.execute(
+          'ALTER TABLE app_settings ADD COLUMN one_handed_mode '
+          'INTEGER NOT NULL DEFAULT 0 CHECK (one_handed_mode IN (0, 1));',
+        );
+        database.userVersion = 8;
       });
     }
   }

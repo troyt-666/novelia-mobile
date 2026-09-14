@@ -71,7 +71,7 @@ void main() {
       addTearDown(repository.close);
       final settings = repository.appSettings()!.readerSettings;
 
-      expect(repository.schemaVersion, 7);
+      expect(repository.schemaVersion, NoveliaDatabase.currentSchemaVersion);
       expect(settings.layoutMode, ReaderLayoutMode.scroll);
       expect(settings.palette, ReaderPalette.automatic);
       expect(settings.fontFamily, ReaderFontFamily.systemSans);
@@ -85,6 +85,7 @@ void main() {
       );
       expect(settings.textSelectionEnabled, isTrue);
       expect(settings.tapPageTurnEnabled, isTrue);
+      expect(settings.oneHandedMode, isFalse);
     });
   });
 
@@ -225,6 +226,7 @@ void main() {
         repository.appSettings()!.readerSettings.tapPageTurnEnabled,
         isFalse,
       );
+      expect(repository.appSettings()!.readerSettings.oneHandedMode, isTrue);
       expect(repository.appSettings()!.cacheLimitBytes, 64 * 1024 * 1024);
       expect(repository.passesIntegrityCheck, isTrue);
     });
@@ -627,6 +629,7 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
         orientationPreference: ReaderOrientationPreference.portrait,
         textSelectionEnabled: false,
         tapPageTurnEnabled: false,
+        oneHandedMode: true,
       ),
       themePreference: ThemePreference.dark,
       cacheLimitBytes: 64 * 1024 * 1024,

@@ -547,6 +547,35 @@ void main() {
     expect(_readerScrollable(tester).position.pixels, greaterThan(300));
   });
 
+  for (final layout in ReaderLayoutMode.values) {
+    testWidgets('one-handed ${layout.name} taps both advance', (tester) async {
+      await pumpReader(
+        tester,
+        initialSettings: ReaderSettings(
+          layoutMode: layout,
+          oneHandedMode: true,
+        ),
+      );
+      await tester.tapAt(const Offset(215, 466));
+      await tester.pumpAndSettle();
+      final position = _readerScrollable(tester).position;
+      final start = position.pixels;
+      await tester.tapAt(const Offset(20, 466));
+      await tester.pumpAndSettle();
+      expect(position.pixels, greaterThan(start));
+      final afterLeft = position.pixels;
+      await tester.tapAt(const Offset(410, 466));
+      await tester.pumpAndSettle();
+      expect(position.pixels, greaterThan(afterLeft));
+      await tester.tapAt(const Offset(215, 466));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('reader-settings-button')).hitTestable(),
+        findsOneWidget,
+      );
+    });
+  }
+
   testWidgets('reader interaction settings disable selection and edge taps', (
     tester,
   ) async {
@@ -556,6 +585,7 @@ void main() {
         layoutMode: ReaderLayoutMode.pages,
         textSelectionEnabled: false,
         tapPageTurnEnabled: false,
+        oneHandedMode: true,
       ),
     );
 
@@ -1551,11 +1581,7 @@ void main() {
       ),
       onPositionChanged: reported.add,
     );
-    await tester.flingFrom(
-      const Offset(215, 500),
-      const Offset(0, -100),
-      1000,
-    );
+    await tester.flingFrom(const Offset(215, 500), const Offset(0, -100), 1000);
     final position = _readerScrollable(tester).position;
     expect(position.isScrollingNotifier.value, isTrue);
     tester.view.physicalSize = const Size(500, 800);
@@ -1744,6 +1770,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-one-handed-mode')));
     await tester.tap(find.byKey(const ValueKey('settings-text-selection')));
     await tester.tap(find.byKey(const ValueKey('settings-tap-page-turn')));
     await tester.tap(find.byKey(const ValueKey('settings-apply')));
@@ -1751,6 +1778,23 @@ void main() {
 
     expect(changes.single.textSelectionEnabled, isFalse);
     expect(changes.single.tapPageTurnEnabled, isFalse);
+    expect(changes.single.oneHandedMode, isTrue);
+    await tester.restartAndRestore();
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(215, 466));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reader-settings-button')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const ValueKey('settings-one-handed-mode')),
+          )
+          .value,
+      isTrue,
+    );
+    await tester.tap(find.byKey(const ValueKey('settings-apply')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reader-selection-area')), findsNothing);
   });
 
