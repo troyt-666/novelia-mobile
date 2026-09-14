@@ -234,7 +234,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    unawaited(_feeds.refreshCatalog());
+    // Search owns its current query, loaded pages and scroll position until
+    // the reader explicitly changes the search criteria.
     unawaited(_feeds.refreshRecentlyUpdated());
     unawaited(_feeds.refreshMostClicked());
     if (widget.downloadCoordinator != null) {

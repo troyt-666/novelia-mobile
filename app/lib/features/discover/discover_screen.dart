@@ -425,7 +425,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     final continuedNovel = showDiscovery ? widget.continuedNovel : null;
 
     final scrollView = CustomScrollView(
-      key: const PageStorageKey('discover-scroll'),
+      key: PageStorageKey('discover-scroll-${widget.mode.name}'),
       controller: _scrollController,
       physics: showDiscovery ? const AlwaysScrollableScrollPhysics() : null,
       slivers: [

@@ -8,6 +8,9 @@ import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 import 'package:jfzreader/main.dart';
+import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
+import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 import 'package:jfzreader/features/shell/novelia_shell.dart';
 
 import 'support/fixture_content_coordinator.dart';
@@ -15,8 +18,9 @@ import 'support/fixture_content_coordinator.dart';
 void main() {
   Future<void> pumpApp(
     WidgetTester tester,
-    SqliteOfflineRepository repository,
-  ) async {
+    SqliteOfflineRepository repository, {
+    FixtureContentCoordinator? coordinator,
+  }) async {
     tester.view.physicalSize = const Size(430, 932);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -25,11 +29,70 @@ void main() {
     await tester.pumpWidget(
       NoveliaReaderApp(
         repository: repository,
-        contentCoordinator: FixtureContentCoordinator(fixtureCatalogNovels),
+        contentCoordinator:
+            coordinator ?? FixtureContentCoordinator(fixtureCatalogNovels),
       ),
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('search survives details, browser resume and tab switches', (
+    tester,
+  ) async {
+    final repository = SqliteOfflineRepository.openInMemory();
+    final coordinator = _PagedSearchCoordinator();
+    await pumpApp(
+      tester,
+      repository,
+      coordinator: coordinator,
+    );
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('discover-search-field')),
+      '系列',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    final search = find.byKey(const PageStorageKey('discover-scroll-search'));
+    final scrollable = find
+        .descendant(of: search, matching: find.byType(Scrollable))
+        .first;
+    final card = find.byKey(const ValueKey('catalog-card-syosetu/n12'));
+    await tester.scrollUntilVisible(card, 500, scrollable: scrollable);
+    await tester.pumpAndSettle();
+    final controller = tester.widget<CustomScrollView>(search).controller!;
+    final offset = controller.offset;
+    final feed = tester
+        .widget<NoveliaShell>(find.byType(NoveliaShell))
+        .catalogController
+        .catalog;
+    final ids = feed.novels.map((novel) => novel.id).toList();
+    expect(ids.length, greaterThan(10));
+    expect(offset, greaterThan(0));
+    final requests = coordinator.searchRequests;
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(coordinator.searchRequests, requests);
+    expect(feed.novels.map((novel) => novel.id).toList(), ids);
+    expect(controller.offset, closeTo(offset, 1));
+    expect(card.hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-search')));
+    await tester.pumpAndSettle();
+    expect(controller.offset, closeTo(offset, 1));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'theme rebuild reuses the shelf and reading completion refreshes it',
@@ -286,4 +349,33 @@ void main() {
 
     expect(repository.listBookmarks(novelId: fixtureNovel.id), hasLength(1));
   });
+}
+
+class _PagedSearchCoordinator extends FixtureContentCoordinator {
+  int searchRequests = 0;
+  @override
+  Future<NoveliaContentResult<NoveliaCatalogSlice>> loadCatalog(
+    NoveliaCatalogQuery query,
+  ) async {
+    if (query.search.isEmpty) return super.loadCatalog(query);
+    searchRequests++;
+    return NoveliaContentResult.available(
+      NoveliaCatalogSlice(
+        pageIndex: query.page,
+        totalPages: 4,
+        novels: [
+          for (var i = query.page * 10; i < (query.page + 1) * 10; i++)
+            CatalogNovel(
+              id: 'syosetu/n$i',
+              chineseTitle: '系列 $i',
+              japaneseTitle: '小説 $i',
+              source: 'Syosetu',
+              publicationState: NovelPublicationState.ongoing,
+              tags: const [],
+              translationCoverage: const [],
+            ),
+        ],
+      ),
+    );
+  }
 }
