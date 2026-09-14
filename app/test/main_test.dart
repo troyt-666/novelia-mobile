@@ -1113,7 +1113,7 @@ void main() {
     );
     await tester.scrollUntilVisible(
       targetTile,
-      320,
+      -320,
       continuous: true,
       scrollable: find.descendant(
         of: find.byKey(const ValueKey('chapter-catalog-list')),
@@ -2154,6 +2154,63 @@ void main() {
       findsNothing,
     );
   });
+
+  for (final current in [0, 703, 999]) {
+    testWidgets('long grouped catalog opens on chapter $current', (
+      tester,
+    ) async {
+      final catalog = [
+        for (var i = 0; i < 1000; i++)
+          ReaderChapterCatalogEntry(
+            id: 'chapter-$i',
+            index: i + 1,
+            chineseTitle: '第 $i 章 很长的章节标题，需要自动换行显示完整的内容',
+            japaneseTitle: '第 $i 話',
+            sectionTitle: '第 ${i ~/ 20} 卷',
+          ),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(430, 932),
+                textScaler: TextScaler.linear(1.5),
+              ),
+              child: ReaderChapterCatalogSheet(
+                catalog: catalog,
+                activeChapterId: 'chapter-$current',
+                loadedChapterIds: {'chapter-$current'},
+                loadedChapters: const [],
+                bookmarks: const [],
+                settings: const ReaderSettings(),
+                onBookmarkRemoved: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final active = find.byKey(ValueKey('catalog-chapter-chapter-$current'));
+      expect(active.hitTestable(), findsOneWidget);
+      expect(tester.widget<ListTile>(active).selected, isTrue);
+      expect(find.byType(ListTile).evaluate().length, lessThan(30));
+      if (current > 0) {
+        await tester.drag(
+          find.byKey(const ValueKey('chapter-catalog-list')),
+          const Offset(0, 250),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find
+              .byKey(ValueKey('catalog-chapter-chapter-${current - 1}'))
+              .hitTestable(),
+          findsOneWidget,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('reader catalog groups chapters by section title', (
     tester,

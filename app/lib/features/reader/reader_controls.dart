@@ -551,6 +551,46 @@ class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final rows = _rows;
+    final activeRow = rows
+        .indexWhere((row) => row.chapter?.id == widget.activeChapterId)
+        .clamp(0, rows.length);
+    Widget buildRow(int index) {
+      final row = rows[index];
+      final chapter = row.chapter;
+      if (chapter == null) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+          child: Text(
+            row.title!,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      }
+      final active = chapter.id == widget.activeChapterId;
+      final loaded = widget.loadedChapterIds.contains(chapter.id);
+      return ListTile(
+        key: ValueKey('catalog-chapter-${chapter.id}'),
+        selected: active,
+        leading: CircleAvatar(child: Text('${chapter.index}')),
+        title: Text(chapter.chineseTitle),
+        subtitle: Text(chapter.japaneseTitle, locale: const Locale('ja', 'JP')),
+        trailing: active
+            ? const Icon(Icons.menu_book_rounded)
+            : Icon(
+                loaded
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.cloud_download_outlined,
+                semanticLabel: loaded ? '正文已加载' : '点击后加载正文',
+              ),
+        onTap: () =>
+            Navigator.pop(context, ReaderNavigationTarget(chapter: chapter)),
+      );
+    }
+
     return DefaultTabController(
       length: 2,
       child: SizedBox(
@@ -584,52 +624,23 @@ class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
             Expanded(
               child: TabBarView(
                 children: [
-                  ListView.builder(
+                  CustomScrollView(
                     key: const ValueKey('chapter-catalog-list'),
-                    itemCount: _rows.length,
-                    itemBuilder: (context, index) {
-                      final row = _rows[index];
-                      final chapter = row.chapter;
-                      if (chapter == null) {
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-                          child: Text(
-                            row.title!,
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        );
-                      }
-                      final active = chapter.id == widget.activeChapterId;
-                      final loaded = widget.loadedChapterIds.contains(
-                        chapter.id,
-                      );
-                      return ListTile(
-                        key: ValueKey('catalog-chapter-${chapter.id}'),
-                        selected: active,
-                        leading: CircleAvatar(child: Text('${chapter.index}')),
-                        title: Text(chapter.chineseTitle),
-                        subtitle: Text(
-                          chapter.japaneseTitle,
-                          locale: const Locale('ja', 'JP'),
-                        ),
-                        trailing: active
-                            ? const Icon(Icons.menu_book_rounded)
-                            : Icon(
-                                loaded
-                                    ? Icons.check_circle_outline_rounded
-                                    : Icons.cloud_download_outlined,
-                                semanticLabel: loaded ? '正文已加载' : '点击后加载正文',
-                              ),
-                        onTap: () => Navigator.pop(
-                          context,
-                          ReaderNavigationTarget(chapter: chapter),
-                        ),
-                      );
-                    },
+                    center: const ValueKey('catalog-current-chapter'),
+                    anchor: activeRow == 0 ? 0 : 0.2,
+                    slivers: [
+                      SliverList.builder(
+                        itemCount: activeRow,
+                        itemBuilder: (context, index) =>
+                            buildRow(activeRow - index - 1),
+                      ),
+                      SliverList.builder(
+                        key: const ValueKey('catalog-current-chapter'),
+                        itemCount: rows.length - activeRow,
+                        itemBuilder: (context, index) =>
+                            buildRow(activeRow + index),
+                      ),
+                    ],
                   ),
                   _bookmarkRows.isEmpty
                       ? const Center(
