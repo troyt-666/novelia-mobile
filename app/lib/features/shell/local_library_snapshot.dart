@@ -63,7 +63,14 @@ class LocalLibrarySnapshot {
       }
     }
     continuedReads = _libraryContinuedReads(novels, progress, repository);
-    downloads = _libraryDownloads(novels, intents, downloadedCopies, tasks);
+    downloads = _libraryDownloads(
+      novels,
+      intents,
+      downloadedCopies,
+      tasks,
+      progress,
+      savedBookmarks,
+    );
     bookmarks = _libraryBookmarks(novels, savedBookmarks);
     storageSummary = OfflineStorageSummary.fromCopies(copies);
   }
@@ -135,7 +142,25 @@ class LocalLibrarySnapshot {
     List<DownloadIntent> intents,
     Iterable<OfflineChapterCopy> copies,
     List<DownloadTask> tasks,
+    List<LocalReadingProgress> progress,
+    List<LocalBookmark> bookmarks,
   ) {
+    final lastActivity = <String, DateTime>{};
+    for (final (novelId, time) in [
+      for (final intent in intents) (intent.novelId, intent.createdAt),
+      for (final copy in copies) (copy.novelId, copy.storedAt),
+      for (final copy in copies) (copy.novelId, copy.lastReadAt),
+      for (final task in tasks)
+        if (task.state != DownloadTaskState.removed)
+          (task.novelId, task.updatedAt),
+      for (final item in progress) (item.novelId, item.updatedAt),
+      for (final bookmark in bookmarks) (bookmark.novelId, bookmark.createdAt),
+    ]) {
+      final previous = lastActivity[novelId];
+      if (previous == null || time.isAfter(previous)) {
+        lastActivity[novelId] = time;
+      }
+    }
     final intentsByGroup =
         <(String, TranslationSource), List<DownloadIntent>>{};
     for (final intent in intents) {
@@ -172,6 +197,10 @@ class LocalLibrarySnapshot {
           ...copiesByGroup.keys,
           ...tasksByGroup.keys,
         }.toList()..sort((a, b) {
+          final activityOrder = lastActivity[b.$1]!.compareTo(
+            lastActivity[a.$1]!,
+          );
+          if (activityOrder != 0) return activityOrder;
           final novelOrder = a.$1.compareTo(b.$1);
           return novelOrder == 0
               ? a.$2.index.compareTo(b.$2.index)

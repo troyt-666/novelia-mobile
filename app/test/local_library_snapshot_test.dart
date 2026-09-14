@@ -4,10 +4,55 @@ import 'package:jfzreader/core/database/local_state_repository.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
+import 'package:jfzreader/core/offline/offline_models.dart';
+import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/features/shell/local_library_snapshot.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
 
 void main() {
+  test('downloads follow latest download, reading and task activity', () {
+    final repository = SqliteOfflineRepository.openInMemory();
+    addTearDown(repository.close);
+    final novels = fixtureCatalogNovels.take(3).toList()
+      ..sort((a, b) => a.id.compareTo(b.id));
+    final now = DateTime.utc(2026, 9, 13);
+    for (var i = 0; i < novels.length; i++) {
+      repository.saveIntent(
+        NovelDownloadIntent(
+          id: 'intent-$i',
+          novelId: novels[i].id,
+          translationSource: TranslationSource.sakura,
+          createdAt: now.add(Duration(minutes: i)),
+        ),
+      );
+    }
+    List<String> order() => LocalLibrarySnapshot.load(
+      repository,
+      knownNovels: novels,
+      allowRestricted: false,
+    ).downloads.map((row) => row.novel.id).toList();
+    expect(order(), novels.reversed.map((novel) => novel.id).toList());
+    repository.saveReadingProgress(
+      LocalReadingProgress(
+        novelId: novels.first.id,
+        position: const ReadingPosition(chapterId: 'c1', blockId: 'c1:0'),
+        updatedAt: now.add(const Duration(minutes: 5)),
+      ),
+    );
+    expect(order().first, novels.first.id);
+    final task = DownloadTask.queued(
+      id: 'task',
+      intentId: 'intent-1',
+      novelId: novels[1].id,
+      chapterId: 'c1',
+      translationSource: TranslationSource.sakura,
+      now: now.add(const Duration(minutes: 6)),
+    );
+    repository.saveTask(task);
+    repository.saveTask(task.pause(now.add(const Duration(minutes: 7))));
+    expect(order().first, novels[1].id);
+  });
+
   test(
     'shelf loads only referenced novels and applies current account access',
     () {
