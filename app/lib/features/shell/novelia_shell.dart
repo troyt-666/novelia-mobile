@@ -62,6 +62,7 @@ class NoveliaShell extends StatefulWidget {
     this.onDownloadRequested,
     this.onDownloadManagementRequested,
     this.downloadManagementSnapshotLoader,
+    this.downloadReaderLaunchLoader,
     this.onOpenOriginalRequested,
     this.onOpenNoveliaRequested,
     this.onLoginRequested,
@@ -116,6 +117,8 @@ class NoveliaShell extends StatefulWidget {
   final NovelDownloadRequested? onDownloadRequested;
   final DownloadManagementHandler? onDownloadManagementRequested;
   final DownloadManagementSnapshotLoader? downloadManagementSnapshotLoader;
+  final Future<ReaderLaunchData> Function(LibraryProtectedDownload download)?
+  downloadReaderLaunchLoader;
   final NovelOriginalRequested? onOpenOriginalRequested;
   final NovelOriginalRequested? onOpenNoveliaRequested;
   final VoidCallback? onLoginRequested;
@@ -471,13 +474,18 @@ class _NoveliaShellState extends State<NoveliaShell> {
     CatalogNovel catalogNovel,
     NovelChapter? chapter, {
     ReadingPosition? requestedPosition,
+    LibraryProtectedDownload? download,
   }) async {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ReaderLaunchLoaderScreen(
-          load: () =>
-              _loadReaderWindow(catalogNovel, chapter, requestedPosition),
+          load: () => _loadReaderWindow(
+            catalogNovel,
+            chapter,
+            requestedPosition,
+            download,
+          ),
           onLoaded: (data) {
             if (!mounted) return;
             widget.onReaderOpened?.call(catalogNovel, data);
@@ -500,12 +508,15 @@ class _NoveliaShellState extends State<NoveliaShell> {
     CatalogNovel novel,
     NovelChapter? selectedChapter,
     ReadingPosition? requestedPosition,
+    LibraryProtectedDownload? download,
   ) async {
-    final loaded = await widget.readerLaunchLoader(
-      novel,
-      selectedChapter,
-      requestedPosition,
-    );
+    final loaded = download == null
+        ? await widget.readerLaunchLoader(
+            novel,
+            selectedChapter,
+            requestedPosition,
+          )
+        : await widget.downloadReaderLaunchLoader!(download);
     if (!mounted) {
       throw StateError('Reader launch was cancelled.');
     }
@@ -532,6 +543,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
           loaded.startAtChapterTitle ||
           loaded.initialPosition == null && requestedPosition == null,
       dataSource: loaded.dataSource,
+      initialTranslationSource: loaded.initialTranslationSource,
     );
   }
 
@@ -734,6 +746,15 @@ class _NoveliaShellState extends State<NoveliaShell> {
         protectedDownloads: widget.protectedDownloads,
         bookmarks: widget.bookmarks,
         remoteFavorites: widget.remoteFavorites,
+        isSignedIn: switch (widget.accountSession.status) {
+          AccountSessionStatus.signedOut => false,
+          AccountSessionStatus.signedIn => true,
+          AccountSessionStatus.restoring ||
+          AccountSessionStatus.unavailable => null,
+        },
+        onSignInRequested: widget.onAccountLogin == null
+            ? null
+            : () => _ensureSignedIn(),
         onFavoriteFolderRequested: widget.favoriteFolderLoader == null
             ? null
             : _openFavoriteFolder,
@@ -743,6 +764,10 @@ class _NoveliaShellState extends State<NoveliaShell> {
         onOpenNovel: _openNovel,
         onOpenPosition: (novel, position) =>
             _openReader(novel, null, requestedPosition: position),
+        onOpenDownload: widget.downloadReaderLaunchLoader == null
+            ? null
+            : (download) =>
+                  _openReader(download.novel, null, download: download),
         onDownloadsManageRequested:
             widget.onDownloadManagementRequested == null ||
                 widget.protectedDownloads.isEmpty
@@ -781,44 +806,44 @@ class _NoveliaShellState extends State<NoveliaShell> {
 
     return Scaffold(
       key: const ValueKey('novelia-shell'),
-      body: useRail
-          ? Row(
-              children: [
-                SafeArea(
-                  child: NavigationRail(
-                    key: const ValueKey('shell-navigation-rail'),
-                    selectedIndex: _destination,
-                    onDestinationSelected: _selectDestination,
-                    labelType: NavigationRailLabelType.all,
-                    destinations: const [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.explore_outlined),
-                        selectedIcon: Icon(Icons.explore),
-                        label: Text('发现'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.search),
-                        selectedIcon: Icon(Icons.manage_search),
-                        label: Text('搜索'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.library_books_outlined),
-                        selectedIcon: Icon(Icons.library_books),
-                        label: Text('书架'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.settings_outlined),
-                        selectedIcon: Icon(Icons.settings),
-                        label: Text('设置'),
-                      ),
-                    ],
+      body: Row(
+        children: [
+          if (useRail) ...[
+            SafeArea(
+              child: NavigationRail(
+                key: const ValueKey('shell-navigation-rail'),
+                selectedIndex: _destination,
+                onDestinationSelected: _selectDestination,
+                labelType: NavigationRailLabelType.all,
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.explore_outlined),
+                    selectedIcon: Icon(Icons.explore),
+                    label: Text('发现'),
                   ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(child: content),
-              ],
-            )
-          : content,
+                  NavigationRailDestination(
+                    icon: Icon(Icons.search),
+                    selectedIcon: Icon(Icons.manage_search),
+                    label: Text('搜索'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.library_books_outlined),
+                    selectedIcon: Icon(Icons.library_books),
+                    label: Text('书架'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.settings_outlined),
+                    selectedIcon: Icon(Icons.settings),
+                    label: Text('设置'),
+                  ),
+                ],
+              ),
+            ),
+            const VerticalDivider(width: 1),
+          ],
+          Expanded(child: content),
+        ],
+      ),
       bottomNavigationBar: useRail
           ? null
           : NavigationBar(

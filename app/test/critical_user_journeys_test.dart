@@ -7,11 +7,14 @@ import 'package:jfzreader/core/account/account_session_controller.dart';
 import 'package:jfzreader/core/account/account_sync_models.dart';
 import 'package:jfzreader/core/account/secure_session_store.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
+import 'package:jfzreader/core/database/local_state_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/features/reader/reader_controls.dart';
+import 'package:jfzreader/features/reader/reader_screen.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 import 'package:jfzreader/gateway/novelia/novelia_account_gateway.dart';
@@ -25,6 +28,75 @@ import 'support/fixture_content_coordinator.dart';
 void main() => runCriticalUserJourneys();
 
 void runCriticalUserJourneys({bool useDeviceViewport = false}) {
+  for (final savedIsDownloaded in [false, true]) {
+    testWidgets(
+      'offline entry selects its source and local chapter (saved=$savedIsDownloaded)',
+      (tester) async {
+        final repository = SqliteOfflineRepository.openInMemory();
+        final now = DateTime.utc(2026, 9, 14);
+        for (final source in [
+          TranslationSource.sakura,
+          TranslationSource.gpt,
+        ]) {
+          final id = 'offline-source-${source.name}';
+          repository.saveIntent(
+            NovelDownloadIntent(
+              id: id,
+              novelId: fixtureNovel.id,
+              translationSource: source,
+              createdAt: now,
+            ),
+          );
+          await _FixtureDownloadCoordinator(
+            repository,
+            chapterIds: source == TranslationSource.gpt ? ['chapter-2'] : null,
+          ).synchronizeIntent(id);
+        }
+        final saved = ReadingPosition(
+          chapterId: savedIsDownloaded ? 'chapter-2' : 'chapter-1',
+          blockId: savedIsDownloaded ? 'c2-1' : 'c1-1',
+          intraBlockOffset: 4,
+        );
+        repository.saveReadingProgress(
+          LocalReadingProgress(
+            novelId: fixtureNovel.id,
+            position: saved,
+            updatedAt: now,
+          ),
+        );
+        await _pumpApp(
+          tester,
+          repository,
+          useDeviceViewport: useDeviceViewport,
+          contentCoordinator: _CachedJourneyCoordinator(),
+        );
+        await tester.tap(find.byKey(const ValueKey('nav-library')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('library-tab-downloads')));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(ValueKey('offline-download-${fixtureNovel.id}::gpt')),
+        );
+        await tester.pumpAndSettle();
+        final reader = tester.widget<ReaderScreen>(find.byType(ReaderScreen));
+        expect(reader.initialSettings.translationSource, TranslationSource.gpt);
+        expect(
+          reader.initialPosition,
+          savedIsDownloaded
+              ? saved
+              : const ReadingPosition(chapterId: 'chapter-2', blockId: 'c2-0'),
+        );
+        expect(reader.startAtChapterTitle, !savedIsDownloaded);
+        expect(
+          repository.appSettings()?.readerSettings.translationSource ??
+              TranslationSource.sakura,
+          TranslationSource.sakura,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('login unlocks account-only library data', (tester) async {
     final repository = SqliteOfflineRepository.openInMemory();
     final store = InMemoryAccountSessionStore();
@@ -44,7 +116,9 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
 
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
-    expect(find.text('远程收藏夹暂不可用'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+    await tester.pumpAndSettle();
+    expect(find.text('登录后查看账号收藏'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('nav-settings')));
     await tester.pumpAndSettle();
@@ -364,13 +438,13 @@ void runCriticalUserJourneys({bool useDeviceViewport = false}) {
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('library-tab-downloads')));
+    await tester.pumpAndSettle();
     final download = find.byKey(
-      ValueKey('offline-download-${fixtureNovel.id}'),
+      ValueKey('offline-download-${fixtureNovel.id}::sakura'),
     );
     expect(download, findsOneWidget);
     await tester.tap(download);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('start-reading-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('block-c1-0-chinese')), findsOneWidget);
     expect(find.byKey(const ValueKey('block-c1-0-japanese')), findsOneWidget);
@@ -384,6 +458,7 @@ Future<void> _pumpApp(
   AccountSessionController? accountSessionController,
   NoveliaAccountGateway? accountGateway,
   NoveliaDownloadCoordinator? downloadCoordinator,
+  FixtureContentCoordinator? contentCoordinator,
 }) async {
   if (!useDeviceViewport) {
     tester.view.physicalSize = const Size(430, 932);
@@ -399,7 +474,8 @@ Future<void> _pumpApp(
   await tester.pumpWidget(
     NoveliaReaderApp(
       repository: repository,
-      contentCoordinator: FixtureContentCoordinator(fixtureCatalogNovels),
+      contentCoordinator:
+          contentCoordinator ?? FixtureContentCoordinator(fixtureCatalogNovels),
       accountSessionController: accountSessionController,
       accountGateway: accountGateway,
       downloadCoordinator: downloadCoordinator,
@@ -493,10 +569,26 @@ class _AccountJourneyGateway implements NoveliaAccountGateway {
   }) async {}
 }
 
+// Include a cached predecessor to catch launches that accidentally choose the
+// beginning of the loaded window instead of the selected downloaded chapter.
+class _CachedJourneyCoordinator extends FixtureContentCoordinator
+    implements NoveliaChapterCacheReader {
+  _CachedJourneyCoordinator() : super(fixtureCatalogNovels);
+
+  @override
+  NovelChapter? cachedChapter(
+    CatalogNovel novel, {
+    required String chapterId,
+  }) => novel.readerNovel?.chapters
+      .where((chapter) => chapter.id == chapterId)
+      .firstOrNull;
+}
+
 class _FixtureDownloadCoordinator implements NoveliaDownloadCoordinator {
-  _FixtureDownloadCoordinator(this.repository);
+  _FixtureDownloadCoordinator(this.repository, {this.chapterIds});
 
   final SqliteOfflineRepository repository;
+  final List<String>? chapterIds;
 
   @override
   Future<NoveliaDownloadRun> synchronizeIntent(String intentId) async {
@@ -507,7 +599,8 @@ class _FixtureDownloadCoordinator implements NoveliaDownloadCoordinator {
     final now = DateTime.utc(2026, 8, 18);
     final created = repository.reconcileIntent(
       intentId: intentId,
-      knownChapterIds: fixtureNovel.chapters.map((chapter) => chapter.id),
+      knownChapterIds:
+          chapterIds ?? fixtureNovel.chapters.map((chapter) => chapter.id),
       now: now,
     );
     for (final initialTask in created) {
@@ -541,8 +634,36 @@ class _FixtureDownloadCoordinator implements NoveliaDownloadCoordinator {
       repository.saveTask(task);
       task = task.beginStoring(now);
       repository.saveTask(task);
-      repository.commitStoredTask(
+      final payload = CachedChapterPayload(
+        id: 'payload::${task.id}',
+        novelId: task.novelId,
+        chapterId: task.chapterId,
+        index: chapter.index,
+        chineseTitle: chapter.chineseTitle,
+        japaneseTitle: chapter.japaneseTitle,
+        previousChapterId: null,
+        nextChapterId: null,
+        publishedAt: chapter.publishedAt,
+        japaneseBlocks: [for (final block in chapter.blocks) block.japanese],
+        translations: {
+          task.translationSource: CachedChapterTranslation(
+            availability: translationBytes == null
+                ? TranslationAvailability.pending
+                : TranslationAvailability.complete,
+            blocks: translationBytes == null
+                ? []
+                : [
+                    for (final block in chapter.blocks)
+                      block.translations[task.translationSource]!,
+                  ],
+          ),
+        },
+        fetchedAt: now,
+        revision: 'fixture-v1',
+      );
+      repository.commitDownloadedChapter(
         taskId: task.id,
+        payload: payload,
         copy: OfflineChapterCopy(
           id: 'copy::${task.id}',
           novelId: task.novelId,
@@ -553,6 +674,7 @@ class _FixtureDownloadCoordinator implements NoveliaDownloadCoordinator {
           translationBytes: translationBytes,
           storedAt: now,
           intentId: task.intentId,
+          payloadId: payload.id,
           revision: 'fixture-v1',
         ),
         now: now,

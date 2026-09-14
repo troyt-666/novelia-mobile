@@ -515,8 +515,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   Future<ReaderLaunchData> _loadReaderWindow(
     CatalogNovel novel,
     NovelChapter? selectedChapter,
-    ReadingPosition? requestedPosition,
-  ) async {
+    ReadingPosition? requestedPosition, {
+    TranslationSource? translationSource,
+  }) async {
     final hydrated = novel.hasChapterCatalog
         ? novel
         : await _loadNovelDetails(novel);
@@ -532,7 +533,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           novel: hydrated,
           selectedChapter: selectedChapter,
           requestedPosition: effectivePosition,
-          translationSource: _readerSettings.translationSource,
+          translationSource:
+              translationSource ?? _readerSettings.translationSource,
         );
     _repository.evictCacheTo(
       maxBytes: _cacheLimitBytes,
@@ -542,6 +544,81 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       },
     );
     return data;
+  }
+
+  Future<ReaderLaunchData> _loadDownloadedReaderWindow(
+    LibraryProtectedDownload download,
+  ) async {
+    // Recheck the repository: a task may have been removed since this row was
+    // painted. A different source's copy must not stand in for this group.
+    final current = _loadLibrarySnapshot().downloads
+        .where((item) => item.groupKey == download.groupKey)
+        .firstOrNull;
+    if (current == null) {
+      throw StateError('This download is no longer available.');
+    }
+    final payloadsByChapter = <String, List<String>>{};
+    for (final copy in _repository.listCopies(
+      novelId: current.novel.id,
+      kind: OfflineCopyKind.offlineDownload,
+    )) {
+      if (copy.translationSource != current.translationSource) continue;
+      final payloadId = copy.payloadId;
+      if (payloadId != null) {
+        payloadsByChapter.putIfAbsent(copy.chapterId, () => []).add(payloadId);
+      }
+    }
+    if (payloadsByChapter.isEmpty) {
+      throw StateError('No downloaded chapter is readable.');
+    }
+    final novel = current.novel.hasChapterCatalog
+        ? current.novel
+        : await _loadNovelDetails(current.novel);
+    final chapters = novel.readerNovel!.chapters;
+    final saved = _repository.readingProgressFor(novel.id)?.position;
+    final savedChapter = chapters
+        .where((chapter) => chapter.id == saved?.chapterId)
+        .firstOrNull;
+    // Decode only as far as the first usable target, even for very long books.
+    final candidates = [
+      ?savedChapter,
+      ...chapters.where((chapter) => chapter != savedChapter),
+    ];
+    final target = candidates
+        .where(
+          (chapter) => (payloadsByChapter[chapter.id] ?? const []).any(
+            (id) =>
+                _repository.chapterPayloadById(id)?.japaneseBlocks.isNotEmpty ==
+                true,
+          ),
+        )
+        .firstOrNull;
+    if (target == null) {
+      throw StateError('The downloaded chapter is absent from the catalog.');
+    }
+    final position = saved?.chapterId == target.id ? saved : null;
+    final data = await _loadReaderWindow(
+      novel,
+      target,
+      position,
+      translationSource: current.translationSource,
+    );
+    final loadedTarget = data.novel.chapters
+        .where((chapter) => chapter.id == target.id)
+        .firstOrNull;
+    final firstBlock = loadedTarget?.blocks.firstOrNull;
+    if (firstBlock == null) {
+      throw StateError('The downloaded chapter contains no readable blocks.');
+    }
+    return ReaderLaunchData(
+      novel: data.novel,
+      initialPosition:
+          data.initialPosition ??
+          ReadingPosition(chapterId: target.id, blockId: firstBlock.id),
+      startAtChapterTitle: data.startAtChapterTitle,
+      dataSource: data.dataSource,
+      initialTranslationSource: current.translationSource,
+    );
   }
 
   Future<NovelCommentPage> _loadCommentPage(
@@ -888,6 +965,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           rankingsLoader: _loadRankings,
           novelDetailsLoader: _loadNovelDetails,
           readerLaunchLoader: _loadReaderWindow,
+          downloadReaderLaunchLoader: _loadDownloadedReaderWindow,
           commentPageLoader: _loadCommentPage,
           onOpenOriginalRequested: widget.externalLinkLauncher == null
               ? null
@@ -963,7 +1041,11 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               initialBookmarks: savedBookmarks
                   .map((bookmark) => bookmark.position)
                   .toList(growable: false),
-              initialSettings: _readerSettings,
+              initialSettings: data.initialTranslationSource == null
+                  ? _readerSettings
+                  : _readerSettings.copyWith(
+                      translationSource: data.initialTranslationSource,
+                    ),
               themeMode: _themeMode,
               onThemeModeChanged: _setThemeMode,
               onSettingsChanged: _setReaderSettings,

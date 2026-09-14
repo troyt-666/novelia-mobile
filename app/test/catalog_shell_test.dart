@@ -233,7 +233,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
     expect(find.text('书架'), findsWidgets);
-    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('library-continue-search')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const ValueKey('nav-settings')));
     await tester.pumpAndSettle();
@@ -246,27 +249,55 @@ void main() {
     await pumpShell(tester);
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('library-tab-downloads')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('library-downloads-search')),
+      '图书馆',
+    );
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('shell-navigation-bar')), findsOneWidget);
-    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('library-downloads-search')),
+      findsOneWidget,
+    );
 
     tester.view.physicalSize = const Size(673, 840);
     await tester.pump();
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('shell-navigation-bar')), findsOneWidget);
-    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('library-downloads-search')),
+      findsOneWidget,
+    );
 
     tester.view.physicalSize = const Size(1280, 800);
     await tester.pump();
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('shell-navigation-rail')), findsOneWidget);
     expect(find.byKey(const ValueKey('shell-navigation-bar')), findsNothing);
-    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('library-downloads-search')),
+      findsOneWidget,
+    );
 
     tester.view.physicalSize = const Size(430, 932);
     await tester.pump();
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('shell-navigation-bar')), findsOneWidget);
-    expect(find.byKey(const ValueKey('favorite-folders-grid')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('library-downloads-search')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('library-downloads-search')),
+          )
+          .controller!
+          .text,
+      '图书馆',
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -430,6 +461,8 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('favorite-folder-default')));
     await tester.pumpAndSettle();
     expect(find.text(favoriteNovel.chineseTitle), findsOneWidget);
@@ -453,7 +486,7 @@ void main() {
     expect(find.text('标签“$favoriteTag” · 已加载 1 部'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('阅读历史'));
+    await tester.tap(find.byKey(const ValueKey('library-history-button')));
     await tester.pumpAndSettle();
     expect(find.text(fixtureCatalogNovels[1].chineseTitle), findsOneWidget);
     expect(historyRequests, [1]);
@@ -995,6 +1028,8 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('nav-library')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('favorite-folder-later')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')));
@@ -1476,6 +1511,14 @@ void main() {
       onAccountLogin: ({required username, required password}) async {},
       onFavoriteToFolderRequested: (_, _) async {},
     );
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+    await tester.pumpAndSettle();
+    expect(find.text('远程收藏夹暂不可用'), findsOneWidget);
+    expect(find.text('登录账号'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('nav-discover')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('open-details-${novel.id}')).first);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('favorite-novel-button')));

@@ -1,0 +1,77 @@
+# JFZ Reader
+
+<!-- impeccable:product-schema 1 -->
+
+本文件根据现有仓库整理于 2026-09-14，作为 UI/UX 工作的产品背景；不是新的产品定位，
+也不代表已经完成用户访谈或本轮设备验证。领域术语以 [CONTEXT.md](CONTEXT.md) 为准，
+视觉实现见 [DESIGN.md](DESIGN.md)。
+
+## Platform
+
+adaptive
+
+Flutter 原生应用，目标为 Android、iOS、macOS 和 HarmonyOS。这里的 `adaptive`
+用于让设计工具加载原生平台指南；当前界面主要共用 Material 3，并不表示各平台已经
+完成独立视觉适配。HarmonyOS 需另查官方指南与实际设备结果。
+
+## Users
+
+面向主要阅读中文译文、需要随时核对日文原文的小说读者。已有需求覆盖单手阅读、
+低光环境、离线续读，以及键盘和辅助技术操作；具体人群比例尚无用户研究数据。
+
+2026-09-14 用户确认：续读最近几本与从大量已下载书籍中挑选，两种行为都很常见。
+书架需要兼顾这两项任务；这是一位用户的已知使用习惯，不代表人群统计。
+
+## Product Purpose
+
+让读者找到想读的作品，恢复到上次的语义位置，持续阅读，并在需要时核对原文。
+UI/UX 优化以降低这些任务的操作成本、改善长文本可读性为目标。
+
+## Operating Context
+
+- 发现或搜索作品 → 查看详情 → 开始或继续阅读。
+- 阅读中切换语言显示、译文来源、章节和外观，并保持阅读位置。
+- 从书架访问续读、收藏夹、离线下载、书签和阅读历史。
+- 一般浏览和阅读可匿名进行；收藏及远端阅读历史等功能需要账号。
+- macOS 用于快速开发反馈；移动手势、键盘、安全区域、折叠屏和性能问题需在对应
+  平台验证。鸿蒙开发与设备注意事项见 [app/ohos/README.md](app/ohos/README.md)。
+
+## Capabilities and Constraints
+
+- Web Novel 使用语义对齐的中日文本块；Wenku Novel 使用卷与 EPUB，二者不是同一
+  阅读渲染链路。文库渲染保留 ruby、插图及出版结构，见
+  [相关 ADR](docs/adr/0005-render-wenku-epubs-in-system-webviews.md)。
+- 保护跨章节阅读、语义进度恢复、离线边界和译文待生成时的日文回退。
+- 缓存、离线下载、收藏、书签和阅读历史各有不同语义，不能因简化界面而混为一谈。
+- 本项目为独立实现；不复制参考 APK 的代码、资源、文案、凭据或标识。
+- 设计和自动化验证使用虚构数据。现有发布标识与数据保留要求遵循
+  [app/AGENTS.md](app/AGENTS.md)。
+
+## Brand Commitments
+
+产品名称为 JFZ Reader，界面以简体中文为主。现有品牌资源位于
+`app/assets/branding/`。产品提供独立的阅读体验，不宣称与内容服务或内容权利方存在
+隶属关系。用户研究、效果提升数字和新的品牌主张均未建立。
+
+## Evidence on Hand
+
+- [README.md](README.md)：当前功能与产品说明。
+- [阅读器需求基线](docs/reader-experience-v2-prd.md)：已建立的阅读任务和交互要求；
+  其中历史问题描述不应直接当作当前缺陷，需核对代码。
+- [阅读位置稳定性记录](docs/reader-scroll-stability.md)：重排与恢复约束。
+- `app/lib/fixtures/`、`app/test/catalog_shell_test.dart` 与
+  `app/integration_test/critical_user_journeys_test.dart`：可重复的虚构内容与流程验证。
+- 本次设置未采集运行截图，也未完成 UI/UX 质量评分。
+
+## Product Principles
+
+- 内容与阅读连续性优先，控制界面服务于明确任务。
+- 中文译文优先，日文原文可核对，缺失或异常状态如实表达。
+- 外观和布局变化保留用户位置、已存偏好及离线内容。
+- 优化沿用已建立的产品身份，新的设计决定以具体任务和观察证据为依据。
+
+## Accessibility & Inclusion
+
+重要控件保留稳定的 `ValueKey` 与清晰的 `Semantics`。评审覆盖字体缩放、长中日文、
+触控区域、对比度、焦点、键盘及系统手势；具体问题需按目标平台验证，不能把这些
+要求当作已经通过的无障碍认证。

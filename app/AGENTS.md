@@ -1,5 +1,11 @@
 # JFZ Reader agent guide
 
+## UI/UX context
+
+For UI/UX work, read [`../PRODUCT.md`](../PRODUCT.md) and
+[`../DESIGN.md`](../DESIGN.md). The project-local Impeccable skill and first-review
+workflow are documented in [`../docs/ui-ux-workflow.md`](../docs/ui-ux-workflow.md).
+
 ## Scope and safety
 
 - This is an independent Flutter implementation. Do not copy code, assets,

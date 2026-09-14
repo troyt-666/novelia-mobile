@@ -30,11 +30,21 @@ void main() {
       await pumpScreen(tester, LibraryScreen(onOpenNovel: (_) {}));
 
       expect(find.text('还没有阅读记录'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+      await tester.pumpAndSettle();
       expect(find.text('远程收藏夹暂不可用'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('library-tab-downloads')));
+      await tester.pumpAndSettle();
       expect(find.text('还没有离线小说'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('library-bookmarks-button')));
+      await tester.pumpAndSettle();
       expect(find.text('还没有书签'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+      await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('favorite-folders-grid')),
+        find.byKey(const PageStorageKey('favorite-folders-list')),
         findsOneWidget,
       );
       expect(find.text(fixtureCatalogNovels.first.chineseTitle), findsNothing);
@@ -111,17 +121,22 @@ void main() {
         find.byType(LinearProgressIndicator),
       );
       expect(progress.value, 0.375);
+      await tester.tap(find.byKey(ValueKey('continued-read-${firstNovel.id}')));
+      await tester.tap(find.byKey(const ValueKey('library-tab-downloads')));
+      await tester.pumpAndSettle();
       expect(find.text('2 章 · Sakura · 3.00 KB · 1 章待翻译'), findsOneWidget);
+      await tester.tap(
+        find.byKey(ValueKey('offline-download-${firstNovel.id}::sakura')),
+      );
+      await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+      await tester.pumpAndSettle();
       expect(find.text('稍后阅读'), findsOneWidget);
       expect(find.text('12 部小说'), findsOneWidget);
-      expect(find.text('第二章'), findsOneWidget);
-
-      await tester.tap(find.byKey(ValueKey('continued-read-${firstNovel.id}')));
-      await tester.tap(
-        find.byKey(ValueKey('offline-download-${firstNovel.id}')),
-      );
-      await tester.tap(find.byKey(const ValueKey('bookmark-bookmark-real')));
       await tester.tap(find.byKey(const ValueKey('favorite-folder-later')));
+      await tester.tap(find.byKey(const ValueKey('library-bookmarks-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('第二章'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('bookmark-bookmark-real')));
       expect(openedNovelIds, [firstNovel.id, firstNovel.id, secondNovel.id]);
       expect(openedFolderIds, ['later']);
     });
@@ -137,6 +152,8 @@ void main() {
         ),
       );
 
+      await tester.tap(find.byKey(const ValueKey('library-tab-favorites')));
+      await tester.pumpAndSettle();
       expect(find.text('收藏夹为空'), findsOneWidget);
       expect(find.text('远程收藏夹暂不可用'), findsNothing);
     });

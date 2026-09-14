@@ -137,11 +137,15 @@ class ReaderLaunchData {
     this.initialPosition,
     this.startAtChapterTitle = false,
     this.dataSource,
+    this.initialTranslationSource,
   });
 
   final ReaderNovel novel;
   final ReadingPosition? initialPosition;
   final bool startAtChapterTitle;
+
+  /// A download entry selects its own source without changing global defaults.
+  final TranslationSource? initialTranslationSource;
 
   /// Optional dynamic source for a bounded body window and the full TOC.
   ///

@@ -201,6 +201,9 @@ String formatStorageBytes(int bytes) {
 }
 
 String libraryDownloadSummary(LibraryProtectedDownload download) {
+  if (download.chapters.isEmpty) {
+    return '${download.translationSource.label} · 等待获取章节目录';
+  }
   final status = <String>[];
   if (!download.isComplete) {
     final failed = download.countWithState(DownloadTaskState.failed);
