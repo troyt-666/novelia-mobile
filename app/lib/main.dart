@@ -898,6 +898,19 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
                   }
                   return widget.externalLinkLauncher!.open(uri);
                 },
+          onOpenNoveliaRequested: widget.externalLinkLauncher == null
+              ? null
+              : (novel) {
+                  final key = const NoveliaDomainAdapter().keyFromStableId(
+                    novel.id,
+                  );
+                  if (key == null) {
+                    throw StateError('Invalid Novelia novel ID.');
+                  }
+                  return widget.externalLinkLauncher!.open(
+                    Uri.https('n.novelia.cc', '/novel/${key.stableId}'),
+                  );
+                },
           themeMode: _themeMode,
           initialDestination: _initialDestination,
           initialRecentSearches: _initialRecentSearches,

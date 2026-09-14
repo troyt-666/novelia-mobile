@@ -63,6 +63,7 @@ class NoveliaShell extends StatefulWidget {
     this.onDownloadManagementRequested,
     this.downloadManagementSnapshotLoader,
     this.onOpenOriginalRequested,
+    this.onOpenNoveliaRequested,
     this.onLoginRequested,
     this.accountSession = const AccountSessionSnapshot.signedOut(),
     this.onAccountLogin,
@@ -116,6 +117,7 @@ class NoveliaShell extends StatefulWidget {
   final DownloadManagementHandler? onDownloadManagementRequested;
   final DownloadManagementSnapshotLoader? downloadManagementSnapshotLoader;
   final NovelOriginalRequested? onOpenOriginalRequested;
+  final NovelOriginalRequested? onOpenNoveliaRequested;
   final VoidCallback? onLoginRequested;
   final AccountSessionSnapshot accountSession;
   final AccountLogin? onAccountLogin;
@@ -594,6 +596,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
                     widget.onOpenOriginalRequested == null
                 ? null
                 : () => widget.onOpenOriginalRequested!(novel),
+            onOpenNovelia: widget.onOpenNoveliaRequested == null
+                ? null
+                : () => widget.onOpenNoveliaRequested!(novel),
             onAuthorSelected: (author) => _openRemoteCatalogCriteria(
               CatalogCriteria(search: author, sort: CatalogSort.relevance),
             ),

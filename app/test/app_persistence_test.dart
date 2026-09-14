@@ -8,6 +8,7 @@ import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 import 'package:jfzreader/fixtures/reader_fixture.dart';
 import 'package:jfzreader/main.dart';
+import 'package:jfzreader/core/platform/external_link_launcher.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
 import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
@@ -20,6 +21,7 @@ void main() {
     WidgetTester tester,
     SqliteOfflineRepository repository, {
     FixtureContentCoordinator? coordinator,
+    ExternalLinkLauncher? launcher,
   }) async {
     tester.view.physicalSize = const Size(430, 932);
     tester.view.devicePixelRatio = 1;
@@ -31,6 +33,7 @@ void main() {
         repository: repository,
         contentCoordinator:
             coordinator ?? FixtureContentCoordinator(fixtureCatalogNovels),
+        externalLinkLauncher: launcher,
       ),
     );
     await tester.pumpAndSettle();
@@ -41,10 +44,12 @@ void main() {
   ) async {
     final repository = SqliteOfflineRepository.openInMemory();
     final coordinator = _PagedSearchCoordinator();
+    final launcher = _RecordingLauncher();
     await pumpApp(
       tester,
       repository,
       coordinator: coordinator,
+      launcher: launcher,
     );
     await tester.tap(find.byKey(const ValueKey('nav-search')));
     await tester.pumpAndSettle();
@@ -73,6 +78,12 @@ void main() {
     final requests = coordinator.searchRequests;
     await tester.tap(card);
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-novelia-button')));
+    await tester.pumpAndSettle();
+    expect(
+      launcher.opened.single.toString(),
+      'https://n.novelia.cc/novel/syosetu/n12',
+    );
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -349,6 +360,12 @@ void main() {
 
     expect(repository.listBookmarks(novelId: fixtureNovel.id), hasLength(1));
   });
+}
+
+class _RecordingLauncher implements ExternalLinkLauncher {
+  final opened = <Uri>[];
+  @override
+  Future<void> open(Uri uri) async => opened.add(uri);
 }
 
 class _PagedSearchCoordinator extends FixtureContentCoordinator {

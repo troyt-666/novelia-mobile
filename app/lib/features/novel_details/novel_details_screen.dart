@@ -13,6 +13,7 @@ class NovelDetailsScreen extends StatefulWidget {
     this.onFavorite,
     this.onDownload,
     this.onOpenOriginal,
+    this.onOpenNovelia,
     this.onAuthorSelected,
     this.onTagSelected,
     this.commentPageLoader,
@@ -25,6 +26,7 @@ class NovelDetailsScreen extends StatefulWidget {
   final FutureOr<CatalogNovel?> Function(CatalogNovel novel)? onFavorite;
   final FutureOr<void> Function()? onDownload;
   final FutureOr<void> Function()? onOpenOriginal;
+  final FutureOr<void> Function()? onOpenNovelia;
   final ValueChanged<String>? onAuthorSelected;
   final ValueChanged<String>? onTagSelected;
   final NovelCommentPageLoader? commentPageLoader;
@@ -44,7 +46,7 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
   int _commentRequestGeneration = 0;
   int _requestedCommentPage = 1;
   bool _downloadStarting = false;
-  bool _openingOriginal = false;
+  bool _openingWebsite = false;
   late CatalogNovel _favoriteNovel = widget.novel;
   bool get _isFavorite => _favoriteNovel.isFavorite;
   bool _favoriteStarting = false;
@@ -136,19 +138,18 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
     }
   }
 
-  Future<void> _openOriginal() async {
-    final callback = widget.onOpenOriginal;
-    if (callback == null || _openingOriginal) return;
-    setState(() => _openingOriginal = true);
+  Future<void> _openWebsite(FutureOr<void> Function()? callback) async {
+    if (callback == null || _openingWebsite) return;
+    setState(() => _openingWebsite = true);
     try {
       await callback();
     } on Object {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('无法打开原作网站')));
+        ..showSnackBar(const SnackBar(content: Text('无法打开网页，请稍后重试')));
     } finally {
-      if (mounted) setState(() => _openingOriginal = false);
+      if (mounted) setState(() => _openingWebsite = false);
     }
   }
 
@@ -390,6 +391,15 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
                     ),
                   ),
                   const SizedBox(height: 18),
+                  if (widget.onOpenNovelia != null)
+                    TextButton.icon(
+                      key: const ValueKey('open-novelia-button'),
+                      onPressed: _openingWebsite
+                          ? null
+                          : () => unawaited(_openWebsite(widget.onOpenNovelia)),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('在 Novelia 打开'),
+                    ),
                   _MetadataGrid(novel: novel),
                   const SizedBox(height: 24),
                   _DetailSectionTitle(title: '内容简介'),
@@ -431,16 +441,17 @@ class _NovelDetailsScreenState extends State<NovelDetailsScreen> {
                     const SizedBox(height: 14),
                     TextButton.icon(
                       key: const ValueKey('open-original-site-button'),
-                      onPressed: _openingOriginal
+                      onPressed: _openingWebsite
                           ? null
-                          : () => unawaited(_openOriginal()),
-                      icon: _openingOriginal
+                          : () =>
+                                unawaited(_openWebsite(widget.onOpenOriginal)),
+                      icon: _openingWebsite
                           ? const SizedBox.square(
                               dimension: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.open_in_new),
-                      label: Text(_openingOriginal ? '正在打开…' : '前往原作网站'),
+                      label: Text(_openingWebsite ? '正在打开…' : '前往原作网站'),
                     ),
                   ],
                   const SizedBox(height: 28),
