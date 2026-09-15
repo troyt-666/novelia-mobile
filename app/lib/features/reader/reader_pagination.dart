@@ -12,6 +12,7 @@ class ReaderPagination {
     required this.settings,
     required this.textScaler,
     this.baseTextStyle = const TextStyle(),
+    this.pageBreakBefore,
     required double viewportWidth,
     required double availableHeight,
   }) {
@@ -22,6 +23,8 @@ class ReaderPagination {
   final ReaderSettings settings;
   final TextScaler textScaler;
   final TextStyle baseTextStyle;
+  /// Keep this entry at the page start when adding or trimming nearby content.
+  final (String, int)? pageBreakBefore;
   late final List<ReaderHorizontalPage> pages;
   final Map<String, List<_ReaderHorizontalLocation>>
   _horizontalLocationsByStableId = {};
@@ -43,7 +46,7 @@ class ReaderPagination {
     double width, {
     Locale? locale,
   }) {
-    if (text.isEmpty) return 0;
+    // Text('') still lays out one empty line in the rendered block.
     final painter = TextPainter(
       text: TextSpan(text: text, style: baseTextStyle.merge(style)),
       textDirection: TextDirection.ltr,
@@ -230,6 +233,13 @@ class ReaderPagination {
     }
 
     void addEntry(ReaderHorizontalEntry entry, double height) {
+      if (pageBreakBefore ==
+          (
+            items[entry.readerItemIndex]?.stableId,
+            entry.fragment?.intraBlockOffset ?? 0,
+          )) {
+        finishPage();
+      }
       if (entries.isNotEmpty && estimatedHeight + height > availableHeight) {
         finishPage();
       }
@@ -355,9 +365,11 @@ class ReaderPagination {
       final contentHeight = parallel
           ? math.max(chineseHeight, japaneseHeight)
           : chineseHeight + japaneseHeight;
+      final height = 9 + contentHeight + settings.paragraphSpacing;
       fragments.add(
         ReaderHorizontalEntry(
           readerItemIndex: readerItemIndex,
+          scaleToFit: height > availableHeight,
           fragment: ReaderTextFragment(
             index: fragments.length,
             chinese: chinese,
@@ -365,7 +377,7 @@ class ReaderPagination {
             intraBlockOffset: totalLength == 0
                 ? 0
                 : (consumed / totalLength * 1000).round().clamp(0, 1000),
-            estimatedHeight: 9 + contentHeight + settings.paragraphSpacing,
+            estimatedHeight: height,
           ),
         ),
       );

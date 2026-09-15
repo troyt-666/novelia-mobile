@@ -1385,6 +1385,27 @@ void main() {
     },
   );
 
+  testWidgets('resizing a title-only page keeps the chapter title visible', (
+    tester,
+  ) async {
+    await pumpReader(
+      tester,
+      novel: _oversizedBlockNovel(),
+      startAtChapterTitle: true,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    expect(
+      find.byKey(const ValueKey('chapter-boundary-oversized-chapter')),
+      findsOneWidget,
+    );
+    tester.view.physicalSize = const Size(500, 932);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('chapter-boundary-oversized-chapter')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'idle resizing preserves a partially visible paragraph without navigation',
     (tester) async {
@@ -2635,6 +2656,139 @@ void main() {
       find.byKey(const ValueKey('reader-boundary-before-unavailable')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a pending edge turn yields to a newer page turn', (
+    tester,
+  ) async {
+    final chapters = [
+      for (var n = 1; n <= 3; n++)
+        _windowChapter(n, blockCount: 12, paragraphRepeats: 1),
+    ];
+    final response = Completer<ReaderChapterWindow>();
+    var requested = false;
+    final source = ReaderChapterDataSource(
+      catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+      loadAround: (_) => throw StateError('not used'),
+      loadAdjacent: (_) {
+        requested = true;
+        return response.future;
+      },
+    );
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel(chapters.sublist(1)),
+      dataSource: source,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    final pageView = tester.widget<PageView>(find.byType(PageView));
+    expect(pageView.controller!.page, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(requested, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    final visible = find
+        .byType(ReaderAlignedBlockView)
+        .evaluate()
+        .map(
+          (element) => (element.widget as ReaderAlignedBlockView).item.block.id,
+        )
+        .toList();
+    expect(visible, isNotEmpty);
+    response.complete(
+      ReaderChapterWindow(
+        chapters: [chapters.first],
+        before: ReaderBoundaryStatus.endOfCatalog,
+        after: ReaderBoundaryStatus.endOfCatalog,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(ValueKey('block:${visible.first}')),
+      findsOneWidget,
+      reason: 'The old left turn must not run after the newer right turn.',
+    );
+  });
+
+  testWidgets('paged window expansion does not cancel a backwards swipe', (
+    tester,
+  ) async {
+    final chapter = _windowChapter(1, blockCount: 180, paragraphRepeats: 1);
+    await pumpReader(
+      tester,
+      novel: _windowNovel([chapter]),
+      initialPosition: ReadingPosition(
+        chapterId: chapter.id,
+        blockId: chapter.blocks[150].id,
+      ),
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    final position = _readerScrollable(tester).position;
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    final gesture = await tester.startGesture(const Offset(100, 460));
+    await gesture.moveBy(const Offset(80, 0));
+    await tester.pump();
+    await tester.pump();
+    expect(
+      position.isScrollingNotifier.value,
+      isTrue,
+      reason: 'Expanding earlier items must not stop an active drag.',
+    );
+    final before = position.pixels;
+    await gesture.moveBy(const Offset(80, 0));
+    await tester.pump();
+    expect(position.pixels, lessThan(before));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a chapter response waits for the active page swipe', (
+    tester,
+  ) async {
+    final chapters = [
+      for (var n = 1; n <= 3; n++)
+        _windowChapter(n, blockCount: 12, paragraphRepeats: 1),
+    ];
+    final response = Completer<ReaderChapterWindow>();
+    final source = ReaderChapterDataSource(
+      catalog: chapters.map(ReaderChapterCatalogEntry.fromChapter).toList(),
+      loadAround: (_) => throw StateError('not used'),
+      loadAdjacent: (_) => response.future,
+    );
+    await pumpWindowReader(
+      tester,
+      novel: _windowNovel(chapters.sublist(1)),
+      dataSource: source,
+      initialSettings: const ReaderSettings(layoutMode: ReaderLayoutMode.pages),
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    final position = _readerScrollable(tester).position;
+    final gesture = await tester.startGesture(const Offset(210, 400));
+    await gesture.moveBy(const Offset(-80, 0));
+    await tester.pump(const Duration(milliseconds: 50));
+    final pixels = position.pixels;
+    final maxExtent = position.maxScrollExtent;
+    response.complete(
+      ReaderChapterWindow(
+        chapters: [chapters.first],
+        before: ReaderBoundaryStatus.endOfCatalog,
+        after: ReaderBoundaryStatus.endOfCatalog,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, pixels);
+    expect(position.maxScrollExtent, maxExtent);
+    expect(position.isScrollingNotifier.value, isTrue);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(position.maxScrollExtent, greaterThan(maxExtent));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('paged prepend preserves the current block and keeps turning', (

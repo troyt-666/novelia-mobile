@@ -187,10 +187,15 @@ class _ReaderScreenState extends State<ReaderScreen>
   DateTime? _tapStartedAt;
   Timer? _chromeDismissTimer;
   bool _turningPage = false;
+  int _pageTurnGeneration = 0;
   bool _selectionActive = false;
   ReaderPagination? _pagination;
   Record? _paginationKey;
   (String, int)? _trimmedPageLocation;
+  final _pendingPageExpansions = <ReaderLoadDirection>{};
+  final _pendingPageWindows =
+      <ReaderLoadDirection, (List<NovelChapter>, ReaderBoundaryStatus)>{};
+  bool _pageMaintenanceScheduled = false;
   int _positioningGeneration = 0;
   late ReaderOrientationController _orientationController;
 
@@ -299,6 +304,9 @@ class _ReaderScreenState extends State<ReaderScreen>
       return;
     }
     final position = _positionToPreserve();
+    final pageLocation = _settings.layoutMode == ReaderLayoutMode.pages
+        ? _pageLocationToPreserve()
+        : null;
     final anchor = _captureVerticalAnchor();
     final firstId = _items.elementAtOrNull(_windowStart)?.stableId;
     final lastId = _items.elementAtOrNull(_windowEnd - 1)?.stableId;
@@ -326,8 +334,8 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
       unawaited(
         _restoreAfterLayout(
-          'block:${resolved.blockId}',
-          intraBlockOffset: resolved.intraBlockOffset,
+          pageLocation?.$1 ?? 'block:${resolved.blockId}',
+          intraBlockOffset: pageLocation?.$2 ?? resolved.intraBlockOffset,
         ),
       );
     }
@@ -502,7 +510,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     final view = View.of(context);
     // Insets and repeated platform notifications do not resize the page.
     // Restoring anyway would realign the paragraph and cancel an active drag.
-    if (view.physicalSize / view.devicePixelRatio == MediaQuery.sizeOf(context)) {
+    if (view.physicalSize / view.devicePixelRatio ==
+        MediaQuery.sizeOf(context)) {
       return;
     }
     if (_settings.layoutMode == ReaderLayoutMode.scroll) {
@@ -515,12 +524,12 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
       return;
     }
-    final position = _positionToPreserve();
-    if (position == null) return;
+    final location = _pageLocationToPreserve();
+    if (location == null) return;
     unawaited(
       _restoreAfterLayout(
-        'block:${position.blockId}',
-        intraBlockOffset: position.intraBlockOffset,
+        location.$1,
+        intraBlockOffset: location.$2,
         preserveUserScroll: true,
       ),
     );
@@ -767,6 +776,11 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Future<void> _extendWindow(ReaderLoadDirection direction) async {
+    if (_settings.layoutMode == ReaderLayoutMode.pages &&
+        _readerIsInteracting) {
+      _pendingPageExpansions.add(direction);
+      return;
+    }
     final before = direction == ReaderLoadDirection.before;
     final canExpand = before ? _windowStart > 0 : _windowEnd < _items.length;
     if (!canExpand) {
@@ -787,8 +801,37 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
     });
     if (location != null) {
-      await _restoreAfterLayout(location.$1, intraBlockOffset: location.$2);
+      _trimmedPageLocation = location;
+      _settleWindowLayout(null);
     }
+  }
+
+  // Apply new page geometry only after the gesture and its snap have settled.
+  // Capture the location at that point, not at a fractional page mid-swipe.
+  void _schedulePageMaintenance() {
+    if (_pageMaintenanceScheduled ||
+        (_pendingPageExpansions.isEmpty && _pendingPageWindows.isEmpty)) {
+      return;
+    }
+    _pageMaintenanceScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pageMaintenanceScheduled = false;
+      if (!mounted || _readerIsInteracting) return;
+      final windows = Map.of(_pendingPageWindows);
+      _pendingPageWindows.clear();
+      for (final entry in windows.entries) {
+        if (entry.key == ReaderLoadDirection.before) {
+          _applyPrependedWindow(entry.value.$1, beforeStatus: entry.value.$2);
+        } else {
+          _applyAppendedWindow(entry.value.$1, afterStatus: entry.value.$2);
+        }
+      }
+      final directions = Set.of(_pendingPageExpansions);
+      _pendingPageExpansions.clear();
+      for (final direction in directions) {
+        unawaited(_extendWindow(direction));
+      }
+    });
   }
 
   void _handleScrollMetrics(
@@ -854,8 +897,11 @@ class _ReaderScreenState extends State<ReaderScreen>
         throw StateError('相邻章节服务未返回新内容。');
       }
 
-      if (isBefore) {
-        await _applyPrependedWindow(incoming, beforeStatus: window.before);
+      if (_settings.layoutMode == ReaderLayoutMode.pages &&
+          _readerIsInteracting) {
+        _pendingPageWindows[direction] = (incoming, resultingStatus);
+      } else if (isBefore) {
+        _applyPrependedWindow(incoming, beforeStatus: window.before);
       } else {
         _applyAppendedWindow(incoming, afterStatus: window.after);
       }
@@ -965,10 +1011,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) => _trimLoadedWindow());
   }
 
-  Future<void> _applyPrependedWindow(
+  void _applyPrependedWindow(
     List<NovelChapter> incoming, {
     required ReaderBoundaryStatus beforeStatus,
-  }) async {
+  }) {
     final location = _settings.layoutMode == ReaderLayoutMode.pages
         ? _pageLocationToPreserve()
         : null;
@@ -985,10 +1031,10 @@ class _ReaderScreenState extends State<ReaderScreen>
       _beforeLoading = false;
       _beforeLoadError = null;
     });
-    // Vertical slivers grow around their fixed origin. Pages are recomposed,
-    // so restore their semantic location once after the new layout.
+    // Rebase pages in the same layout that installs the expanded window.
     if (location != null) {
-      await _restoreAfterLayout(location.$1, intraBlockOffset: location.$2);
+      _trimmedPageLocation = location;
+      _settleWindowLayout(null);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _trimLoadedWindow());
   }
@@ -1151,6 +1197,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   (String, int)? _pageLocationToPreserve() {
+    if (_trimmedPageLocation != null) return _trimmedPageLocation;
     if (_restoring || _preservingDynamicAnchor) {
       final position = _lastPosition;
       return position == null
@@ -1320,7 +1367,14 @@ class _ReaderScreenState extends State<ReaderScreen>
         layoutChanged ||
         _textLayoutKey(settings) != _textLayoutKey(_settings) ||
         settings.textSelectionEnabled != _settings.textSelectionEnabled;
+    if (reflow) _pageTurnGeneration += 1;
     final position = reflow ? _positionToPreserve() : null;
+    final pageLocation =
+        reflow &&
+            !layoutChanged &&
+            _settings.layoutMode == ReaderLayoutMode.pages
+        ? _pageLocationToPreserve()
+        : null;
     final anchor = reflow && !layoutChanged ? _captureVerticalAnchor() : null;
     final restore = reflow && anchor == null;
     final orientationChanged =
@@ -1355,8 +1409,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (anchor != null) _rebaseVerticalAnchor(anchor);
     final restoration = restore
         ? _restoreAfterLayout(
-            position == null ? null : 'block:${position.blockId}',
-            intraBlockOffset: position?.intraBlockOffset ?? 0,
+            pageLocation?.$1 ??
+                (position == null ? null : 'block:${position.blockId}'),
+            intraBlockOffset:
+                pageLocation?.$2 ?? position?.intraBlockOffset ?? 0,
           )
         : null;
     if (orientationChanged) {
@@ -1385,6 +1441,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   );
 
   void _handlePointerDown(PointerDownEvent event) {
+    _pageTurnGeneration += 1;
     _readerPointers.add(event.pointer);
     _waitingForUserScrollAfterJump = false;
     if (!_keyboardFocusNode.hasFocus) _keyboardFocusNode.requestFocus();
@@ -1409,6 +1466,7 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   void _handlePointerCancel(PointerCancelEvent event) {
     _readerPointers.remove(event.pointer);
+    _schedulePageMaintenance();
     if (event.pointer == _tapPointer) {
       _clearTapCandidate();
     }
@@ -1416,12 +1474,14 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   void _handlePointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent && event.scrollDelta != Offset.zero) {
+      _pageTurnGeneration += 1;
       _waitingForUserScrollAfterJump = false;
     }
   }
 
   void _handlePointerUp(PointerUpEvent event) {
     _readerPointers.remove(event.pointer);
+    _schedulePageMaintenance();
     if (event.pointer != _tapPointer ||
         _tapOrigin == null ||
         _tapStartedAt == null) {
@@ -1487,6 +1547,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       return;
     }
     final navigationGeneration = _windowGeneration;
+    final turnGeneration = ++_pageTurnGeneration;
     final controller = _activeScrollController;
     var position = controller.position;
     final forward = direction == ReaderLoadDirection.after;
@@ -1497,10 +1558,15 @@ class _ReaderScreenState extends State<ReaderScreen>
       // Loading must not hold the short animation lock. The user can navigate
       // elsewhere while a chapter request is in flight.
       await _extendWindow(direction);
-      if (!mounted || navigationGeneration != _windowGeneration) return;
+      if (!mounted ||
+          navigationGeneration != _windowGeneration ||
+          turnGeneration != _pageTurnGeneration) {
+        return;
+      }
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted ||
           navigationGeneration != _windowGeneration ||
+          turnGeneration != _pageTurnGeneration ||
           !controller.hasClients) {
         return;
       }
@@ -1580,6 +1646,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         notification is UserScrollNotification &&
             notification.direction != ScrollDirection.idle;
     if (userScrollStarted) {
+      _pageTurnGeneration += 1;
       // The new gesture owns progress, including a swipe that finishes before
       // an automatic layout's next-frame cleanup.
       _preservingDynamicAnchor = false;
@@ -1627,6 +1694,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     ReadingPosition? position,
   }) async {
     if (_catalogLoading) return;
+    _pendingPageWindows.clear();
+    _pendingPageExpansions.clear();
     _positioningGeneration += 1;
     _preservingDynamicAnchor = false;
     _restoring = false;
@@ -1991,7 +2060,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         final topPadding = mediaPadding.top + 44;
         final bottomPadding = mediaPadding.bottom + 44;
         final availableHeight = math.max(
-          120.0,
+          1.0,
           constraints.maxHeight - topPadding - bottomPadding,
         );
         final textScaler = MediaQuery.textScalerOf(context);
@@ -2023,6 +2092,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                 baseTextStyle: baseTextStyle,
                 viewportWidth: constraints.maxWidth,
                 availableHeight: availableHeight,
+                pageBreakBefore: _trimmedPageLocation,
               );
         _pagination = pagination;
         _paginationKey = paginationKey;
@@ -2078,11 +2148,12 @@ class _ReaderScreenState extends State<ReaderScreen>
     double availableHeight,
   ) {
     final fragment = entry.fragment;
+    Widget? fragmentChild;
     if (fragment != null) {
       final streamIndex = _streamIndexForReaderItem(entry.readerItemIndex);
       final item = streamIndex == null ? null : _items[streamIndex];
       if (item is AlignedBlockItem) {
-        return ReaderHorizontalBlockFragmentView(
+        fragmentChild = ReaderHorizontalBlockFragmentView(
           key: ValueKey(
             'block-${item.block.id}-horizontal-fragment-${fragment.index}',
           ),
@@ -2094,7 +2165,9 @@ class _ReaderScreenState extends State<ReaderScreen>
         );
       }
     }
-    final child = _buildReaderItem(context, entry.readerItemIndex, foreground);
+    final child =
+        fragmentChild ??
+        _buildReaderItem(context, entry.readerItemIndex, foreground);
     if (!entry.scaleToFit) return child;
     return SizedBox(
       height: availableHeight,
@@ -2243,6 +2316,9 @@ class _ReaderScreenState extends State<ReaderScreen>
                       movingTowardAfter: movingTowardAfter,
                     );
                     _handleReaderScroll(notification);
+                    if (notification is ScrollEndNotification) {
+                      _schedulePageMaintenance();
+                    }
                     if (!_restoring &&
                         !_waitingForUserScrollAfterJump &&
                         !_preservingDynamicAnchor &&

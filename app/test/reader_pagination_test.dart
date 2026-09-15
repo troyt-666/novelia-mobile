@@ -7,6 +7,50 @@ import 'package:jfzreader/features/reader/reader_pagination.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('pagination reserves the rendered empty original line', (
+    tester,
+  ) async {
+    final item = _item('', chinese: '这是正文。');
+    const settings = ReaderSettings();
+    late TextStyle inherited;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              inherited = DefaultTextStyle.of(context).style;
+              return SizedBox(
+                width: 430,
+                child: Column(
+                  children: [
+                    ReaderAlignedBlockView(
+                      item: item,
+                      settings: settings,
+                      foreground: Colors.black,
+                      bookmarked: false,
+                      onMounted: (_) {},
+                      onUnmounted: (_) {},
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    final height = tester.getSize(find.byType(ReaderAlignedBlockView)).height;
+    final pagination = ReaderPagination.compose(
+      items: [item, item],
+      settings: settings,
+      textScaler: TextScaler.noScaling,
+      baseTextStyle: inherited,
+      viewportWidth: 430,
+      availableHeight: height * 2 - 1,
+    );
+    expect(pagination.pages, hasLength(2));
+  });
+
   for (final state in [TranslationState.complete, TranslationState.pending]) {
     testWidgets('pagination fits the rendered chapter header: ${state.name}', (
       tester,
@@ -139,6 +183,13 @@ void main() {
         .map((entry) => entry.fragment!.japanese!)
         .toList();
     expect(fragments.join(), item.block.japanese);
+    expect(
+      pagination.pages
+          .expand((page) => page.entries)
+          .every((entry) => entry.scaleToFit),
+      isTrue,
+      reason: 'A glyph taller than the viewport must be fitted, not clipped.',
+    );
     expect(fragments.length, greaterThan(1));
     for (final text in fragments) {
       expect(
