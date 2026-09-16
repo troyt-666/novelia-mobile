@@ -18,6 +18,7 @@ class SettingsScreen extends StatelessWidget {
     required this.onClearSearchHistory,
     this.appVersion = const AppVersion.unavailable(),
     this.onManageOfflineDownloads,
+    this.onBackupRequested,
     this.onCacheLimitChanged,
     this.onClearReadingCache,
     this.storageSummary = const OfflineStorageSummary(
@@ -45,6 +46,7 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final VoidCallback onClearSearchHistory;
   final VoidCallback? onManageOfflineDownloads;
+  final VoidCallback? onBackupRequested;
   final ValueChanged<int>? onCacheLimitChanged;
   final FutureOr<int> Function()? onClearReadingCache;
   final OfflineStorageSummary storageSummary;
@@ -147,6 +149,15 @@ class SettingsScreen extends StatelessWidget {
           _SettingsSection(
             title: '存储与隐私',
             children: [
+              ListTile(
+                key: const ValueKey('settings-backup'),
+                leading: const Icon(Icons.save_alt),
+                title: const Text('备份与恢复'),
+                subtitle: const Text('导出记录，或从备份合并'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: onBackupRequested,
+              ),
+              const Divider(height: 1),
               ListTile(
                 key: const ValueKey('settings-offline-storage'),
                 leading: const Icon(Icons.offline_pin_outlined),

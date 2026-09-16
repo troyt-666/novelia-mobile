@@ -93,6 +93,8 @@ class NoveliaShell extends StatefulWidget {
     this.rankingsLoader,
     this.initialDestination = 0,
     this.initialRecentSearches = const [],
+    this.localDataRevision = 0,
+    this.backupPageBuilder,
     this.onDestinationChanged,
     this.onRecentSearchesChanged,
     this.initialReaderNovelId,
@@ -143,6 +145,8 @@ class NoveliaShell extends StatefulWidget {
   final RankingsLoader? rankingsLoader;
   final int initialDestination;
   final List<String> initialRecentSearches;
+  final int localDataRevision;
+  final WidgetBuilder? backupPageBuilder;
   final ValueChanged<int>? onDestinationChanged;
   final ValueChanged<List<String>>? onRecentSearchesChanged;
   final String? initialReaderNovelId;
@@ -163,6 +167,16 @@ class _NoveliaShellState extends State<NoveliaShell> {
   String? _lastFavoriteFolderId;
 
   NoveliaCatalogController get _feeds => widget.catalogController;
+
+  @override
+  void didUpdateWidget(covariant NoveliaShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.localDataRevision != widget.localDataRevision) {
+      _recentSearches
+        ..clear()
+        ..addAll(widget.initialRecentSearches.take(8));
+    }
+  }
 
   @override
   void initState() {
@@ -775,6 +789,16 @@ class _NoveliaShellState extends State<NoveliaShell> {
             : _openDownloadsManager,
       ),
       SettingsScreen(
+        onBackupRequested: widget.backupPageBuilder == null
+            ? null
+            : () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: widget.backupPageBuilder!,
+                    settings: const RouteSettings(name: '/settings/backup'),
+                  ),
+                );
+              },
         appVersion: widget.appVersion,
         themeMode: widget.themeMode,
         onThemeModeChanged: widget.onThemeModeChanged,

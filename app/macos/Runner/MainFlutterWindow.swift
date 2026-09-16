@@ -7,6 +7,8 @@ class MainFlutterWindow: NSWindow {
   private var appVersionChannel: FlutterMethodChannel?
   private var accountSessionChannel: FlutterMethodChannel?
   private var appUpdateInstallerChannel: FlutterMethodChannel?
+  private var backupFilesChannel: FlutterMethodChannel?
+  private var backupPickerOpen = false
   private lazy var updaterController = SPUStandardUpdaterController(
     startingUpdater: true,
     updaterDelegate: nil,
@@ -21,6 +23,47 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
 
     let registrar = flutterViewController.registrar(forPlugin: "ExternalLinkLauncher")
+    let backupChannel = FlutterMethodChannel(
+      name: "io.github.troyt666.jfzreader/backup_files", binaryMessenger: registrar.messenger)
+    backupChannel.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else { return }
+      guard call.method == "pickBackup" || call.method == "saveBackup" else {
+        result(FlutterMethodNotImplemented); return
+      }
+      guard !self.backupPickerOpen else {
+        result(FlutterError(code: "BUSY", message: "A document picker is already open.", details: nil)); return
+      }
+      self.backupPickerOpen = true
+      if call.method == "saveBackup", let path = call.arguments as? String {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = URL(fileURLWithPath: path).lastPathComponent
+        panel.canCreateDirectories = true
+        panel.beginSheetModal(for: self) { response in
+          guard response == .OK, let destination = panel.url else {
+            self.backupPickerOpen = false; result(false); return
+          }
+          self.transferBackup(from: URL(fileURLWithPath: path), to: destination, importing: false, result: result)
+        }
+      } else if call.method == "pickBackup" {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        // Custom backup extensions may have no registered UTI yet. Validate
+        // the selected file in Dart instead of filtering it out here.
+        panel.beginSheetModal(for: self) { response in
+          guard response == .OK, let source = panel.url else {
+            self.backupPickerOpen = false; result(nil); return
+          }
+          let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jfz-backup-import-\(UUID().uuidString).jfzbackup")
+          self.transferBackup(from: source, to: destination, importing: true, result: result)
+        }
+      } else {
+        self.backupPickerOpen = false
+        result(FlutterError(code: "INVALID_PATH", message: "Backup path is missing.", details: nil))
+      }
+    }
+    backupFilesChannel = backupChannel
     let channel = FlutterMethodChannel(
       name: "io.github.troyt666.jfzreader/external_links",
       binaryMessenger: registrar.messenger)
@@ -107,6 +150,31 @@ class MainFlutterWindow: NSWindow {
 
   private static let accountSessionKey =
     "io.github.troyt666.jfzreader.account.session-v1"
+
+  private func transferBackup(from source: URL, to destination: URL, importing: Bool, result: @escaping FlutterResult) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let selected = importing ? source : destination
+      let scoped = selected.startAccessingSecurityScopedResource()
+      defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
+      do {
+        let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
+        guard size <= 128 * 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+        let data = try Data(contentsOf: source, options: .mappedIfSafe)
+        guard data.count <= 128 * 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+        try data.write(to: destination, options: .atomic)
+        DispatchQueue.main.async {
+          self.backupPickerOpen = false
+          result(importing ? destination.path as Any : true)
+        }
+      } catch {
+        if importing { try? FileManager.default.removeItem(at: destination) }
+        DispatchQueue.main.async {
+          self.backupPickerOpen = false
+          result(FlutterError(code: "FILE_COPY", message: "Unable to copy backup (limit 128 MB).", details: nil))
+        }
+      }
+    }
+  }
 
   private static func readAccountSession() -> String? {
     return UserDefaults.standard.string(forKey: accountSessionKey)

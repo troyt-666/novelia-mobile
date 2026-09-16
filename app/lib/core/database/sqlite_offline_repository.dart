@@ -1,6 +1,9 @@
 import 'dart:convert';
 
 import 'package:sqlite3/sqlite3.dart';
+import 'package:crypto/crypto.dart';
+
+import '../backup/reader_backup.dart';
 
 import '../account/account_sync_models.dart';
 import '../account/remote_history_outbox_repository.dart';
@@ -11,6 +14,8 @@ import '../offline/offline_models.dart';
 import '../offline/offline_repository.dart';
 import 'app_database.dart';
 import 'local_state_repository.dart';
+
+part 'backup_repository.dart';
 
 /// Durable SQLite implementation of the offline and local-state contracts.
 final class SqliteOfflineRepository

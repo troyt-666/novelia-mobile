@@ -5,6 +5,7 @@ import bundleManager from '@ohos.bundle.bundleManager';
 import { BusinessError } from '@ohos.base';
 import { GeneratedPluginRegistrant } from '../plugins/GeneratedPluginRegistrant';
 import AccountSessionStore from './AccountSessionStore';
+import BackupFileTransfer from './BackupFileTransfer';
 
 export default class EntryAbility extends FlutterAbility {
   private sessionQueue: Promise<void> = Promise.resolve();
@@ -28,6 +29,11 @@ export default class EntryAbility extends FlutterAbility {
     super.configureFlutterEngine(flutterEngine)
     GeneratedPluginRegistrant.registerWith(flutterEngine)
     const messenger = flutterEngine.getDartExecutor().getBinaryMessenger();
+    const backupFiles = new BackupFileTransfer(this.context);
+    new MethodChannel(messenger, 'io.github.troyt666.jfzreader/backup_files')
+      .setMethodCallHandler({ onMethodCall: (call: MethodCall, result: MethodResult) => {
+        backupFiles.handle(call, result);
+      } });
     new EventChannel(messenger, 'io.github.troyt666.jfzreader/reader_volume_keys')
       .setStreamHandler({
         onListen: (_args: Any, events: EventSink): void => {

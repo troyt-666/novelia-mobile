@@ -17,6 +17,7 @@ import 'core/platform/app_update_installer.dart';
 import 'core/platform/app_version.dart';
 import 'core/platform/external_link_launcher.dart';
 import 'features/discover/catalog_models.dart';
+import 'features/backup/backup_screen.dart';
 import 'features/discover/rankings_screen.dart';
 import 'features/account/remote_novel_list_screen.dart';
 import 'features/reader/reader_screen.dart';
@@ -157,8 +158,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   late int _cacheLimitBytes;
   late int _initialDestination;
   late List<String> _initialRecentSearches;
+  var _localDataRevision = 0;
   late String? _initialReaderNovelId;
   late ReadingPosition? _initialReaderPosition;
+  bool _hasMountedShell = false;
   late final NoveliaCatalogController _feeds;
   List<CatalogNovel> get _catalogNovels => _feeds.catalog.novels;
   CatalogCriteria get _catalogCriteria => _feeds.criteria;
@@ -892,26 +895,53 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       darkTheme: _theme(Brightness.dark),
       home: ListenableBuilder(
         listenable: _feeds.catalog,
-        builder: (context, child) =>
-            _initialReaderNovelId != null &&
-                _feeds.catalog.loading &&
-                !_catalogNovels.any(
-                  (novel) => novel.id == _initialReaderNovelId,
-                )
-            ? Scaffold(
-                key: const ValueKey('reader-restore-placeholder'),
-                body: Center(
-                  child: Semantics(
-                    label: '正在恢复阅读位置',
-                    child: SizedBox.square(
-                      dimension: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
+        builder: (context, child) {
+          // Wait only before the first mount. Later feed refreshes can omit
+          // the restored novel while its reader route is still loading.
+          // Replacing the shell then would invalidate that route's callbacks.
+          if (!_hasMountedShell &&
+              _initialReaderNovelId != null &&
+              _feeds.catalog.loading &&
+              !_catalogNovels.any(
+                (novel) => novel.id == _initialReaderNovelId,
+              )) {
+            return Scaffold(
+              key: const ValueKey('reader-restore-placeholder'),
+              body: Center(
+                child: Semantics(
+                  label: '正在恢复阅读位置',
+                  child: SizedBox.square(
+                    dimension: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
                   ),
                 ),
-              )
-            : child!,
+              ),
+            );
+          }
+          _hasMountedShell = true;
+          return child!;
+        },
         child: NoveliaShell(
+          backupPageBuilder: (_) => BackupScreen(
+            repository: _repository,
+            onImported: () {
+              if (!mounted) return;
+              setState(() {
+                final settings = _repository.appSettings();
+                if (settings != null) {
+                  _readerSettings = settings.readerSettings;
+                  _themeMode = _themeModeFromPreference(
+                    settings.themePreference,
+                  );
+                  _cacheLimitBytes = settings.cacheLimitBytes;
+                }
+                _initialRecentSearches = _repository.recentSearches();
+                _localDataRevision++;
+              });
+              _refreshLibrary();
+            },
+          ),
+          localDataRevision: _localDataRevision,
           catalogController: _feeds,
           wenkuGateway: widget.wenkuGateway,
           appVersion: widget.appVersion,

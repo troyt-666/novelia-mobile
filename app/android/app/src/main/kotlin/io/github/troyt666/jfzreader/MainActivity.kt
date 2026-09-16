@@ -24,12 +24,16 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : FlutterActivity() {
+    private val backupFiles = BackupFileTransfer(this)
     private var readerVolumeEvents: EventChannel.EventSink? = null
     private val accountKeyAlias = "io.github.troyt666.jfzreader.account.v1"
     private val accountPreferences = "jfzreader_encrypted_account"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
+            "io.github.troyt666.jfzreader/backup_files")
+            .setMethodCallHandler(backupFiles::handle)
         EventChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "io.github.troyt666.jfzreader/reader_volume_keys",
@@ -197,6 +201,13 @@ class MainActivity : FlutterActivity() {
                     null,
                 )
             }
+        }
+    }
+
+    @Deprecated("Uses the Flutter activity result forwarding contract")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!backupFiles.onResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
         }
     }
 

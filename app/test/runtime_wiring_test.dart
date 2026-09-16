@@ -9,6 +9,8 @@ import 'package:jfzreader/core/offline/content_models.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/core/platform/external_link_launcher.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
+import 'package:jfzreader/features/shell/novelia_shell.dart';
+import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
 import 'package:jfzreader/gateway/novelia/novelia_domain_adapter.dart';
 import 'package:jfzreader/gateway/novelia/novelia_download_coordinator.dart';
@@ -16,6 +18,61 @@ import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 import 'package:jfzreader/main.dart';
 
 void main() {
+  testWidgets('catalog refresh cannot dispose an in-flight restored reader', (
+    tester,
+  ) async {
+    final repository = SqliteOfflineRepository.openInMemory();
+    addTearDown(repository.close);
+    final coordinator = _RestoringRuntimeCoordinator();
+    final now = DateTime.utc(2026, 9, 16);
+    repository.upsertNovelOutline(
+      const NoveliaContentCacheAdapter().cacheOutline(
+        coordinator.outline,
+        fetchedAt: now,
+      ),
+    );
+    repository.saveLastRoute(
+      LastRouteState(
+        routeName: '/reader',
+        novelId: coordinator.outline.id,
+        position: const ReadingPosition(
+          chapterId: 'chapter-3',
+          blockId: 'chapter-3:0',
+        ),
+        updatedAt: now,
+      ),
+    );
+    await tester.pumpWidget(
+      NoveliaReaderApp(repository: repository, contentCoordinator: coordinator),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(coordinator.detailRequests, 1);
+    final shellState = tester.state(find.byType(NoveliaShell));
+    final feeds = tester
+        .widget<NoveliaShell>(find.byType(NoveliaShell))
+        .catalogController;
+    coordinator.omitRestoredNovel = true;
+    await feeds.refreshCatalog();
+    await tester.pump();
+    coordinator.catalogGate = Completer();
+    final refresh = feeds.refreshCatalog();
+    await tester.pump();
+    expect(shellState.mounted, isTrue);
+    coordinator.detailsGate.complete(
+      NoveliaContentResult.available(coordinator.details),
+    );
+    coordinator.catalogGate!.complete(
+      NoveliaContentResult.available(
+        const NoveliaCatalogSlice(pageIndex: 0, totalPages: 0, novels: []),
+      ),
+    );
+    await refresh;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-stream')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-launch-error')), findsNothing);
+    expect(repository.lastRoute()?.position?.chapterId, 'chapter-3');
+  });
+
   testWidgets(
     'production runtime loads live content and resumes before launch',
     (tester) async {
@@ -467,6 +524,31 @@ void main() {
     downloads.complete();
     await tester.pumpAndSettle();
   });
+}
+
+class _RestoringRuntimeCoordinator extends _RuntimeCoordinator {
+  final detailsGate = Completer<NoveliaContentResult<CatalogNovel>>();
+  Completer<NoveliaContentResult<NoveliaCatalogSlice>>? catalogGate;
+  bool omitRestoredNovel = false;
+
+  @override
+  Future<NoveliaContentResult<CatalogNovel>> loadDetails(CatalogNovel outline) {
+    detailRequests++;
+    return detailsGate.future;
+  }
+
+  @override
+  Future<NoveliaContentResult<NoveliaCatalogSlice>> loadCatalog(
+    NoveliaCatalogQuery query,
+  ) {
+    if (catalogGate != null) return catalogGate!.future;
+    if (!omitRestoredNovel) return super.loadCatalog(query);
+    return Future.value(
+      NoveliaContentResult.available(
+        const NoveliaCatalogSlice(pageIndex: 0, totalPages: 0, novels: []),
+      ),
+    );
+  }
 }
 
 class _RuntimeCoordinator implements NoveliaContentCoordinator {
