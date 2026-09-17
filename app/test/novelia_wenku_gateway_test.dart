@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -99,6 +100,63 @@ void main() {
 
     expect(page.items.single.coverUri, isNull);
   });
+
+  test(
+    'Wenku comments use the shared endpoint with a Wenku site and zero-based pages',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final requests = <Uri>[];
+      final subscription = server.listen((request) async {
+        requests.add(request.uri);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'pageNumber': 3,
+            'items': [
+              {
+                'id': 'fixture-comment',
+                'user': {'username': '虚构读者'},
+                'content': '虚构评论',
+                'createAt': 1789689600,
+                'replies': [
+                  {
+                    'id': 'fixture-reply',
+                    'user': {'username': '虚构回复者'},
+                    'content': '',
+                    'hidden': true,
+                    'createAt': 1789689601,
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        await request.response.close();
+      });
+      addTearDown(subscription.cancel);
+      final gateway = HttpNoveliaWenkuGateway(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}/api/'),
+      );
+      addTearDown(gateway.close);
+      final first = await gateway.listComments('fixture-wenku');
+      await gateway.listComments('fixture-wenku', page: 1, pageSize: 5);
+      expect(requests.map((uri) => uri.path), ['/api/comment', '/api/comment']);
+      expect(requests.first.queryParameters, {
+        'site': 'wenku-fixture-wenku',
+        'page': '0',
+        'pageSize': '10',
+      });
+      expect(requests.last.queryParameters, {
+        'site': 'wenku-fixture-wenku',
+        'page': '1',
+        'pageSize': '5',
+      });
+      expect(first.pageCount, 3);
+      expect(first.items.single.content, '虚构评论');
+      expect(first.items.single.replies.single.hidden, isTrue);
+    },
+  );
 
   test('downloads through exactly one pinned Wenku redirect', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

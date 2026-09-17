@@ -69,11 +69,11 @@ An account-scoped collection required to organize Favorites.
 _Avoid_: library, download folder, cache folder
 
 **Novel Comment**:
-A service-hosted reader remark attached to a Web Novel and used as context when deciding whether to start or continue it. A Novel Comment may have replies, but it is not a Forum Post or an annotation on the text.
+A service-hosted reader remark attached to a Web Novel or Wenku Novel and used as context when deciding whether to start or continue it. A Novel Comment may have replies, but it is not a Forum Post or an annotation on the text.
 _Avoid_: review, Forum Post, bookmark note, chapter annotation
 
 **Comment Page**:
-One bounded, service-ordered page of read-only top-level Novel Comments shown beneath a Web Novel's chapter catalog, with all replies on that page expanded. Readers move between pages explicitly rather than extending an endless comment feed.
+One bounded, service-ordered page of read-only top-level Novel Comments shown beneath a Web Novel's chapter catalog or a Wenku Novel's volume list, with all replies included in that page response expanded. Readers move between pages explicitly rather than extending an endless comment feed.
 _Avoid_: forum page, reader page, infinite comments
 
 **Novel Details**:

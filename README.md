@@ -15,6 +15,7 @@ place, and continue reading when you are offline.
   removal controls.
 - Sign in when needed for account features such as Favorites and Reading
   History; general browsing and reading can remain anonymous.
+- Read paginated comments and included replies on Web Novel and Wenku Novel details.
 - Open the original work in the system browser.
 - Use light, dark, or system theme settings.
 

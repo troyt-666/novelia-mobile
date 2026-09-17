@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../gateway/novelia/novelia_domain_adapter.dart';
 import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
+import '../discover/catalog_models.dart';
+import '../novel_details/novel_comments_section.dart';
 import 'wenku_epub_document.dart';
 import 'wenku_epub_store.dart';
 import 'wenku_reader_screen.dart';
@@ -168,83 +171,111 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
   }
 
   Widget _buildDetails(WenkuNovelDetails novel) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Cover(uri: novel.coverUri),
-            const SizedBox(width: 18),
-            Expanded(
-              child: Column(
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          sliver: SliverList.list(
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    novel.chineseTitle,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
+                  _Cover(uri: novel.coverUri),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          novel.chineseTitle,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          novel.japaneseTitle,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(novel.authors.join('、')),
+                        if (novel.publisher != null) Text(novel.publisher!),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    novel.japaneseTitle,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(novel.authors.join('、')),
-                  if (novel.publisher != null) Text(novel.publisher!),
                 ],
               ),
-            ),
-          ],
+              const SizedBox(height: 22),
+              Text(
+                novel.introduction,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(height: 1.65),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                '阅读设置',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              SegmentedButton<WenkuBilingualOrder>(
+                segments: [
+                  for (final order in WenkuBilingualOrder.values)
+                    ButtonSegment(value: order, label: Text(order.label)),
+                ],
+                selected: {_order},
+                onSelectionChanged: _activeVolumeId != null
+                    ? null
+                    : (selection) => setState(() => _order = selection.single),
+              ),
+              const SizedBox(height: 26),
+              Text(
+                '可读 EPUB',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '翻译按 Sakura → GPT → 有道 → 百度的优先级补齐，日文原文始终保留。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 10),
+              if (novel.japaneseEpubs.isEmpty)
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text('暂无可读的日文 EPUB。'),
+                  ),
+                )
+              else
+                for (final volume in novel.japaneseEpubs) _volumeCard(volume),
+            ],
+          ),
         ),
-        const SizedBox(height: 22),
-        Text(
-          novel.introduction,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.65),
+        NovelCommentsSection(
+          key: ValueKey('wenku-comments-${novel.id}'),
+          loadPage: _loadCommentPage,
         ),
-        const SizedBox(height: 24),
-        Text(
-          '阅读设置',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 10),
-        SegmentedButton<WenkuBilingualOrder>(
-          segments: [
-            for (final order in WenkuBilingualOrder.values)
-              ButtonSegment(value: order, label: Text(order.label)),
-          ],
-          selected: {_order},
-          onSelectionChanged: _activeVolumeId != null
-              ? null
-              : (selection) => setState(() => _order = selection.single),
-        ),
-        const SizedBox(height: 26),
-        Text(
-          '可读 EPUB',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '翻译按 Sakura → GPT → 有道 → 百度的优先级补齐，日文原文始终保留。',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        const SizedBox(height: 10),
-        if (novel.japaneseEpubs.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(18),
-              child: Text('暂无可读的日文 EPUB。'),
-            ),
-          )
-        else
-          for (final volume in novel.japaneseEpubs) _volumeCard(volume),
       ],
+    );
+  }
+
+  Future<NovelCommentPage> _loadCommentPage(int pageNumber) async {
+    final page = await widget.gateway.listComments(
+      widget.summary.id,
+      page: pageNumber - 1,
+    );
+    final slice = const NoveliaDomainAdapter().mapCommentPage(
+      page,
+      requestedPageNumber: pageNumber,
+    );
+    return NovelCommentPage(
+      pageNumber: slice.pageNumber,
+      totalPages: slice.totalPages,
+      totalComments: null,
+      comments: slice.comments,
     );
   }
 

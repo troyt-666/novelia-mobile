@@ -210,6 +210,12 @@ abstract interface class NoveliaWenkuGateway {
 
   Future<WenkuNovelDetails> getNovel(String novelId);
 
+  Future<NoveliaPage<NoveliaComment>> listComments(
+    String novelId, {
+    int page = 0,
+    int pageSize = 10,
+  });
+
   Future<Uint8List> downloadEpub(
     WenkuEpubRequest request, {
     void Function(int bytesReceived, int? totalBytes)? onReceiveProgress,

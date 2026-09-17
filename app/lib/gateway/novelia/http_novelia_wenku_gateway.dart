@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'http_novelia_gateway.dart';
 import 'novelia_gateway.dart';
 import 'novelia_request_policy.dart';
 import 'novelia_wenku_gateway.dart';
@@ -190,6 +191,22 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
   @override
   Future<WenkuNovelDetails> getNovel(String novelId) async =>
       codec.decodeNovel(novelId, await _getJson('wenku/${_segment(novelId)}'));
+
+  @override
+  Future<NoveliaPage<NoveliaComment>> listComments(
+    String novelId, {
+    int page = 0,
+    int pageSize = 10,
+  }) async => const NoveliaJsonCodec().decodeCommentPage(
+    await _getJson(
+      'comment',
+      query: {
+        'site': 'wenku-$novelId',
+        'page': '$page',
+        'pageSize': '$pageSize',
+      },
+    ),
+  );
 
   @override
   Future<Uint8List> downloadEpub(
