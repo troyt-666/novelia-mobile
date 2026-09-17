@@ -4,7 +4,85 @@ JFZ Reader 使用现有国内开发者账号的 AppTest 内部测试。APP ID �
 `6917616114030016453`，包名固定为 `io.github.troyt666.jfzreader.hm`。
 “内部测试”群组目前只有账号本人。
 
-## 发布新版
+## 命令行发布
+
+`app/tool/harmony_apptest.py` 使用华为官方 Connect / Testing API。
+2026-09-18 已用第 20 版跑通本机构建、发布签名、API 上传、内部群组绑定和提交，
+并实际验证重复执行只查询既有版本，不会再次上传或创建版本。
+
+### 首次配置
+
+在 AGC「用户与访问 → API 密钥 → Connect API → Service Account」创建
+开发者级服务账号，角色为 **APP 管理员**。提交测试版本接口要求该角色或管理员，
+仅运营角色不能提交。该权限包含应用管理能力，并不限于 AppTest 上传。
+
+将下载的 JSON 凭据保存在仓库外：
+`~/development/jfzreader-signing/agc-service-account.json`，权限设为 `600`。
+脚本拒绝使用仓库内或对其他用户开放的凭据文件。不要把密钥内容贴进终端命令、
+提交到 Git 或写进发布日志。
+
+运行环境使用 Python 3.11+、Node、Java 和现有 HarmonyOS SDK，无额外 Python 依赖。
+Node 在内存中生成 Service Account 的 PS256 JWT；每次调用自行认证，无需网页登录。
+
+### 发布步骤
+
+递增 `app/pubspec.yaml` 和 `app/ohos/AppScope/app.json5` 的构建号，然后在 `app` 目录：
+
+```sh
+source ~/development/harmony-env.sh
+python3 tool/harmony_apptest.py build
+python3 tool/harmony_apptest.py groups
+```
+
+准备一份 UTF-8 更新说明文件。以第 20 版为例：
+
+```sh
+python3 tool/harmony_apptest.py publish \
+  --package build/apptest-20/JFZ-Reader-1.0.0-20-AppTest.app \
+  --notes-file build/apptest-20/release-notes.txt \
+  --group 内部测试
+```
+
+命令执行：核验发布包 → 查询现有内部群组 → 上传 APP → 等待包解析 →
+创建邀请测试版本 → 继承应用介绍并更新说明、群组和期限 → 回读核对 → 提交。
+默认测试期限为当天起 90 个自然日，不生成公开链接，不额外发送通知，
+不执行正式上架自检。凭据可通过全局参数 `--credentials /仓库外/凭据.json` 指定。
+
+返回“AGC accepted submission”只说明提交已接受，华为预审和生效仍需等待。
+可独立查询版本状态：
+
+```sh
+python3 tool/harmony_apptest.py status
+python3 tool/harmony_apptest.py status --version-id 测试版本ID
+```
+
+实测版本列表的 `state` 可能在提交后仍返回 `7`（准备提交），而版本详情已经
+返回 `releaseState: 12`（预审中）。命令会额外读取详情，以详情中的状态显示
+中文结果，不能仅用版本列表判断是否提交成功。
+
+`build/apptest-<构建号>/publication.json` 保存包哈希、群组、测试期限和各阶段结果。
+相同输入重跑会复用已确认的上传、软件包和测试版本；已提交的版本只查询状态。
+网络中断导致某次修改结果不确定时，脚本停止并保留 `pending`，不会盲目重发。
+此时先在 AGC 对照包名、版本号、版本 ID 核实结果，再修正本地状态；不要直接
+删除状态文件后重发。包名、构建号、签名 Profile 或群组不匹配时拒绝发布。
+
+签名密码由 Java 进程从本机文件读取，不放入进程参数；API JWT、上传临时凭据和
+完整应用联系信息不输出到日志。上传过程中不跟随重定向。
+
+离线回归验证：
+
+```sh
+python3 -m unittest discover -s tool -p 'test_harmony_apptest.py' -v
+```
+
+覆盖重复提交、网络结果不确定、输入变化、API 业务错误、内部群组选择、
+错误包、更新说明继承和提交前远端信息核对。
+
+官方文档：[Testing API 指南](https://developer.huawei.com/consumer/cn/doc/doccenter-submission/agc-help-test-api-guide-0000002236015562)、
+[服务端授权](https://developer.huawei.com/consumer/cn/doc/doccenter-submission/agc-help-connect-api-obtain-server-auth-0000002271134661)、
+[提交测试版本](https://developer.huawei.com/consumer/cn/doc/doccenter-submission/agc-help-test-api-submit-test-version-0000002236201334)。
+
+## 网页发布（备用）
 
 1. 递增 `app/pubspec.yaml` 和 `app/ohos/AppScope/app.json5` 的构建版本号。
 2. 在 `app` 目录生成未签名 APP：
@@ -72,3 +150,18 @@ JFZ Reader 使用现有国内开发者账号的 AppTest 内部测试。APP ID �
 
 华为说明：[发布测试版](https://developer.huawei.com/consumer/cn/doc/doccenter-submission/agc-help-apptest-release-testapp-0000002292711385)、
 [邀请测试用户](https://developer.huawei.com/consumer/cn/doc/doccenter-submission/agc-help-apptest-invite-testuser-0000002258071224)。
+
+2026-09-18 再次查看，第 19 版显示“应用上架审核通过”“上架自检通过”，
+下载次数 2，安装设备量 1；列表状态仍为“准备提交”。
+第 20 版包含文库小说详情分页评论，已构建并完成发布签名校验：
+`JFZ-Reader-1.0.0-20-AppTest.app`，13,450,690 字节，SHA-256：
+`37e39437cf9629d913006e27bad23aeaf9e1b1e5afbf0f5964c2c2b363015d5b`。
+
+2026-09-18 约 06:53，通过命令行上传并提交第 20 版，测试版本 ID 为
+`2041901103724947776`，软件包 ID 为 `2041900584864353856`。
+已回读确认构建号、更新说明和唯一绑定的“内部测试”群组（1 人），软件包加密开启。
+测试结束时间为 2026-12-16 23:59:59（北京时间）。
+提交接口返回成功，版本详情先显示“预审中”，随后进入“正在审核”，
+尚未验证手机实际更新安装。相同接口确认第 19 版为“正在测试”。
+用同一条发布命令再次执行，脚本报告已提交，只查询原版本，没有产生重复版本。
+服务账号凭据已保存在上述仓库外路径；下载目录中的原文件也限制为仅当前用户可读写。
