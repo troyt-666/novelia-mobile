@@ -19,6 +19,14 @@ local; they are not public installation packages. See
 [`app/ohos/README.md`](../app/ohos/README.md) for the native build and signing
 requirements. HarmonyOS does not yet use the GitHub update feeds.
 
+When using the newer `harmony_apptest.py build` flow, the build target is APP,
+so an existing `build/ohos/hap/entry-default-unsigned.hap` may be from an older
+release. Extract `entry-default.hap` from the freshly built
+`build/harmony/app/build/ohos/app/ohos-default-unsigned.app` for the GitHub
+asset instead. Check the embedded `module.json` bundle name, version name,
+version code and Release mode against the source manifests. Use the unsigned
+APP as the source, never the release-signed AppTest APP.
+
 The app checks a small HTTPS manifest hosted on GitHub Pages. It reports when a
 new version is available and opens the appropriate signed APK, unsigned IPA,
 DMG, or GitHub Release. Android downloads the APK into private cache, verifies
