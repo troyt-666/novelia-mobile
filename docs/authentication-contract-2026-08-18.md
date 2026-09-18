@@ -58,7 +58,38 @@ token value, account identifier, folder title, or novel identity was recorded.
   History updates send the chapter ID as a raw UTF-8 body without inventing a
   content type, matching the current public client.
 
-## Native-flow finding
+## Wenku access correction — 2026-09-18
+
+The Wenku gateway now obtains the current session's bearer token for each
+request, matching the Web Novel gateway. Previously the production bootstrap
+created an anonymous Wenku gateway even when the reader had signed in, so both
+R18 catalog filters and restricted novel details failed authorization. A 401
+with an existing token triggers one forced refresh and one retry; anonymous
+requests and 403 responses do not trigger refresh. Logout takes effect on the
+next request. Existing host pinning and the single same-origin EPUB redirect
+restriction remain in force.
+
+The public server contract maps `level=5` to R18男性向 and `level=6` to R18女性向.
+Both catalog filters and restricted novel details call `requireNsfwAccess`,
+which requires a signed-in account created at least 30 days earlier. Both a
+missing session and an account that is too new return 401, so the app's access
+message mentions both login and the site's access conditions. Sources are
+[`RouteWenkuNovel.kt`](https://github.com/auto-novel/auto-novel/blob/ac0875439a3d24d6287c620f85617755389ba75a/server/src/main/kotlin/api/RouteWenkuNovel.kt)
+and [`Authentication.kt`](https://github.com/auto-novel/auto-novel/blob/ac0875439a3d24d6287c620f85617755389ba75a/server/src/main/kotlin/api/plugins/Authentication.kt).
+
+Loopback HTTP tests cover both filter codes, pagination, query preservation,
+token replacement, logout, expired-token refresh, failed refresh and access
+denial. The macOS native fixture uses the real HTTP gateway against a loopback
+server to cover anonymous failure, successful retry after token refresh, both
+filters, search, pagination and opening restricted details. It uses synthetic
+tokens and content and never opens the reader database or stored session.
+The native entry is `app/integration_test/wenku_filters_test.dart`, with driver
+`app/test_driver/wenku_filters_driver.dart`. Screenshots are saved under ignored
+`app/build/ui-ux/2026-09-18/wenku-r18-macos-*.png` (800 × 600 Flutter viewport,
+light theme, default text scale). Android was not launched for this correction,
+and no live-account access was tested.
+
+## Native login flow
 
 The hosted page has no observed OAuth/OIDC authorization endpoint, PKCE
 parameters, custom-scheme redirect, or universal-link callback. When embedded

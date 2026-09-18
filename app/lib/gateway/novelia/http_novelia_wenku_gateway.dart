@@ -170,6 +170,7 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
     this.requestTimeout = const Duration(seconds: 30),
     this.maximumEpubBytes = 64 * 1024 * 1024,
     this.codec = const WenkuJsonCodec(),
+    this.accessTokenProvider,
   }) : baseUri = baseUri ?? Uri.parse('https://n.novelia.cc/api/'),
        _client = client ?? HttpClient(),
        _ownsClient = client == null;
@@ -178,6 +179,7 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
   final Duration requestTimeout;
   final int maximumEpubBytes;
   final WenkuJsonCodec codec;
+  final NoveliaAccessTokenProvider? accessTokenProvider;
   final HttpClient _client;
   final bool _ownsClient;
 
@@ -363,6 +365,37 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
     required String accept,
     WenkuEpubDownloadCancellationToken? cancellationToken,
   }) async {
+    final token = await accessTokenProvider?.call(forceRefresh: false);
+    var response = await _sendGet(
+      uri,
+      accept: accept,
+      token: token,
+      cancellationToken: cancellationToken,
+    );
+    if (response.statusCode == HttpStatus.unauthorized &&
+        token != null &&
+        token.trim().isNotEmpty &&
+        accessTokenProvider != null) {
+      final refreshed = await accessTokenProvider!(forceRefresh: true);
+      if (refreshed != null && refreshed.trim().isNotEmpty) {
+        await response.drain<void>().timeout(requestTimeout);
+        response = await _sendGet(
+          uri,
+          accept: accept,
+          token: refreshed,
+          cancellationToken: cancellationToken,
+        );
+      }
+    }
+    return response;
+  }
+
+  Future<HttpClientResponse> _sendGet(
+    Uri uri, {
+    required String accept,
+    String? token,
+    WenkuEpubDownloadCancellationToken? cancellationToken,
+  }) async {
     if (!isAllowedNoveliaRequestUri(uri)) {
       throw const NoveliaGatewayException(
         NoveliaGatewayFailureKind.invalidResponse,
@@ -374,6 +407,9 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
     cancellationToken?.throwIfCancelled();
     pinNoveliaHttpRequest(request);
     request.headers.set(HttpHeaders.acceptHeader, accept);
+    if (token != null && token.trim().isNotEmpty) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    }
     final removeCancellationListener = cancellationToken?.addListener(
       () => request.abort(const WenkuEpubDownloadCancelledException()),
     );
@@ -453,11 +489,13 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
 
   static NoveliaGatewayException _statusFailure(int statusCode) =>
       NoveliaGatewayException(
-        statusCode == 404
-            ? NoveliaGatewayFailureKind.notFound
-            : statusCode >= 500
-            ? NoveliaGatewayFailureKind.server
-            : NoveliaGatewayFailureKind.invalidResponse,
+        switch (statusCode) {
+          401 => NoveliaGatewayFailureKind.authenticationRequired,
+          403 => NoveliaGatewayFailureKind.forbidden,
+          404 => NoveliaGatewayFailureKind.notFound,
+          >= 500 => NoveliaGatewayFailureKind.server,
+          _ => NoveliaGatewayFailureKind.invalidResponse,
+        },
         'The Wenku service returned HTTP $statusCode.',
         statusCode: statusCode,
       );

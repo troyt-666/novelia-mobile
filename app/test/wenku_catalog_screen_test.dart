@@ -21,10 +21,14 @@ void main() {
       expect(find.text(level.label), findsOneWidget);
     }
 
-    await tester.tap(find.byKey(const ValueKey('wenku-level-lightLiterature')));
-    await tester.pumpAndSettle();
-
-    expect(gateway.queries.last.level, WenkuCatalogLevel.lightLiterature);
+    for (final level in WenkuCatalogLevel.values.skip(1)) {
+      final chip = find.byKey(ValueKey('wenku-level-${level.name}'));
+      await tester.ensureVisible(chip);
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+      expect(gateway.queries.last.level, level);
+      expect(gateway.queries.last.page, 0);
+    }
   });
 
   testWidgets('Wenku catalog appends subsequent service pages', (tester) async {

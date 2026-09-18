@@ -101,6 +101,179 @@ void main() {
     expect(page.items.single.coverUri, isNull);
   });
 
+  test('both R18 filters use the current session on every page', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final requests = <({Uri uri, String? authorization})>[];
+    final subscription = server.listen((request) async {
+      requests.add((
+        uri: request.uri,
+        authorization: request.headers.value(HttpHeaders.authorizationHeader),
+      ));
+      request.response.headers.contentType = ContentType.json;
+      request.response.write('{"items":[],"pageNumber":2}');
+      await request.response.close();
+    });
+    addTearDown(subscription.cancel);
+    String? token = 'fixture-session-one';
+    final gateway = HttpNoveliaWenkuGateway(
+      baseUri: Uri.parse('http://127.0.0.1:${server.port}/api/'),
+      accessTokenProvider: ({bool forceRefresh = false}) => token,
+    );
+    addTearDown(gateway.close);
+    for (final level in [
+      WenkuCatalogLevel.r18Male,
+      WenkuCatalogLevel.r18Female,
+    ]) {
+      for (var page = 0; page < 2; page++) {
+        await gateway.listNovels(
+          WenkuCatalogQuery(level: level, page: page, search: '虚构书名'),
+        );
+      }
+    }
+    token = 'fixture-session-two';
+    await gateway.listComments('fixture-novel');
+    token = null;
+    await gateway.listNovels(const WenkuCatalogQuery());
+
+    expect(
+      requests.take(4).map((request) => request.authorization),
+      everyElement('Bearer fixture-session-one'),
+    );
+    expect(
+      requests.take(4).map((request) => request.uri.queryParameters['level']),
+      ['5', '5', '6', '6'],
+    );
+    expect(
+      requests.take(4).map((request) => request.uri.queryParameters['page']),
+      ['0', '1', '0', '1'],
+    );
+    expect(
+      requests.take(4).map((request) => request.uri.queryParameters['query']),
+      everyElement('虚构书名'),
+    );
+    expect(requests[4].authorization, 'Bearer fixture-session-two');
+    expect(requests.last.authorization, isNull);
+  });
+
+  test(
+    'refreshes an expired Wenku session and retries the identical query once',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final requests = <Uri>[];
+      final authorization = <String?>[];
+      final refreshes = <bool>[];
+      final subscription = server.listen((request) async {
+        requests.add(request.uri);
+        authorization.add(
+          request.headers.value(HttpHeaders.authorizationHeader),
+        );
+        if (authorization.last == 'Bearer fixture-refreshed') {
+          request.response.write('{"items":[],"pageNumber":1}');
+        } else {
+          request.response.statusCode = HttpStatus.unauthorized;
+        }
+        await request.response.close();
+      });
+      addTearDown(subscription.cancel);
+      final gateway = HttpNoveliaWenkuGateway(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}/api/'),
+        accessTokenProvider: ({bool forceRefresh = false}) {
+          refreshes.add(forceRefresh);
+          return forceRefresh ? 'fixture-refreshed' : 'fixture-expired';
+        },
+      );
+      addTearDown(gateway.close);
+      await gateway.listNovels(
+        const WenkuCatalogQuery(
+          level: WenkuCatalogLevel.r18Female,
+          page: 1,
+          search: '虚构书名',
+        ),
+      );
+      expect(requests, hasLength(2));
+      expect(requests.first, requests.last);
+      expect(authorization, [
+        'Bearer fixture-expired',
+        'Bearer fixture-refreshed',
+      ]);
+      expect(refreshes, [false, true]);
+    },
+  );
+
+  for (final scenario in [
+    (
+      status: 401,
+      token: null,
+      refreshed: null,
+      count: 1,
+      kind: NoveliaGatewayFailureKind.authenticationRequired,
+    ),
+    (
+      status: 401,
+      token: 'fixture-session',
+      refreshed: 'fixture-refreshed',
+      count: 2,
+      kind: NoveliaGatewayFailureKind.authenticationRequired,
+    ),
+    (
+      status: 401,
+      token: 'fixture-session',
+      refreshed: null,
+      count: 1,
+      kind: NoveliaGatewayFailureKind.authenticationRequired,
+    ),
+    (
+      status: 403,
+      token: 'fixture-session',
+      refreshed: 'fixture-refreshed',
+      count: 1,
+      kind: NoveliaGatewayFailureKind.forbidden,
+    ),
+  ]) {
+    test(
+      'reports Wenku access failure without repeated refresh: $scenario',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        var requests = 0;
+        final refreshes = <bool>[];
+        final subscription = server.listen((request) async {
+          requests++;
+          request.response.statusCode = scenario.status;
+          await request.response.close();
+        });
+        addTearDown(subscription.cancel);
+        final gateway = HttpNoveliaWenkuGateway(
+          baseUri: Uri.parse('http://127.0.0.1:${server.port}/api/'),
+          accessTokenProvider: ({bool forceRefresh = false}) {
+            refreshes.add(forceRefresh);
+            return forceRefresh ? scenario.refreshed : scenario.token;
+          },
+        );
+        addTearDown(gateway.close);
+        await expectLater(
+          gateway.getNovel('fixture-restricted'),
+          throwsA(
+            isA<NoveliaGatewayException>()
+                .having((error) => error.kind, 'kind', scenario.kind)
+                .having(
+                  (error) => error.statusCode,
+                  'statusCode',
+                  scenario.status,
+                ),
+          ),
+        );
+        expect(requests, scenario.count);
+        expect(
+          refreshes.where((refresh) => refresh).length,
+          scenario.status == 401 && scenario.token != null ? 1 : 0,
+        );
+      },
+    );
+  }
+
   test(
     'Wenku comments use the shared endpoint with a Wenku site and zero-based pages',
     () async {

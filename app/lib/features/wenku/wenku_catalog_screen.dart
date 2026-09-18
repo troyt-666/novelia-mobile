@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import 'wenku_details_screen.dart';
 
@@ -121,6 +122,16 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
     );
   }
 
+  String? _accessFailureMessage(Object? failure) => switch (failure) {
+    NoveliaGatewayException(
+      kind: NoveliaGatewayFailureKind.authenticationRequired,
+    ) =>
+      '请在设置中登录，并确认账号满足站点的访问条件。',
+    NoveliaGatewayException(kind: NoveliaGatewayFailureKind.forbidden) =>
+      '当前账号暂无权访问此内容。',
+    _ => null,
+  };
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -194,10 +205,24 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
             else if (_failure != null)
               SliverFillRemaining(
                 child: Center(
-                  child: FilledButton.tonalIcon(
-                    onPressed: _load,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('载入失败，点击重试'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_accessFailureMessage(_failure)
+                            case final message?) ...[
+                          Text(message, textAlign: TextAlign.center),
+                          const SizedBox(height: 16),
+                        ],
+                        FilledButton.tonalIcon(
+                          key: const ValueKey('wenku-retry-button'),
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('载入失败，点击重试'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               )

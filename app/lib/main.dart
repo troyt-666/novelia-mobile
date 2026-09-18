@@ -54,7 +54,9 @@ Future<void> main() async {
     final gateway = HttpNoveliaGateway(
       accessTokenProvider: accountSessionController.accessToken,
     );
-    final wenkuGateway = HttpNoveliaWenkuGateway();
+    final wenkuGateway = HttpNoveliaWenkuGateway(
+      accessTokenProvider: accountSessionController.accessToken,
+    );
     final accountGateway = HttpNoveliaAccountGateway(
       accessTokenProvider: accountSessionController.accessToken,
     );
