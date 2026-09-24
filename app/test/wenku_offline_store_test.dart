@@ -102,4 +102,33 @@ void main() {
       );
     },
   );
+
+  test(
+    'EPUB position survives reopening storage and damaged progress leaves the book readable',
+    () async {
+      const request = WenkuEpubRequest(
+        novelId: 'fixture-novel',
+        volumeId: '第一卷.epub',
+        order: WenkuBilingualOrder.chineseFirst,
+        providers: [WenkuTranslationProvider.sakura],
+        filename: '第一卷.epub',
+      );
+      await store.save(request, wenkuOfflineEpub());
+      final download = (await store.listDownloads()).single;
+      expect(store.fileNameForRequest(request), download.fileName);
+      await store.saveReadingPosition(
+        download.fileName,
+        const WenkuReadingPosition(spineIndex: 0, fraction: .65),
+      );
+      final restarted = WenkuEpubStore(rootDirectory: () async => root);
+      final saved = await restarted.readingPosition(download.fileName);
+      expect(saved!.spineIndex, 0);
+      expect(saved.fraction, .65);
+      await File(
+        '${root.path}/wenku/${download.fileName}.position.json',
+      ).writeAsString('{broken');
+      expect(await restarted.readingPosition(download.fileName), isNull);
+      expect((await restarted.openDownload(download)).title, '离线列车 · 第一卷');
+    },
+  );
 }

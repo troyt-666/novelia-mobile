@@ -9,6 +9,7 @@ import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import '../reader/reader_volume_keys.dart';
 import 'wenku_epub_document.dart';
+import 'wenku_epub_store.dart';
 
 @visibleForTesting
 String? wenkuReaderActionForKey(LogicalKeyboardKey key) {
@@ -22,12 +23,16 @@ class WenkuReaderScreen extends StatefulWidget {
     required this.document,
     required this.title,
     required this.order,
+    this.initialPosition,
+    this.onPositionChanged,
     super.key,
   });
 
   final WenkuEpubDocument document;
   final String title;
   final WenkuBilingualOrder? order;
+  final WenkuReadingPosition? initialPosition;
+  final Future<void> Function(WenkuReadingPosition position)? onPositionChanged;
 
   @override
   State<WenkuReaderScreen> createState() => _WenkuReaderScreenState();
@@ -52,10 +57,20 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   var _turningPage = false;
   Brightness? _lastBrightness;
   String? _pendingFragment;
+  var _awaitingRestore = true;
+  var _exiting = false;
+  Future<void> _positionWrites = Future.value();
 
   @override
   void initState() {
     super.initState();
+    final saved = widget.initialPosition;
+    if (saved != null &&
+        saved.spineIndex >= 0 &&
+        saved.spineIndex < widget.document.spineLength) {
+      _spineIndex = saved.spineIndex;
+      _localFraction = saved.fraction.clamp(0, 1);
+    }
     _initialize();
   }
 
@@ -120,7 +135,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
         _controller = controller;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadSpine();
+        if (mounted) _loadSpine(fraction: _localFraction);
       });
     } on Object catch (error) {
       _showFailure(error);
@@ -137,6 +152,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   }
 
   void _onReaderMessage(JavaScriptMessage message) {
+    if (_exiting || !mounted) return;
     try {
       final value = jsonDecode(message.message);
       if (value is! Map) return;
@@ -161,7 +177,11 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
       if (value['ready'] == true && mounted && _loading) {
         setState(() => _loading = false);
       }
-      if (value['fraction'] is! num) return;
+      if (_awaitingRestore ||
+          value['ready'] != true ||
+          value['fraction'] is! num) {
+        return;
+      }
       final fraction = (value['fraction'] as num)
           .toDouble()
           .clamp(0, 1)
@@ -174,6 +194,17 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
             .clamp(0, 1)
             .toDouble();
       });
+      final save = widget.onPositionChanged;
+      if (save != null) {
+        final position = WenkuReadingPosition(
+          spineIndex: _spineIndex,
+          fraction: fraction,
+        );
+        // Keep disk writes ordered even when the reader turns pages quickly.
+        _positionWrites = _positionWrites
+            .then((_) => save(position))
+            .catchError((Object _) {});
+      }
     } on FormatException {
       // Ignore malformed messages from the isolated document host.
     }
@@ -184,6 +215,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
     final document = _document;
     if (controller == null || document == null) return;
     final generation = ++_spineGeneration;
+    _awaitingRestore = true;
     setState(() {
       _loading = true;
       _failure = null;
@@ -212,6 +244,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
   Future<void> _restoreWithinSpine() async {
     final controller = _controller;
     if (controller == null) return;
+    final generation = _spineGeneration;
     final fragment = _pendingFragment;
     if (fragment != null) {
       await controller.runJavaScript(
@@ -221,6 +254,7 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
     } else {
       await controller.runJavaScript('readerSetFraction($_localFraction);');
     }
+    if (generation == _spineGeneration) _awaitingRestore = false;
   }
 
   WenkuEpubColors _resolvedColors() => _palette.resolve(
@@ -489,11 +523,18 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
         ),
       ),
     );
-    return ReaderVolumeKeys(
-      enabled: !_loading && _failure == null && !_fontMenuVisible,
-      onPrevious: () => unawaited(_previous()),
-      onNext: () => unawaited(_next()),
-      child: reader,
+    return PopScope<void>(
+      onPopInvokedWithResult: (didPop, _) {
+        // Closing a native view can emit resize/scroll events. They are not
+        // reading activity and must not overwrite the last visible page.
+        if (didPop) _exiting = true;
+      },
+      child: ReaderVolumeKeys(
+        enabled: !_loading && _failure == null && !_fontMenuVisible,
+        onPrevious: () => unawaited(_previous()),
+        onNext: () => unawaited(_next()),
+        child: reader,
+      ),
     );
   }
 }

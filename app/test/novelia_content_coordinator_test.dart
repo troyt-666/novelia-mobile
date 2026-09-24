@@ -97,7 +97,7 @@ void main() {
 
     for (final restricted in [false, true]) {
       test(
-        'all read entry points follow account access (R18=$restricted)',
+        'local reads survive logout; live requests follow account access (R18=$restricted)',
         () async {
           var signedIn = true;
           final store = _openStore();
@@ -132,24 +132,27 @@ void main() {
           final chapterCalls = gateway.chapterCalls.length;
           final detailCalls = gateway.detailCalls;
           gateway.lastCommentKey = null;
-          expect(
-            coordinator.cachedChapter(novel, chapterId: 'c1'),
-            restricted ? isNull : isNotNull,
-          );
+          expect(coordinator.cachedChapter(novel, chapterId: 'c1'), isNotNull);
           final results = [
             await coordinator.loadChapter(novel, chapterId: 'c1'),
-            await coordinator.loadComments(novel),
             await coordinator.loadDetails(novel),
           ];
           for (final result in results) {
             expect(
               result.availability,
               restricted
-                  ? CatalogAvailability.authenticationRequired
+                  ? CatalogAvailability.offline
                   : CatalogAvailability.available,
             );
-            expect(result.data, restricted ? isNull : isNotNull);
+            expect(result.data, isNotNull);
           }
+          final comments = await coordinator.loadComments(novel);
+          expect(
+            comments.availability,
+            restricted
+                ? CatalogAvailability.authenticationRequired
+                : CatalogAvailability.available,
+          );
           expect(
             gateway.chapterCalls.length,
             chapterCalls + (restricted ? 0 : 1),
@@ -441,7 +444,7 @@ void main() {
     );
 
     test(
-      'revokes a previously general novel after a restricted detail',
+      'a changed online classification preserves local details and chapters',
       () async {
         final store = _openStore();
         final gateway = _FakeGateway(
@@ -473,25 +476,20 @@ void main() {
           restricted.availability,
           CatalogAvailability.authenticationRequired,
         );
-        expect(store.listCachedNovels(), isEmpty);
-        expect(store.listCopies(kind: OfflineCopyKind.cacheCopy), isEmpty);
+        expect(store.listCachedNovels().single.tags, contains('R18'));
+        expect(store.listCopies(kind: OfflineCopyKind.cacheCopy), hasLength(1));
         final chapterCallsBeforeDeniedRead = gateway.chapterCalls.length;
         final deniedChapter = await coordinator.loadChapter(
           general.data!,
           chapterId: 'c1',
         );
-        expect(
-          deniedChapter.availability,
-          CatalogAvailability.authenticationRequired,
-        );
+        expect(deniedChapter.availability, CatalogAvailability.offline);
+        expect(deniedChapter.data!.blocks.first.japanese, '一');
         expect(gateway.chapterCalls, hasLength(chapterCallsBeforeDeniedRead));
 
         gateway.details = _details(chapterIds: const ['c1']);
         final stillDenied = await coordinator.loadDetails(outline);
-        expect(
-          stillDenied.availability,
-          CatalogAvailability.authenticationRequired,
-        );
+        expect(stillDenied.availability, CatalogAvailability.offline);
         expect(gateway.detailCalls, 2);
       },
     );
@@ -526,7 +524,7 @@ void main() {
         )).data!.novels,
         isEmpty,
       );
-      expect(store.listCachedNovels(), isEmpty);
+      expect(store.listCachedNovels().single.tags, contains('R18'));
 
       gateway.catalogPage = NoveliaPage(items: [_outline()], pageCount: 1);
       expect(
@@ -535,7 +533,7 @@ void main() {
         )).data!.novels,
         isEmpty,
       );
-      expect(store.listCachedNovels(), isEmpty);
+      expect(store.listCachedNovels().single.tags, contains('R18'));
     });
 
     test(

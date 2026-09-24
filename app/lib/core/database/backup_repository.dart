@@ -71,7 +71,16 @@ extension ReaderBackupRepository on SqliteOfflineRepository {
       for (final table in ReaderBackup.tableNames) {
         final columns = stage._database.select('PRAGMA table_info($table);');
         final names = columns.map((c) => c['name'] as String).toSet();
-        for (final row in backup.rows(table)) {
+        for (final rawRow in backup.rows(table)) {
+          final row = <String, Object?>{...rawRow};
+          if (table == 'cached_chapter_payloads' &&
+              !row.containsKey('illustrations_json')) {
+            row['illustrations_json'] = '{}';
+            row['illustrations_complete'] =
+                (row['japanese_blocks_json'] as String).contains('<图片>')
+                ? 0
+                : 1;
+          }
           if (row.length != names.length || !names.containsAll(row.keys)) {
             throw const FormatException('Unexpected columns');
           }
@@ -156,7 +165,11 @@ extension ReaderBackupRepository on SqliteOfflineRepository {
         stage._validateCopyPayloadReference(copy);
       }
       for (final row in backup.rows('cached_chapter_payloads')) {
-        stage.chapterPayloadById(row['payload_id'] as String);
+        final payload = stage.chapterPayloadById(row['payload_id'] as String)!;
+        stage._database.execute(
+          'UPDATE cached_chapter_payloads SET illustrations_complete = ? WHERE payload_id = ?;',
+          [payload.illustrationsComplete ? 1 : 0, payload.id],
+        );
       }
       if (!backup.includesContent &&
           (stage.listCopies().isNotEmpty ||
@@ -386,7 +399,9 @@ extension ReaderBackupRepository on SqliteOfflineRepository {
             row['id']: row,
         };
         final payloadRows = {
-          for (final row in preview.backup.rows('cached_chapter_payloads'))
+          for (final row in stage._database.select(
+            'SELECT * FROM cached_chapter_payloads;',
+          ))
             row['payload_id']: row,
         };
         final semanticIntents = {

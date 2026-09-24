@@ -3,16 +3,15 @@ import '../../core/database/local_state_repository.dart';
 import '../../core/model/reader_models.dart';
 import '../../core/offline/offline_models.dart';
 import '../../gateway/novelia/novelia_content_cache_adapter.dart';
-import '../../gateway/novelia/novelia_domain_adapter.dart';
 import '../discover/catalog_models.dart';
 import 'shell_view_models.dart';
 
 /// A shelf projection loaded on local-data changes, never during widget build.
+/// Device-local reading data is independent of website login and catalog access.
 class LocalLibrarySnapshot {
   LocalLibrarySnapshot.load(
     SqliteOfflineRepository repository, {
     required Iterable<CatalogNovel> knownNovels,
-    required bool allowRestricted,
   }) {
     final progress = repository.listReadingProgress();
     final savedBookmarks = repository.listBookmarks();
@@ -36,17 +35,11 @@ class LocalLibrarySnapshot {
       try {
         final outline = repository.cachedNovelOutline(id);
         if (outline != null) {
-          novels[id] = adapter.restoreOutline(
-            outline,
-            allowRestricted: allowRestricted,
-          );
+          novels[id] = adapter.restoreOutline(outline, allowRestricted: true);
         }
         final detail = repository.novelDetail(id);
         if (detail != null) {
-          novels[id] = adapter.restoreDetails(
-            detail,
-            allowRestricted: allowRestricted,
-          );
+          novels[id] = adapter.restoreDetails(detail, allowRestricted: true);
         }
       } on Object {
         // One obsolete or corrupt title must not hide the rest of the shelf.
@@ -54,11 +47,7 @@ class LocalLibrarySnapshot {
     }
     for (final novel in knownNovels) {
       if (!novelIds.contains(novel.id)) continue;
-      if (!allowRestricted &&
-          const NoveliaDomainAdapter().isRestrictedCatalogNovel(novel)) {
-        continue;
-      }
-      if (novels[novel.id] == null || novel.readerNovel != null) {
+      if (novels[novel.id]?.hasChapterCatalog != true) {
         novels[novel.id] = novel;
       }
     }
@@ -70,6 +59,7 @@ class LocalLibrarySnapshot {
       tasks,
       progress,
       savedBookmarks,
+      repository.payloadIdsMissingIllustrations(),
     );
     bookmarks = _libraryBookmarks(novels, savedBookmarks);
     storageSummary = OfflineStorageSummary.fromCopies(copies);
@@ -109,11 +99,10 @@ class LocalLibrarySnapshot {
       (chapter) => chapter.id == position.chapterId,
     );
     if (chapterIndex < 0) return 0;
-    final payload = repository.chapterPayload(
-      novelId: novel.id,
-      chapterId: position.chapterId,
+    final blockCount = repository.chapterBlockCount(
+      novel.id,
+      position.chapterId,
     );
-    final blockCount = payload?.japaneseBlocks.length ?? 0;
     final separator = position.blockId.lastIndexOf(':');
     final ordinal = separator < 0
         ? null
@@ -144,6 +133,7 @@ class LocalLibrarySnapshot {
     List<DownloadTask> tasks,
     List<LocalReadingProgress> progress,
     List<LocalBookmark> bookmarks,
+    Set<String> missingIllustrationPayloads,
   ) {
     final lastActivity = <String, DateTime>{};
     for (final (novelId, time) in [
@@ -237,6 +227,9 @@ class LocalLibrarySnapshot {
                 chapterId,
                 copy: copies[chapterId],
                 task: tasks[chapterId],
+                imagesMissing: missingIllustrationPayloads.contains(
+                  copies[chapterId]?.payloadId,
+                ),
               ),
           ],
         ),
@@ -249,9 +242,12 @@ class LocalLibrarySnapshot {
     String chapterId, {
     required OfflineChapterCopy? copy,
     required DownloadTask? task,
+    required bool imagesMissing,
   }) {
     final storedBytes = copy?.totalBytes;
-    final state = _displayTaskState(copy, task);
+    final state = imagesMissing
+        ? DownloadTaskState.failed
+        : _displayTaskState(copy, task);
     return LibraryDownloadChapter(
       chapterId: chapterId,
       byteCount: storedBytes ?? 0,
@@ -263,7 +259,13 @@ class LocalLibrarySnapshot {
       totalBytes: state == DownloadTaskState.stored
           ? storedBytes ?? task?.totalBytes
           : task?.totalBytes,
-      failure: task?.failure,
+      failure: imagesMissing
+          ? const DownloadFailure(
+              kind: DownloadFailureKind.illustration,
+              message: '插图尚未下载完整，请联网后重试。',
+              retryable: true,
+            )
+          : task?.failure,
     );
   }
 

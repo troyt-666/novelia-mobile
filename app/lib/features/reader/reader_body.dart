@@ -726,6 +726,7 @@ class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
   void didUpdateWidget(_IllustrationBlockView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.block.illustrationUri != _block.illustrationUri ||
+        oldWidget.block.illustrationBytes != _block.illustrationBytes ||
         oldWidget.readingWidth != widget.readingWidth) {
       _listenForSize();
     }
@@ -752,12 +753,14 @@ class _IllustrationBlockViewState extends State<_IllustrationBlockView> {
     final provider = ResizeImage.resizeIfNeeded(
       (width * MediaQuery.devicePixelRatioOf(context)).ceil(),
       null,
-      NetworkImage(
-        key,
-        headers: uri.host.endsWith('.pximg.net')
-            ? const {'Referer': 'https://www.pixiv.net/'}
-            : null,
-      ),
+      _block.illustrationBytes != null
+          ? MemoryImage(_block.illustrationBytes!)
+          : NetworkImage(
+              key,
+              headers: uri.host.endsWith('.pximg.net')
+                  ? const {'Referer': 'https://www.pixiv.net/'}
+                  : null,
+            ),
     );
     if (_imageProvider == provider) return;
     _stopListening();

@@ -89,7 +89,7 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
       final cachedDocument = await widget.store.load(request);
       if (!mounted) return;
       if (cachedDocument != null) {
-        await _openReader(cachedDocument, order: request.order);
+        await _openReader(cachedDocument, request: request);
         return;
       }
 
@@ -120,7 +120,7 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
       );
       downloadCancellation.throwIfCancelled();
       if (!mounted) return;
-      await _openReader(saved.document, order: request.order);
+      await _openReader(saved.document, request: request);
     } on WenkuEpubDownloadCancelledException {
       // Cancellation is an expected user action, not a failed download.
     } on Object catch (error) {
@@ -144,17 +144,25 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
 
   Future<void> _openReader(
     WenkuEpubDocument document, {
-    required WenkuBilingualOrder order,
-  }) => Navigator.of(context).push<void>(
-    MaterialPageRoute(
-      builder: (_) => WenkuReaderScreen(
-        document: document,
-        title: _novel?.chineseTitle ?? widget.summary.chineseTitle,
-        order: order,
+    required WenkuEpubRequest request,
+  }) async {
+    final fileName = widget.store.fileNameForRequest(request);
+    final position = await widget.store.readingPosition(fileName);
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => WenkuReaderScreen(
+          document: document,
+          title: _novel?.chineseTitle ?? widget.summary.chineseTitle,
+          order: request.order,
+          initialPosition: position,
+          onPositionChanged: (position) =>
+              widget.store.saveReadingPosition(fileName, position),
+        ),
+        settings: RouteSettings(name: '/wenku/${widget.summary.id}/reader'),
       ),
-      settings: RouteSettings(name: '/wenku/${widget.summary.id}/reader'),
-    ),
-  );
+    );
+  }
 
   void _cancelDownload() {
     final cancellation = _downloadCancellation;

@@ -129,7 +129,7 @@ class _NoveliaReaderWindowSession {
 
   final NoveliaContentCoordinator contentCoordinator;
   final CatalogNovel novel;
-  final TranslationSource translationSource;
+  TranslationSource translationSource;
   final List<NovelChapter> chapters;
   final List<ReaderChapterCatalogEntry> _catalog;
   final Map<String, int> _indexById;
@@ -137,6 +137,7 @@ class _NoveliaReaderWindowSession {
   final Map<String, Future<NovelChapter?>> _loading =
       <String, Future<NovelChapter?>>{};
   final Set<String> _refreshing = <String>{};
+  final Set<String> _downloaded = <String>{};
   final Set<String> _unavailable = <String>{};
   int _prefetchGeneration = 0;
 
@@ -154,7 +155,24 @@ class _NoveliaReaderWindowSession {
     catalog: _catalog,
     loadAround: loadAround,
     loadAdjacent: loadAdjacent,
+    onTranslationSourceChanged: _selectTranslationSource,
   );
+
+  void _selectTranslationSource(TranslationSource source) {
+    if (source == translationSource) return;
+    translationSource = source;
+    _prefetchGeneration++;
+    final loadedIds = _loaded.keys.toList();
+    _loaded.clear();
+    _downloaded.clear();
+    _unavailable.clear();
+    for (final id in loadedIds) {
+      final cached = _readCached(chapters[_indexById[id]!]);
+      if (cached == null) continue;
+      _remember(cached);
+      dataSource.notifyChapterUpdated(cached);
+    }
+  }
 
   Future<ReaderChapterWindow> loadAround(String chapterId) async {
     final targetIndex = _indexById[chapterId];
@@ -293,11 +311,13 @@ class _NoveliaReaderWindowSession {
       return cached;
     }
 
+    final source = translationSource;
     final response = await contentCoordinator.loadChapter(
       novel,
       chapterId: metadata.id,
-      cacheTranslationSource: translationSource,
+      cacheTranslationSource: source,
     );
+    if (source != translationSource) return _loadRequiredOnce(index);
     final loaded = response.data;
     if (loaded != null && loaded.id == metadata.id) {
       _remember(loaded);
@@ -365,7 +385,22 @@ class _NoveliaReaderWindowSession {
     return cached;
   }
 
+  NovelChapter? _readDownloaded(NovelChapter metadata) {
+    final coordinator = contentCoordinator;
+    if (coordinator is! NoveliaDownloadedChapterReader) return null;
+    final chapter = (coordinator as NoveliaDownloadedChapterReader)
+        .downloadedChapter(
+          novel,
+          chapterId: metadata.id,
+          translationSource: translationSource,
+        );
+    if (chapter != null) _downloaded.add(metadata.id);
+    return chapter;
+  }
+
   NovelChapter? _readCached(NovelChapter metadata) {
+    final downloaded = _readDownloaded(metadata);
+    if (downloaded != null) return downloaded;
     if (contentCoordinator is! NoveliaChapterCacheReader) return null;
     final cacheReader = contentCoordinator as NoveliaChapterCacheReader;
     final cached = cacheReader.cachedChapter(novel, chapterId: metadata.id);
@@ -373,15 +408,19 @@ class _NoveliaReaderWindowSession {
   }
 
   void _scheduleRefresh(NovelChapter metadata) {
+    // Protected snapshots are refreshed only by their download coordinator.
+    if (_downloaded.contains(metadata.id)) return;
     if (!_refreshing.add(metadata.id)) return;
+    final source = translationSource;
     unawaited(
       Future<void>(() async {
         try {
           final response = await contentCoordinator.loadChapter(
             novel,
             chapterId: metadata.id,
-            cacheTranslationSource: translationSource,
+            cacheTranslationSource: source,
           );
+          if (source != translationSource) return;
           final refreshed = response.data;
           if (refreshed != null && refreshed.id == metadata.id) {
             final previous = _loaded[metadata.id];

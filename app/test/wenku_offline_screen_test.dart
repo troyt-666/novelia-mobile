@@ -76,6 +76,10 @@ class _LocalStore extends WenkuEpubStore {
   int openCalls = 0;
 
   @override
+  Future<WenkuReadingPosition?> readingPosition(String fileName) async =>
+      const WenkuReadingPosition(spineIndex: 0, fraction: .5);
+
+  @override
   Future<List<WenkuDownloadedEpub>> listDownloads() async => const [
     WenkuDownloadedEpub(
       fileName: 'fixture.epub',

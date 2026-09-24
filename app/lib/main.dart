@@ -504,6 +504,19 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   Future<CatalogNovel> _loadNovelDetails(CatalogNovel outline) async {
+    // A saved book's catalog must open even if the website request never ends.
+    if (_library.novelIds.contains(outline.id)) {
+      final local = _repository.novelDetail(outline.id);
+      if (local != null) {
+        // Keep new chapters discoverable when online, without delaying local
+        // navigation or replacing the protected chapter snapshots.
+        unawaited(_refreshSavedDetails(outline));
+        return const NoveliaContentCacheAdapter().restoreDetails(
+          local,
+          allowRestricted: true,
+        );
+      }
+    }
     final result = await widget.contentCoordinator.loadDetails(outline);
     final loaded = result.data;
     if (loaded == null) {
@@ -516,6 +529,15 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       _feeds.rememberDetails(loaded);
     }
     return loaded;
+  }
+
+  Future<void> _refreshSavedDetails(CatalogNovel outline) async {
+    try {
+      final result = await widget.contentCoordinator.loadDetails(outline);
+      if (mounted && result.data != null) _feeds.rememberDetails(result.data!);
+    } on Object {
+      // The reader already has a usable local catalog.
+    }
   }
 
   Future<ReaderLaunchData> _loadReaderWindow(
@@ -867,12 +889,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         .firstOrNull;
   }
 
-  LocalLibrarySnapshot _loadLibrarySnapshot() => LocalLibrarySnapshot.load(
-    _repository,
-    knownNovels: _catalogNovels,
-    allowRestricted:
-        widget.accountSessionController?.snapshot.isSignedIn == true,
-  );
+  LocalLibrarySnapshot _loadLibrarySnapshot() =>
+      LocalLibrarySnapshot.load(_repository, knownNovels: _catalogNovels);
 
   void _refreshLibrary() {
     if (!mounted) return;
@@ -903,6 +921,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           // Replacing the shell then would invalidate that route's callbacks.
           if (!_hasMountedShell &&
               _initialReaderNovelId != null &&
+              !_library.continuedReads.any(
+                (row) => row.novel.id == _initialReaderNovelId,
+              ) &&
+              !_library.downloads.any(
+                (row) => row.novel.id == _initialReaderNovelId,
+              ) &&
               _feeds.catalog.loading &&
               !_catalogNovels.any(
                 (novel) => novel.id == _initialReaderNovelId,

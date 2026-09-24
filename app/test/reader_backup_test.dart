@@ -163,11 +163,7 @@ void main() {
       expect(incoming.listCachedNovels(), isEmpty);
       local.mergeBackup(local.previewBackup(backup));
       expect(
-        LocalLibrarySnapshot.load(
-          local,
-          knownNovels: [],
-          allowRestricted: false,
-        ).continuedReads,
+        LocalLibrarySnapshot.load(local, knownNovels: []).continuedReads,
         hasLength(1),
       );
     },

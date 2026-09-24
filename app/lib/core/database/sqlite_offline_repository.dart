@@ -506,6 +506,19 @@ final class SqliteOfflineRepository
   }
 
   @override
+  Set<String> payloadIdsMissingIllustrations({String? novelId}) {
+    _checkOpen();
+    return {
+      for (final row in _database.select(
+        'SELECT payload_id FROM cached_chapter_payloads WHERE illustrations_complete = 0 '
+        '${novelId == null ? '' : 'AND novel_id = ?'};',
+        novelId == null ? const [] : [novelId],
+      ))
+        row['payload_id'] as String,
+    };
+  }
+
+  @override
   CachedNovelDetail? novelDetail(String novelId) {
     _checkOpen();
     final rows = _database.select('SELECT * FROM cached_novels WHERE id = ?;', [
@@ -545,6 +558,41 @@ final class SqliteOfflineRepository
         ),
       );
     }
+    // A remote TOC can remove a chapter after it was downloaded. Keep a local
+    // entry from the retained payload header, without decoding text or images.
+    final known = {
+      for (final section in sections)
+        for (final chapter in section.chapters) chapter.id,
+    };
+    final retained = <CachedTocChapter>[];
+    for (final saved in _database.select(
+      'SELECT p.chapter_id, p.chapter_index, p.chinese_title, p.japanese_title, '
+      'p.published_at_us FROM cached_chapter_payloads p '
+      'WHERE p.novel_id = ? AND EXISTS (SELECT 1 FROM offline_chapter_copies c '
+      'WHERE c.payload_id = p.payload_id) ORDER BY p.chapter_index, p.fetched_at_us DESC;',
+      [novelId],
+    )) {
+      final id = _string(saved['chapter_id']);
+      if (!known.add(id)) continue;
+      retained.add(
+        CachedTocChapter(
+          id: id,
+          index: _int(saved['chapter_index']),
+          chineseTitle: _string(saved['chinese_title']),
+          japaneseTitle: _string(saved['japanese_title']),
+          publishedAt: _nullableDateTime(saved['published_at_us']),
+        ),
+      );
+    }
+    if (retained.isNotEmpty) {
+      sections.add(
+        CachedTocSection(
+          id: 'local-retained',
+          title: '本地保存章节',
+          chapters: retained,
+        ),
+      );
+    }
     return CachedNovelDetail(
       outline: _outlineFromRow(row),
       synopsis: _string(row['synopsis']),
@@ -574,6 +622,45 @@ final class SqliteOfflineRepository
   CachedChapterPayload? chapterPayloadById(String payloadId) {
     _checkOpen();
     return _payloadById(payloadId);
+  }
+
+  /// Shelf progress needs the text length, not megabytes of illustration data.
+  int chapterBlockCount(String novelId, String chapterId) {
+    _checkOpen();
+    final rows = _database.select(
+      'SELECT japanese_blocks_json FROM cached_chapter_payloads '
+      'WHERE novel_id = ? AND chapter_id = ? '
+      'ORDER BY fetched_at_us DESC, payload_id DESC LIMIT 1;',
+      [novelId, chapterId],
+    );
+    return rows.isEmpty
+        ? 0
+        : _decodeStringList(
+            rows.single['japanese_blocks_json'],
+            'japanese_blocks_json',
+          ).length;
+  }
+
+  @override
+  CachedChapterPayload? downloadedChapterPayload({
+    required String novelId,
+    required String chapterId,
+    required TranslationSource translationSource,
+  }) {
+    _checkOpen();
+    final rows = _database.select(
+      'SELECT p.* FROM offline_chapter_copies c '
+      'JOIN cached_chapter_payloads p ON p.payload_id = c.payload_id '
+      'WHERE c.novel_id = ? AND c.chapter_id = ? AND c.translation_source = ? '
+      'AND c.copy_kind = ? ORDER BY c.stored_at_us DESC, c.id DESC LIMIT 1;',
+      [
+        novelId,
+        chapterId,
+        translationSource.name,
+        OfflineCopyKind.offlineDownload.name,
+      ],
+    );
+    return rows.isEmpty ? null : _payloadFromRow(rows.single);
   }
 
   @override
@@ -1322,8 +1409,8 @@ final class SqliteOfflineRepository
         payload_id, novel_id, chapter_id, chapter_index, chinese_title,
         japanese_title, previous_chapter_id, next_chapter_id, published_at_us,
         japanese_blocks_json, translations_json, fetched_at_us,
-        chapter_revision, etag
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        chapter_revision, etag, illustrations_json, illustrations_complete
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(payload_id) DO UPDATE SET
         novel_id = excluded.novel_id,
         chapter_id = excluded.chapter_id,
@@ -1337,7 +1424,9 @@ final class SqliteOfflineRepository
         translations_json = excluded.translations_json,
         fetched_at_us = excluded.fetched_at_us,
         chapter_revision = excluded.chapter_revision,
-        etag = excluded.etag;
+        etag = excluded.etag,
+        illustrations_json = excluded.illustrations_json,
+        illustrations_complete = excluded.illustrations_complete;
       ''',
       [
         payload.id,
@@ -1354,6 +1443,19 @@ final class SqliteOfflineRepository
         _timestamp(payload.fetchedAt),
         payload.revision,
         payload.etag,
+        jsonEncode({
+          for (final entry in {
+            ...?existing?.illustrations,
+            ...payload.illustrations,
+          }.entries)
+            entry.key: base64Encode(entry.value),
+        }),
+        payload.withIllustrations({
+              ...?existing?.illustrations,
+              ...payload.illustrations,
+            }).illustrationsComplete
+            ? 1
+            : 0,
       ],
     );
   }
@@ -1385,6 +1487,13 @@ final class SqliteOfflineRepository
       fetchedAt: _dateTime(row['fetched_at_us']),
       revision: row['chapter_revision'] as String?,
       etag: row['etag'] as String?,
+      illustrations: {
+        for (final entry
+            in (jsonDecode(_string(row['illustrations_json']))
+                    as Map<String, dynamic>)
+                .entries)
+          entry.key: base64Decode(entry.value as String),
+      },
     );
   }
 

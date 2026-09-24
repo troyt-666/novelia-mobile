@@ -1,3 +1,4 @@
+import '../model/reader_models.dart';
 import 'content_models.dart';
 import 'offline_models.dart';
 
@@ -14,6 +15,16 @@ abstract interface class ContentRepository {
 
   /// Resolves the exact revision referenced by an Offline Chapter Copy.
   CachedChapterPayload? chapterPayloadById(String payloadId);
+
+  /// The retained snapshot for the selected translation, never a newer cache.
+  CachedChapterPayload? downloadedChapterPayload({
+    required String novelId,
+    required String chapterId,
+    required TranslationSource translationSource,
+  });
+
+  /// IDs only: listing a shelf must not decode all stored text or image bytes.
+  Set<String> payloadIdsMissingIllustrations({String? novelId});
 
   void upsertNovelOutline(CachedNovelOutline outline);
 

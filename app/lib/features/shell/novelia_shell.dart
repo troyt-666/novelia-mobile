@@ -183,9 +183,12 @@ class _NoveliaShellState extends State<NoveliaShell> {
     super.initState();
     final initialNovelId = widget.initialReaderNovelId;
     if (initialNovelId == null) return;
-    final initialNovel = _catalogNovels
-        .where((novel) => novel.id == initialNovelId)
-        .firstOrNull;
+    final initialNovel = [
+      for (final row in widget.continuedReads) row.novel,
+      for (final row in widget.protectedDownloads) row.novel,
+      for (final row in widget.bookmarks) row.novel,
+      ..._catalogNovels,
+    ].where((novel) => novel.id == initialNovelId).firstOrNull;
     if (initialNovel == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) widget.onReaderClosed?.call();

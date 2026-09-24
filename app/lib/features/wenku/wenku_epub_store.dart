@@ -13,6 +13,15 @@ import 'wenku_epub_document.dart';
 
 typedef WenkuEpubRootDirectory = Future<Directory> Function();
 
+class WenkuReadingPosition {
+  const WenkuReadingPosition({
+    required this.spineIndex,
+    required this.fraction,
+  });
+  final int spineIndex;
+  final double fraction;
+}
+
 class WenkuDownloadedEpub {
   const WenkuDownloadedEpub({
     required this.fileName,
@@ -32,6 +41,53 @@ class WenkuEpubStore {
   const WenkuEpubStore({this.rootDirectory});
 
   final WenkuEpubRootDirectory? rootDirectory;
+
+  Future<WenkuReadingPosition?> readingPosition(String fileName) async {
+    try {
+      final file = await _positionFile(fileName);
+      final value =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final spine = value['spineIndex'] as int;
+      final fraction = (value['fraction'] as num).toDouble();
+      if (spine < 0 || !fraction.isFinite || fraction < 0 || fraction > 1) {
+        return null;
+      }
+      return WenkuReadingPosition(spineIndex: spine, fraction: fraction);
+    } on Object {
+      // Missing or damaged progress must not prevent opening a local book.
+      return null;
+    }
+  }
+
+  Future<void> saveReadingPosition(
+    String fileName,
+    WenkuReadingPosition position,
+  ) async {
+    if (position.spineIndex < 0 ||
+        !position.fraction.isFinite ||
+        position.fraction < 0 ||
+        position.fraction > 1) {
+      throw ArgumentError('Invalid EPUB reading position.');
+    }
+    final file = await _positionFile(fileName);
+    await file.parent.create(recursive: true);
+    final temporary = File('${file.path}.part');
+    await temporary.writeAsString(
+      jsonEncode({
+        'spineIndex': position.spineIndex,
+        'fraction': position.fraction,
+      }),
+      flush: true,
+    );
+    await temporary.rename(file.path);
+  }
+
+  Future<File> _positionFile(String fileName) async {
+    if (p.basename(fileName) != fileName || p.extension(fileName) != '.epub') {
+      throw ArgumentError('Invalid EPUB filename.');
+    }
+    return File(p.join((await _directory()).path, '$fileName.position.json'));
+  }
 
   Future<Directory> _directory() async {
     final root =
@@ -168,6 +224,10 @@ class WenkuEpubStore {
   }) async {
     final directory = await _directory();
     if (createDirectory) await directory.create(recursive: true);
+    return File(p.join(directory.path, fileNameForRequest(request)));
+  }
+
+  String fileNameForRequest(WenkuEpubRequest request) {
     final identity = [
       request.novelId,
       request.volumeId,
@@ -178,8 +238,7 @@ class WenkuEpubStore {
         .convert(identity.codeUnits)
         .toString()
         .substring(0, 20);
-    final target = File(p.join(directory.path, '$digest.epub'));
-    return target;
+    return '$digest.epub';
   }
 
   static WenkuEpubDocument _parseEpub(Uint8List bytes) {

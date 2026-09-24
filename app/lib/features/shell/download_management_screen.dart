@@ -451,6 +451,7 @@ class _ManagedDownloadCard extends StatelessWidget {
     }
     return switch (failure.kind) {
       DownloadFailureKind.network => '网络不可用，可重试',
+      DownloadFailureKind.illustration => '插图未下载完整，可重试',
       DownloadFailureKind.validation => '内容校验失败',
       DownloadFailureKind.unavailable => '来源内容不可用',
       DownloadFailureKind.schema => '内容格式暂不兼容',

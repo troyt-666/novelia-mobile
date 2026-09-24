@@ -1363,6 +1363,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     bool notify = true,
   }) async {
     final layoutChanged = settings.layoutMode != _settings.layoutMode;
+    final sourceChanged =
+        settings.translationSource != _settings.translationSource;
     final reflow =
         layoutChanged ||
         _textLayoutKey(settings) != _textLayoutKey(_settings) ||
@@ -1423,6 +1425,11 @@ class _ReaderScreenState extends State<ReaderScreen>
     }
     if (notify) widget.onSettingsChanged?.call(settings);
     if (restoration != null) await restoration;
+    if (sourceChanged && mounted) {
+      widget.chapterDataSource?.onTranslationSourceChanged?.call(
+        settings.translationSource,
+      );
+    }
   }
 
   // The same geometry inputs govern reflow and the measured page cache.

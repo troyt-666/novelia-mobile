@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../model/reader_models.dart';
 
 enum CachedNovelState { ongoing, completed, shortStory, unknown }
@@ -191,7 +193,9 @@ class CachedChapterPayload {
     required this.fetchedAt,
     this.revision,
     this.etag,
+    Map<String, Uint8List> illustrations = const {},
   }) : japaneseBlocks = List.unmodifiable(japaneseBlocks),
+       illustrations = Map.unmodifiable(illustrations),
        translations = Map.unmodifiable(translations) {
     if (id.isEmpty || novelId.isEmpty || chapterId.isEmpty) {
       throw ArgumentError('Payload, novel, and chapter IDs must be non-empty.');
@@ -219,9 +223,41 @@ class CachedChapterPayload {
   final DateTime? publishedAt;
   final List<String> japaneseBlocks;
   final Map<TranslationSource, CachedChapterTranslation> translations;
+  final Map<String, Uint8List> illustrations;
   final DateTime fetchedAt;
   final String? revision;
   final String? etag;
+
+  Set<Uri> get illustrationUris => {
+    for (final block in japaneseBlocks)
+      ?AlignedBlock.parseIllustrationUri(block),
+  };
+
+  bool get illustrationsComplete => illustrationUris.every(
+    (uri) => illustrations[uri.toString()]?.isNotEmpty == true,
+  );
+
+  int get illustrationBytes =>
+      illustrations.values.fold(0, (sum, bytes) => sum + bytes.length);
+
+  CachedChapterPayload withIllustrations(Map<String, Uint8List> images) =>
+      CachedChapterPayload(
+        id: id,
+        novelId: novelId,
+        chapterId: chapterId,
+        index: index,
+        chineseTitle: chineseTitle,
+        japaneseTitle: japaneseTitle,
+        previousChapterId: previousChapterId,
+        nextChapterId: nextChapterId,
+        publishedAt: publishedAt,
+        japaneseBlocks: japaneseBlocks,
+        translations: translations,
+        fetchedAt: fetchedAt,
+        revision: revision,
+        etag: etag,
+        illustrations: images,
+      );
 
   CachedChapterTranslation? translationFor(TranslationSource source) {
     return translations[source];

@@ -120,7 +120,8 @@ class NoveliaContentCacheAdapter {
       chapterId: payload.chapterId,
       kind: OfflineCopyKind.cacheCopy,
       translationSource: translationSource,
-      originalBytes: _utf8Length(payload.japaneseBlocks),
+      originalBytes:
+          _utf8Length(payload.japaneseBlocks) + payload.illustrationBytes,
       translationBytes:
           translation?.availability == TranslationAvailability.complete
           ? _utf8Length(translation!.blocks)
@@ -155,7 +156,8 @@ class NoveliaContentCacheAdapter {
       chapterId: payload.chapterId,
       kind: OfflineCopyKind.offlineDownload,
       translationSource: task.translationSource,
-      originalBytes: _utf8Length(payload.japaneseBlocks),
+      originalBytes:
+          _utf8Length(payload.japaneseBlocks) + payload.illustrationBytes,
       translationBytes:
           translation.availability == TranslationAvailability.complete
           ? _utf8Length(translation.blocks)
@@ -189,7 +191,8 @@ class NoveliaContentCacheAdapter {
       chapterId: existingCopy.chapterId,
       kind: existingCopy.kind,
       translationSource: existingCopy.translationSource,
-      originalBytes: _utf8Length(payload.japaneseBlocks),
+      originalBytes:
+          _utf8Length(payload.japaneseBlocks) + payload.illustrationBytes,
       translationBytes:
           translation.availability == TranslationAvailability.complete
           ? _utf8Length(translation.blocks)
@@ -346,6 +349,10 @@ class NoveliaContentCacheAdapter {
             ordinal: ordinal,
             japanese: payload.japaneseBlocks[ordinal],
             kind: _kindFor(payload.japaneseBlocks[ordinal]),
+            illustrationBytes:
+                payload.illustrations[AlignedBlock.parseIllustrationUri(
+                  payload.japaneseBlocks[ordinal],
+                )?.toString()],
             translations: {
               for (final source in TranslationSource.values)
                 if (states[source] == TranslationState.complete)

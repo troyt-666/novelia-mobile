@@ -2,9 +2,9 @@ import '../../core/offline/content_models.dart';
 import '../../core/offline/content_repository.dart';
 import 'novelia_domain_adapter.dart';
 
-/// Marks retained download metadata before evicting expendable restricted data.
-/// Reading and download paths use the same cleanup; protected copies survive.
-void revokeRestrictedNovelCache(
+/// Retains a classification for online discovery without changing local access.
+/// A service access change is never a request to delete device-local content.
+void markRestrictedNovelForDiscovery(
   ContentRepository repository, {
   required String novelId,
   required DateTime checkedAt,
@@ -35,8 +35,7 @@ void revokeRestrictedNovelCache(
         ),
       );
     }
-    repository.removeCachedNovel(novelId);
   } on Object {
-    // Cleanup is best-effort; the caller still denies the current operation.
+    // Metadata retention is best-effort; live access checks remain in force.
   }
 }

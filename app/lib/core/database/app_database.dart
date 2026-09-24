@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 8;
+  static const int currentSchemaVersion = 9;
   static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -113,6 +113,23 @@ final class NoveliaDatabase {
           'INTEGER NOT NULL DEFAULT 0 CHECK (one_handed_mode IN (0, 1));',
         );
         database.userVersion = 8;
+      });
+    }
+    if (database.userVersion == 8) {
+      _transaction(database, () {
+        database.execute(
+          "ALTER TABLE cached_chapter_payloads ADD COLUMN illustrations_json TEXT NOT NULL DEFAULT '{}';",
+        );
+        database.execute(
+          'ALTER TABLE cached_chapter_payloads ADD COLUMN illustrations_complete INTEGER NOT NULL DEFAULT 0 CHECK (illustrations_complete IN (0, 1));',
+        );
+        database.execute(
+          "UPDATE cached_chapter_payloads SET illustrations_complete = 1 WHERE instr(japanese_blocks_json, '<图片>') = 0;",
+        );
+        database.execute(
+          'CREATE INDEX missing_illustrations_idx ON cached_chapter_payloads (novel_id) WHERE illustrations_complete = 0;',
+        );
+        database.userVersion = 9;
       });
     }
   }

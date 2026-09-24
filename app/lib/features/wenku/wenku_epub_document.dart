@@ -720,8 +720,17 @@ String _readerScript({required bool? japaneseFirst}) {
     });
   };
   const fontReady = Promise.resolve(document.fonts?.ready).catch(() => {});
+  // A native WebView can load before its window becomes visible. Animation
+  // frames are suspended there, but local reading must still become ready.
+  const afterLayout = () => new Promise(resolve => {
+    const fallback = setTimeout(resolve, 100);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      clearTimeout(fallback);
+      resolve();
+    }));
+  });
   Promise.all([fontReady, ...Array.from(document.images, imageReady)])
-    .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    .then(afterLayout)
     .then(() => {
       normalizePageExtent();
       layoutReady = true;
@@ -736,13 +745,13 @@ String _readerScript({required bool? japaneseFirst}) {
     clearPageExtent();
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
+      afterLayout().then(() => {
         normalizePageExtent();
         logicalPage = Math.floor(progression * lastPageIndex());
         layoutReady = true;
         moveToPage(logicalPage, false);
         report();
-      }));
+      });
     }, 100);
   }, {passive: true});
   let pointerStart = null;

@@ -21,7 +21,7 @@ class ReaderBackup {
        );
 
   static const format = 'jfz-reader-backup';
-  static const version = 1;
+  static const version = 2;
   static const maxBytes = 128 * 1024 * 1024;
   static const tableNames = [
     'cached_novels',
@@ -88,7 +88,7 @@ class ReaderBackup {
       if (map['format'] != format) {
         throw const BackupException('这不是 JFZ Reader 备份文件。');
       }
-      if (map['version'] != version) {
+      if (map['version'] != 1 && map['version'] != version) {
         throw const BackupException('此备份版本暂不支持，请更新应用后再导入。');
       }
       final createdAt = DateTime.parse(map['createdAt'] as String);

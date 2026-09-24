@@ -9,6 +9,7 @@ import 'novelia_content_access.dart';
 import 'novelia_content_coordinator.dart';
 import 'novelia_domain_adapter.dart';
 import 'novelia_gateway.dart';
+import 'novelia_illustration_loader.dart';
 
 class NoveliaDownloadRun {
   const NoveliaDownloadRun({
@@ -56,6 +57,7 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     NoveliaClock? clock,
     this.maximumStoredRefreshesPerRun = 20,
     this.canAccessRestrictedContent,
+    this.illustrationLoader = const HttpNoveliaIllustrationLoader(),
   }) : cacheAdapter =
            cacheAdapter ??
            NoveliaContentCacheAdapter(domainAdapter: domainAdapter),
@@ -73,6 +75,7 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
   final NoveliaClock clock;
   final int maximumStoredRefreshesPerRun;
   final NoveliaRestrictedContentAccess? canAccessRestrictedContent;
+  final NoveliaIllustrationLoader illustrationLoader;
   final Map<String, String> _storedRefreshCursorByIntent = <String, String>{};
 
   bool get _allowsRestrictedContent =>
@@ -84,6 +87,9 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     if (intent == null) {
       throw StateError('Unknown Novelia download intent $intentId.');
     }
+    // Old text-only downloads already contain the image URLs. Repair them
+    // without refetching chapter text or depending on catalog/account access.
+    await _repairStoredIllustrations(intentId);
     if (!_allowsRestrictedContent && _hasRestrictedMarker(intent.novelId)) {
       return _runResult(
         intentId: intentId,
@@ -197,6 +203,79 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
     }
   }
 
+  Future<CachedChapterPayload> _withIllustrations(
+    CachedChapterPayload payload, {
+    CachedChapterPayload? previous,
+    bool Function()? shouldContinue,
+  }) async {
+    final images = {...payload.illustrations};
+    for (final uri in payload.illustrationUris) {
+      if (shouldContinue?.call() == false) {
+        throw StateError('Download stopped.');
+      }
+      final key = uri.toString();
+      final retained = previous?.illustrations[key];
+      if (images[key]?.isNotEmpty != true) {
+        images[key] = retained?.isNotEmpty == true
+            ? retained!
+            : await illustrationLoader.load(uri);
+      }
+      if (images[key]!.isEmpty) {
+        throw const NoveliaGatewayException(
+          NoveliaGatewayFailureKind.network,
+          'Illustration download was empty.',
+        );
+      }
+    }
+    return payload.withIllustrations(images);
+  }
+
+  Future<void> _repairStoredIllustrations(String intentId) async {
+    final intent = offlineRepository.intentById(intentId);
+    if (intent == null || !intent.enabled) return;
+    final missing = contentRepository.payloadIdsMissingIllustrations(
+      novelId: intent.novelId,
+    );
+    if (missing.isEmpty) return;
+    for (final task in offlineRepository.listTasks(intentId: intentId)) {
+      if (offlineRepository.intentById(intentId)?.enabled != true) return;
+      if (task.state != DownloadTaskState.stored || task.storedCopyId == null) {
+        continue;
+      }
+      final copy = offlineRepository.copyById(task.storedCopyId!);
+      if (copy == null || !missing.contains(copy.payloadId)) continue;
+      final payload = contentRepository.chapterPayloadById(copy.payloadId!);
+      if (payload == null) continue;
+      try {
+        final repaired = await _withIllustrations(
+          payload,
+          shouldContinue: () =>
+              offlineRepository.intentById(intentId)?.enabled == true &&
+              offlineRepository.copyById(copy.id) != null,
+        );
+        final current = offlineRepository.copyById(copy.id);
+        if (offlineRepository.intentById(intentId)?.enabled != true ||
+            current == null ||
+            current.payloadId != copy.payloadId) {
+          return;
+        }
+        contentRepository.refreshDownloadedChapter(
+          taskId: task.id,
+          payload: repaired,
+          copy: cacheAdapter.refreshedDownloadedCopy(
+            repaired,
+            existingCopy: current,
+            refreshedAt: current.storedAt,
+          ),
+        );
+      } on Object {
+        // Retain the readable text and missing-image marker for the next retry.
+        // Avoid retrying every chapter against an unavailable image host.
+        return;
+      }
+    }
+  }
+
   List<_StoredRefreshCandidate> _rotatingRefreshBatch(String intentId) {
     final candidates = _refreshCandidates(intentId).toList()
       ..sort((a, b) => a.task.id.compareTo(b.task.id));
@@ -254,14 +333,30 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
 
     try {
       final refreshedAt = clock();
-      final payload = cacheAdapter.cacheChapter(
-        response,
-        metadata: metadata,
-        fetchedAt: refreshedAt,
+      final payload = await _withIllustrations(
+        cacheAdapter.cacheChapter(
+          response,
+          metadata: metadata,
+          fetchedAt: refreshedAt,
+        ),
+        previous: contentRepository.chapterPayloadById(
+          candidate.copy.payloadId!,
+        ),
+        shouldContinue: () =>
+            offlineRepository.intentById(candidate.task.intentId)?.enabled ==
+                true &&
+            offlineRepository.copyById(candidate.copy.id) != null,
       );
+      final currentCopy = offlineRepository.copyById(candidate.copy.id);
+      if (offlineRepository.intentById(candidate.task.intentId)?.enabled !=
+              true ||
+          currentCopy == null ||
+          currentCopy.payloadId != candidate.copy.payloadId) {
+        return false;
+      }
       final copy = cacheAdapter.refreshedDownloadedCopy(
         payload,
-        existingCopy: candidate.copy,
+        existingCopy: currentCopy,
         refreshedAt: refreshedAt,
       );
       contentRepository.refreshDownloadedChapter(
@@ -313,7 +408,7 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
         novel: novel,
       );
     } on NoveliaRestrictedContentException {
-      revokeRestrictedNovelCache(
+      markRestrictedNovelForDiscovery(
         contentRepository,
         novelId: novelId,
         checkedAt: clock(),
@@ -401,8 +496,6 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
 
     task = _reloadTask(taskId, DownloadTaskState.fetching);
     if (task == null) return;
-    task = task.beginValidation(clock());
-    if (!_trySaveTask(task)) return;
 
     if (response.key != key || response.chapterId != task.chapterId) {
       _saveFailure(
@@ -449,6 +542,31 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
       );
       return;
     }
+
+    try {
+      payload = await _withIllustrations(
+        payload,
+        shouldContinue: () =>
+            _reloadTask(taskId, DownloadTaskState.fetching) != null,
+      );
+    } on Object {
+      final current = _reloadTask(taskId, DownloadTaskState.fetching);
+      if (current != null) {
+        _saveFailure(
+          current,
+          const DownloadFailure(
+            kind: DownloadFailureKind.illustration,
+            message: '插图下载失败，请联网后重试。',
+            retryable: true,
+          ),
+        );
+      }
+      return;
+    }
+    task = _reloadTask(taskId, DownloadTaskState.fetching);
+    if (task == null) return;
+    task = task.beginValidation(clock());
+    if (!_trySaveTask(task)) return;
 
     // Pending is valid offline data: the protected copy contains the exact
     // Japanese blocks and a null translation byte count.

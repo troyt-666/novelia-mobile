@@ -22,6 +22,7 @@ enum DownloadTaskState {
 
 enum DownloadFailureKind {
   network,
+  illustration,
   validation,
   insufficientStorage,
   unavailable,

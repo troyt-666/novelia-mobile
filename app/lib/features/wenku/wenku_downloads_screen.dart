@@ -67,6 +67,7 @@ class _WenkuDownloadsScreenState extends State<WenkuDownloadsScreen> {
     setState(() => _opening = download.fileName);
     try {
       final document = await widget.store.openDownload(download);
+      final position = await widget.store.readingPosition(download.fileName);
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
@@ -74,6 +75,9 @@ class _WenkuDownloadsScreenState extends State<WenkuDownloadsScreen> {
             document: document,
             title: download.title,
             order: download.order,
+            initialPosition: position,
+            onPositionChanged: (position) =>
+                widget.store.saveReadingPosition(download.fileName, position),
           ),
           settings: RouteSettings(
             name: '/wenku/downloads/${download.fileName}',

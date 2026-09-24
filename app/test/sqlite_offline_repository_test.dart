@@ -641,6 +641,22 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
 
 void _createVersion5SettingsFixture(Database database, DateTime now) {
   database.execute('''
+    CREATE TABLE cached_chapter_payloads (
+      payload_id TEXT NOT NULL PRIMARY KEY,
+      novel_id TEXT NOT NULL,
+      chapter_id TEXT NOT NULL,
+      chapter_index INTEGER NOT NULL,
+      chinese_title TEXT NOT NULL,
+      japanese_title TEXT NOT NULL,
+      previous_chapter_id TEXT,
+      next_chapter_id TEXT,
+      published_at_us INTEGER,
+      japanese_blocks_json TEXT NOT NULL,
+      translations_json TEXT NOT NULL,
+      fetched_at_us INTEGER NOT NULL,
+      chapter_revision TEXT,
+      etag TEXT
+    );
     CREATE TABLE app_settings (
       singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
       reading_mode TEXT NOT NULL,

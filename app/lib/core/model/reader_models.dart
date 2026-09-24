@@ -129,6 +129,7 @@ class AlignedBlock {
     required this.japanese,
     required this.translations,
     this.kind = AlignedBlockKind.paragraph,
+    this.illustrationBytes,
   });
 
   final String id;
@@ -136,16 +137,23 @@ class AlignedBlock {
   final String japanese;
   final Map<TranslationSource, String> translations;
   final AlignedBlockKind kind;
+  final Uint8List? illustrationBytes;
 
   /// The service normalizes provider-specific illustration markup to
   /// `<图片>https://…`. Keep the transport marker out of presentation code and
   /// reject non-Web schemes before handing the URI to an image widget.
   Uri? get illustrationUri {
     if (kind != AlignedBlockKind.illustration) return null;
-    final value = japanese.trimLeft();
+    return parseIllustrationUri(japanese);
+  }
+
+  static Uri? parseIllustrationUri(String text) {
+    final value = text.trimLeft();
     if (!value.startsWith(illustrationPrefix)) return null;
     final uri = Uri.tryParse(value.substring(illustrationPrefix.length).trim());
-    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+    if (uri == null ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
       return null;
     }
     return uri;
@@ -295,6 +303,7 @@ class ReaderChapterDataSource {
     required List<ReaderChapterCatalogEntry> catalog,
     required this.loadAround,
     required this.loadAdjacent,
+    this.onTranslationSourceChanged,
   }) : catalog = List.unmodifiable(catalog) {
     final ids = <String>{};
     for (final chapter in this.catalog) {
@@ -311,6 +320,7 @@ class ReaderChapterDataSource {
   final List<ReaderChapterCatalogEntry> catalog;
   final ReaderLoadAround loadAround;
   final ReaderLoadAdjacent loadAdjacent;
+  final ValueChanged<TranslationSource>? onTranslationSourceChanged;
   final List<ValueChanged<NovelChapter>> _chapterUpdateListeners = [];
 
   void addChapterUpdateListener(ValueChanged<NovelChapter> listener) {
