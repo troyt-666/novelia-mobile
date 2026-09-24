@@ -208,7 +208,7 @@ class WenkuEpubDocument {
     int index, {
     required bool dark,
     required double fontSize,
-    required bool japaneseFirst,
+    required bool? japaneseFirst,
     WenkuEpubPalette palette = WenkuEpubPalette.automatic,
     double japaneseOpacity = .68,
   }) {
@@ -230,7 +230,7 @@ class WenkuEpubDocument {
     int index, {
     required bool dark,
     required double fontSize,
-    required bool japaneseFirst,
+    required bool? japaneseFirst,
     WenkuEpubPalette palette = WenkuEpubPalette.automatic,
     double japaneseOpacity = .68,
   }) {
@@ -556,8 +556,8 @@ a { color: inherit; }
 String _cssForStyleElement(String css) =>
     css.replaceAll(RegExp(r'</style', caseSensitive: false), r'<\/style');
 
-String _readerScript({required bool japaneseFirst}) {
-  final originalIsFirst = japaneseFirst ? 'true' : 'false';
+String _readerScript({required bool? japaneseFirst}) {
+  final originalIsFirst = japaneseFirst?.toString() ?? 'null';
   return '''
 <script>
 (() => {
@@ -689,6 +689,12 @@ String _readerScript({required bool japaneseFirst}) {
     sendAction(action);
   });
   document.querySelectorAll('p[style*="opacity"]').forEach(original => {
+    // Legacy downloads have no saved order. Preserve their publication layout
+    // instead of assigning the wrong neighboring paragraph as a translation.
+    if (originalIsFirst === null) {
+      original.classList.add('wenku-jp');
+      return;
+    }
     original.classList.add('wenku-jp', originalIsFirst ? 'wenku-pair-first' : 'wenku-pair-second');
     const translation = originalIsFirst ? original.nextElementSibling : original.previousElementSibling;
     if (translation?.tagName === 'P') {

@@ -27,7 +27,7 @@ class WenkuReaderScreen extends StatefulWidget {
 
   final WenkuEpubDocument document;
   final String title;
-  final WenkuBilingualOrder order;
+  final WenkuBilingualOrder? order;
 
   @override
   State<WenkuReaderScreen> createState() => _WenkuReaderScreenState();
@@ -195,7 +195,9 @@ class _WenkuReaderScreenState extends State<WenkuReaderScreen> {
         _spineIndex,
         dark: Theme.of(context).brightness == Brightness.dark,
         fontSize: _fontSize,
-        japaneseFirst: widget.order == WenkuBilingualOrder.japaneseFirst,
+        japaneseFirst: widget.order == null
+            ? null
+            : widget.order == WenkuBilingualOrder.japaneseFirst,
         palette: _palette,
         japaneseOpacity: _japaneseOpacity,
       );

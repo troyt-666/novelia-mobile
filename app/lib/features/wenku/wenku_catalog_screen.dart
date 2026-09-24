@@ -5,11 +5,18 @@ import 'package:flutter/material.dart';
 import '../../gateway/novelia/novelia_gateway.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import 'wenku_details_screen.dart';
+import 'wenku_downloads_screen.dart';
+import 'wenku_epub_store.dart';
 
 class WenkuCatalogScreen extends StatefulWidget {
-  const WenkuCatalogScreen({required this.gateway, super.key});
+  const WenkuCatalogScreen({
+    required this.gateway,
+    this.store = const WenkuEpubStore(),
+    super.key,
+  });
 
   final NoveliaWenkuGateway gateway;
+  final WenkuEpubStore store;
 
   @override
   State<WenkuCatalogScreen> createState() => _WenkuCatalogScreenState();
@@ -115,8 +122,11 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
   void _open(WenkuNovelSummary novel) {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) =>
-            WenkuDetailsScreen(gateway: widget.gateway, summary: novel),
+        builder: (_) => WenkuDetailsScreen(
+          gateway: widget.gateway,
+          summary: novel,
+          store: widget.store,
+        ),
         settings: RouteSettings(name: '/wenku/${novel.id}'),
       ),
     );
@@ -135,7 +145,10 @@ class _WenkuCatalogScreenState extends State<WenkuCatalogScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('文库小说')),
+      appBar: AppBar(
+        title: const Text('文库小说'),
+        actions: [WenkuDownloadsButton(store: widget.store)],
+      ),
       body: RefreshIndicator(
         onRefresh: _load,
         child: CustomScrollView(

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -12,10 +13,115 @@ import 'wenku_epub_document.dart';
 
 typedef WenkuEpubRootDirectory = Future<Directory> Function();
 
+class WenkuDownloadedEpub {
+  const WenkuDownloadedEpub({
+    required this.fileName,
+    required this.title,
+    this.volumeId,
+    this.order,
+  });
+
+  final String fileName;
+  final String title;
+  final String? volumeId;
+  // Older downloads did not retain their language order. Keep their layout.
+  final WenkuBilingualOrder? order;
+}
+
 class WenkuEpubStore {
   const WenkuEpubStore({this.rootDirectory});
 
   final WenkuEpubRootDirectory? rootDirectory;
+
+  Future<Directory> _directory() async {
+    final root =
+        await (rootDirectory?.call() ?? getApplicationSupportDirectory());
+    return Directory(p.join(root.path, 'wenku'));
+  }
+
+  Future<List<WenkuDownloadedEpub>> listDownloads() async {
+    final directory = await _directory();
+    if (!await directory.exists()) return const [];
+    final downloads = <WenkuDownloadedEpub>[];
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File || p.extension(entity.path) != '.epub') continue;
+      try {
+        downloads.add(await _describeDownload(entity));
+      } on FileSystemException {
+        // One missing file must not hide the remaining downloads.
+      } on NoveliaGatewayException {
+        // Leave damaged files in place; only list readable EPUBs.
+      }
+    }
+    downloads.sort((a, b) {
+      final title = a.title.compareTo(b.title);
+      return title != 0 ? title : a.fileName.compareTo(b.fileName);
+    });
+    return downloads;
+  }
+
+  Future<WenkuDownloadedEpub> _describeDownload(File file) async {
+    final fileName = p.basename(file.path);
+    try {
+      final metadata = jsonDecode(
+        await File('${file.path}.json').readAsString(),
+      );
+      if (metadata is Map<String, dynamic> &&
+          metadata['title'] is String &&
+          (metadata['volumeId'] == null || metadata['volumeId'] is String)) {
+        return WenkuDownloadedEpub(
+          fileName: fileName,
+          title: metadata['title'] as String,
+          volumeId: metadata['volumeId'] as String?,
+          order: WenkuBilingualOrder.values
+              .where((order) => order.name == metadata['order'])
+              .firstOrNull,
+        );
+      }
+    } on FileSystemException {
+      // Existing installations have EPUBs without a download index.
+    } on FormatException {
+      // Recover a damaged index from the EPUB itself.
+    }
+    final bytes = await file.readAsBytes();
+    final document = await Isolate.run(() => _parseEpub(bytes));
+    final download = WenkuDownloadedEpub(
+      fileName: fileName,
+      title: document.title,
+    );
+    try {
+      await _writeMetadata(file, download);
+    } on FileSystemException {
+      // Indexing is optional: a readable old download stays accessible.
+    }
+    return download;
+  }
+
+  Future<WenkuEpubDocument> openDownload(WenkuDownloadedEpub download) async {
+    if (p.basename(download.fileName) != download.fileName ||
+        p.extension(download.fileName) != '.epub') {
+      throw const FormatException('Invalid local EPUB name.');
+    }
+    final directory = await _directory();
+    final bytes = await File(
+      p.join(directory.path, download.fileName),
+    ).readAsBytes();
+    return Isolate.run(() => _parseEpub(bytes));
+  }
+
+  Future<void> _writeMetadata(File file, WenkuDownloadedEpub download) async {
+    final metadata = File('${file.path}.json');
+    final temporary = File('${metadata.path}.part');
+    await temporary.writeAsString(
+      jsonEncode({
+        'title': download.title,
+        'volumeId': download.volumeId,
+        'order': download.order?.name,
+      }),
+      flush: true,
+    );
+    await temporary.rename(metadata.path);
+  }
 
   Future<WenkuEpubDocument?> load(WenkuEpubRequest request) async {
     final target = await _fileFor(request);
@@ -35,23 +141,32 @@ class WenkuEpubStore {
 
   Future<({File file, WenkuEpubDocument document})> save(
     WenkuEpubRequest request,
-    Uint8List bytes,
-  ) async {
+    Uint8List bytes, {
+    String? title,
+  }) async {
     final document = await Isolate.run(() => _parseEpub(bytes));
     final target = await _fileFor(request, createDirectory: true);
     final temporary = File('${target.path}.part');
     await temporary.writeAsBytes(bytes, flush: true);
     if (await target.exists()) await target.delete();
-    return (file: await temporary.rename(target.path), document: document);
+    final file = await temporary.rename(target.path);
+    await _writeMetadata(
+      file,
+      WenkuDownloadedEpub(
+        fileName: p.basename(file.path),
+        title: title ?? document.title,
+        volumeId: request.volumeId,
+        order: request.order,
+      ),
+    );
+    return (file: file, document: document);
   }
 
   Future<File> _fileFor(
     WenkuEpubRequest request, {
     bool createDirectory = false,
   }) async {
-    final root =
-        await (rootDirectory?.call() ?? getApplicationSupportDirectory());
-    final directory = Directory(p.join(root.path, 'wenku'));
+    final directory = await _directory();
     if (createDirectory) await directory.create(recursive: true);
     final identity = [
       request.novelId,

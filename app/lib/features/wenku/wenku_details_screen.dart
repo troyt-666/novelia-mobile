@@ -8,6 +8,7 @@ import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import '../discover/catalog_models.dart';
 import '../novel_details/novel_comments_section.dart';
 import 'wenku_epub_document.dart';
+import 'wenku_downloads_screen.dart';
 import 'wenku_epub_store.dart';
 import 'wenku_reader_screen.dart';
 
@@ -112,7 +113,11 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
         cancellationToken: downloadCancellation,
       );
       downloadCancellation.throwIfCancelled();
-      final saved = await widget.store.save(request, bytes);
+      final saved = await widget.store.save(
+        request,
+        bytes,
+        title: _novel?.chineseTitle ?? widget.summary.chineseTitle,
+      );
       downloadCancellation.throwIfCancelled();
       if (!mounted) return;
       await _openReader(saved.document, order: request.order);
@@ -161,7 +166,10 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('文库小说')),
+      appBar: AppBar(
+        title: const Text('文库小说'),
+        actions: [WenkuDownloadsButton(store: widget.store)],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _failure != null
