@@ -117,9 +117,19 @@ class _WenkuDetailsScreenState extends State<WenkuDetailsScreen> {
         request,
         bytes,
         title: _novel?.chineseTitle ?? widget.summary.chineseTitle,
+        checkCancelled: downloadCancellation.throwIfCancelled,
       );
       downloadCancellation.throwIfCancelled();
       if (!mounted) return;
+      final download = (await widget.store.listDownloads())
+          .where((d) => d.fileName == widget.store.fileNameForRequest(request))
+          .firstOrNull;
+      if (!mounted) return;
+      if (download != null && download.missingImages > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('正文已保存，部分插图下载失败，可在下载管理中补全')),
+        );
+      }
       await _openReader(saved.document, request: request);
     } on WenkuEpubDownloadCancelledException {
       // Cancellation is an expected user action, not a failed download.

@@ -42,6 +42,7 @@ class RemoteNovelListScreen extends StatefulWidget {
     required this.onOpenNovel,
     required this.onTagSelected,
     this.onRemoveNovel,
+    this.cachedPage,
     super.key,
   }) : favoriteLoader = null;
 
@@ -51,10 +52,13 @@ class RemoteNovelListScreen extends StatefulWidget {
     required this.onOpenNovel,
     required this.onTagSelected,
     this.onRemoveNovel,
+    this.cachedPage,
     super.key,
   }) : favoriteLoader = loader,
        loader = null;
 
+  final RemoteNovelPageView? Function(int page, FavoriteQuery filter)?
+  cachedPage;
   final String title;
   final RemoteNovelPageLoader? loader;
   final FavoriteNovelPageLoader? favoriteLoader;
@@ -135,7 +139,9 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
     if (!preservePosition && _scroll.hasClients) _scroll.jumpTo(0);
     setState(() {
       _requestedPage = target;
-      if (!preservePosition) _page = null;
+      _page =
+          widget.cachedPage?.call(target, filter) ??
+          (preservePosition ? _page : null);
       _error = null;
       _loading = true;
     });
@@ -243,7 +249,11 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
                 searchController: _search,
                 onChanged: _changeFilter,
               ),
-            if (_loading && page != null) const LinearProgressIndicator(),
+            if (_loading && page != null)
+              const Padding(
+                padding: EdgeInsets.all(8),
+                child: Text('显示本机保存的列表，正在刷新…'),
+              ),
             if (error != null && page != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -271,7 +281,7 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
                               children: [
                                 const Icon(Icons.cloud_off_outlined, size: 44),
                                 const SizedBox(height: 12),
-                                const Text('列表暂时无法加载'),
+                                const Text('本机尚未保存这一页，请联网加载'),
                                 const SizedBox(height: 14),
                                 FilledButton.icon(
                                   key: const ValueKey(
@@ -299,12 +309,11 @@ class _RemoteNovelListScreenState extends State<RemoteNovelListScreen>
                           ? null
                           : _removeNovel,
                       removingNovelIds: _removingNovelIds,
-                      onPrevious: !_loading && page.pageNumber > 1
+                      onPrevious: page.pageNumber > 1
                           ? () => _load(page.pageNumber - 1)
                           : null,
                       onNext:
-                          !_loading &&
-                              page.totalPages > 0 &&
+                          page.totalPages > 0 &&
                               page.pageNumber < page.totalPages
                           ? () => _load(page.pageNumber + 1)
                           : null,

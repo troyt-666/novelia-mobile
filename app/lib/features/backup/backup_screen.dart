@@ -3,18 +3,21 @@ import 'package:flutter/material.dart';
 import '../../core/backup/backup_files.dart';
 import '../../core/backup/reader_backup.dart';
 import '../../core/database/sqlite_offline_repository.dart';
+import '../wenku/wenku_epub_store.dart';
 
 class BackupScreen extends StatefulWidget {
   const BackupScreen({
     required this.repository,
     required this.onImported,
     this.files = const SystemBackupFiles(),
+    this.wenkuStore,
     super.key,
   });
 
   final SqliteOfflineRepository repository;
   final VoidCallback onImported;
   final BackupFiles files;
+  final WenkuEpubStore? wenkuStore;
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -72,9 +75,14 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _export() => _run('正在准备备份…', () async {
-    final backup = widget.repository.exportBackup(
+    var backup = widget.repository.exportBackup(
       includeContent: _includeContent,
     );
+    if (widget.wenkuStore != null) {
+      backup = backup.withWenku(
+        await widget.wenkuStore!.backupEntries(includeContent: _includeContent),
+      );
+    }
     final saved = await widget.files.save(backup);
     if (mounted) setState(() => _status = saved ? '备份已保存' : null);
   });
@@ -86,10 +94,15 @@ class _BackupScreenState extends State<BackupScreen> {
       setState(() => _status = null);
       return;
     }
-    _showPreview(backup);
+    await _showPreview(backup);
   });
 
-  void _showPreview(ReaderBackup backup) {
+  Future<void> _showPreview(ReaderBackup backup) async {
+    if (backup.wenku.isNotEmpty && widget.wenkuStore == null) {
+      throw const BackupException('当前环境无法导入文库，请在完整应用中打开此备份。');
+    }
+    await widget.wenkuStore?.validateBackupEntries(backup.wenku);
+    if (!mounted) return;
     final preview = widget.repository.previewBackup(backup);
     setState(() {
       _preview = preview;
@@ -100,17 +113,25 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _merge() => _run('正在合并…', () async {
-    final result = widget.repository.mergeBackup(
+    final backup = _preview!.backup;
+    BackupMergeResult mergeDatabase() => widget.repository.mergeBackup(
       _preview!,
       choices: _choices,
       importSettings: _importSettings,
     );
+    final result = widget.wenkuStore == null
+        ? mergeDatabase()
+        : await widget.wenkuStore!.mergeBackupEntries(
+            backup.wenku,
+            mergeDatabase,
+          );
     setState(() {
       _preview = null;
       _status =
           '合并完成：新增 ${result.newNovels} 本书、${result.bookmarksAdded} 个书签、'
           '${result.downloadsAdded} 条下载记录、${result.chaptersAdded} 章正文，'
-          '更新 ${result.progressUpdated} 条进度。';
+          '更新 ${result.progressUpdated} 条进度。'
+          '${backup.wenku.isEmpty ? '' : '已合并 ${backup.wenku.length} 条文库记录，保留本机已有文件和位置。'}';
     });
     widget.onImported();
   });
@@ -185,14 +206,14 @@ class _BackupScreenState extends State<BackupScreen> {
   List<Widget> _actions(BuildContext context) => [
     Text('导出备份', style: Theme.of(context).textTheme.titleLarge),
     const SizedBox(height: 8),
-    const Text('保存本机阅读进度、书签、下载记录、搜索历史和阅读设置。'),
+    const Text('保存本机阅读进度、书签、下载记录、文库续读、搜索历史和阅读设置。'),
     const SizedBox(height: 16),
     Card.outlined(
       margin: EdgeInsets.zero,
       child: SwitchListTile(
         key: const ValueKey('backup-include-content'),
         title: const Text('包含离线正文'),
-        subtitle: const Text('加入已下载的网文章节和译文，文件会更大'),
+        subtitle: const Text('加入网文章节、译文、插图和文库 EPUB，文件会更大'),
         value: _includeContent,
         onChanged: _busy
             ? null
@@ -232,7 +253,8 @@ class _BackupScreenState extends State<BackupScreen> {
     const SizedBox(height: 8),
     Text(
       '${preview.backup.novelCount} 本书 · ${preview.backup.progressCount} 条进度 · ${preview.backup.bookmarkCount} 个书签'
-      ' · ${preview.backup.downloadCount} 条下载记录 · ${preview.backup.chapterCount} 章正文',
+      ' · ${preview.backup.downloadCount} 条下载记录 · ${preview.backup.chapterCount} 章正文'
+      '${preview.backup.wenku.isEmpty ? '' : ' · ${preview.backup.wenku.length} 条文库记录（${preview.backup.wenku.where((e) => e.bytes != null).length} 卷 EPUB）'}',
     ),
     const SizedBox(height: 16),
     Card.outlined(
@@ -243,6 +265,7 @@ class _BackupScreenState extends State<BackupScreen> {
           '备份中的记录将新增 ${preview.newNovels} 本书、${preview.newProgress} 条进度、'
           '${preview.newBookmarks} 个书签、${preview.newDownloads} 条下载记录、${preview.newChapters} 章正文。'
           '\n已有书签会去重；已有正文保留，只补缺少的章节和译源。'
+          '${preview.backup.wenku.isEmpty ? '' : '\n文库只补缺少的文件和续读位置，本机已有位置优先保留。'}'
           '${preview.conflicts.isEmpty ? '' : '\n未选的进度位置另存为书签。'}',
         ),
       ),

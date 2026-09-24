@@ -28,6 +28,8 @@ class SettingsScreen extends StatelessWidget {
       offlineDownloadChapterCount: 0,
       perNovel: [],
     ),
+    this.wenkuBytes = 0,
+    this.wenkuCount = 0,
     this.cacheLimitBytes,
     this.accountSession = const AccountSessionSnapshot.signedOut(),
     this.onAccountLogin,
@@ -50,6 +52,8 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<int>? onCacheLimitChanged;
   final FutureOr<int> Function()? onClearReadingCache;
   final OfflineStorageSummary storageSummary;
+  final int wenkuBytes;
+  final int wenkuCount;
 
   /// Null means that no cache limit is currently configured.
   final int? cacheLimitBytes;
@@ -163,9 +167,10 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(Icons.offline_pin_outlined),
                 title: const Text('离线下载'),
                 subtitle: Text(
-                  '${formatStorageBytes(storageSummary.offlineDownloadBytes)}'
+                  '${formatStorageBytes(storageSummary.offlineDownloadBytes + wenkuBytes)}'
                   ' · $downloadedNovelCount 部小说'
-                  ' · ${storageSummary.offlineDownloadChapterCount} 章',
+                  ' · ${storageSummary.offlineDownloadChapterCount} 章'
+                  '${wenkuCount == 0 ? '' : ' · 文库 $wenkuCount 卷'}',
                 ),
                 trailing: onManageOfflineDownloads == null
                     ? null

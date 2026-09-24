@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 9;
+  static const int currentSchemaVersion = 10;
   static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -130,6 +130,15 @@ final class NoveliaDatabase {
           'CREATE INDEX missing_illustrations_idx ON cached_chapter_payloads (novel_id) WHERE illustrations_complete = 0;',
         );
         database.userVersion = 9;
+      });
+    }
+    if (database.userVersion == 9) {
+      _transaction(database, () {
+        database.execute(
+          'CREATE TABLE remote_list_snapshots ('
+          'snapshot_key TEXT NOT NULL PRIMARY KEY, body_json TEXT NOT NULL);',
+        );
+        database.userVersion = 10;
       });
     }
   }

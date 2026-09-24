@@ -13,9 +13,11 @@ import '../discover/discover_screen.dart';
 import '../discover/rankings_screen.dart';
 import '../account/account_screen.dart';
 import '../account/remote_novel_list_screen.dart';
+import '../account/remote_list_snapshots.dart';
 import '../novel_details/novel_details_loader_screen.dart';
 import '../novel_details/novel_details_screen.dart';
 import '../wenku/wenku_catalog_screen.dart';
+import '../wenku/wenku_epub_store.dart';
 import '../../gateway/novelia/novelia_wenku_gateway.dart';
 import '../../gateway/novelia/novelia_catalog_controller.dart';
 import 'download_management_screen.dart';
@@ -53,6 +55,9 @@ class NoveliaShell extends StatefulWidget {
     required this.themeMode,
     required this.onThemeModeChanged,
     this.wenkuGateway,
+    this.wenkuStore,
+    this.wenkuDownloads = const [],
+    this.onWenkuChanged,
     this.appVersion = const AppVersion.unavailable(),
     this.novelDetailsLoader,
     this.commentPageLoader,
@@ -78,6 +83,7 @@ class NoveliaShell extends StatefulWidget {
     this.protectedDownloads = const [],
     this.bookmarks = const [],
     this.remoteFavorites = const RemoteFavoritesViewModel.unavailable(),
+    this.remoteListSnapshots,
     this.favoriteFolderLoader,
     this.readingHistoryLoader,
     this.storageSummary = const OfflineStorageSummary(
@@ -110,6 +116,9 @@ class NoveliaShell extends StatefulWidget {
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final NoveliaWenkuGateway? wenkuGateway;
+  final WenkuEpubStore? wenkuStore;
+  final List<WenkuDownloadedEpub> wenkuDownloads;
+  final VoidCallback? onWenkuChanged;
   final NovelDetailsLoader? novelDetailsLoader;
   final ReaderLaunchLoader readerLaunchLoader;
   final NovelCommentPageLoader? commentPageLoader;
@@ -136,6 +145,7 @@ class NoveliaShell extends StatefulWidget {
   final List<LibraryProtectedDownload> protectedDownloads;
   final List<LibraryBookmarkItem> bookmarks;
   final RemoteFavoritesViewModel remoteFavorites;
+  final RemoteListSnapshots? remoteListSnapshots;
   final FavoriteFolderPageLoader? favoriteFolderLoader;
   final RemoteNovelPageLoader? readingHistoryLoader;
   final OfflineStorageSummary storageSummary;
@@ -451,6 +461,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
       MaterialPageRoute(
         builder: (_) => RemoteNovelListScreen.favorites(
           title: folder.title,
+          cachedPage: (page, filter) => widget.remoteListSnapshots?.page(
+            RemoteListSnapshots.favoriteKey(folder.id, page, filter),
+          ),
           loader: (page, filter) => loader(folder.id, page, filter),
           onOpenNovel: _openNovel,
           onTagSelected: _openTag,
@@ -469,7 +482,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
   Future<void> _openReadingHistory() async {
     final loader = widget.readingHistoryLoader;
     if (loader == null) return;
-    if (!widget.accountSession.isSignedIn) {
+    if (!widget.accountSession.isSignedIn &&
+        widget.remoteListSnapshots?.page(RemoteListSnapshots.historyKey(1)) ==
+            null) {
       final signedIn = await _ensureSignedIn();
       if (!mounted || !signedIn) return;
     }
@@ -478,6 +493,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
       MaterialPageRoute(
         builder: (_) => RemoteNovelListScreen(
           title: '阅读历史',
+          cachedPage: (page, _) => widget.remoteListSnapshots?.page(
+            RemoteListSnapshots.historyKey(page),
+          ),
           loader: loader,
           onOpenNovel: _openNovel,
           onTagSelected: _openTag,
@@ -646,6 +664,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
       MaterialPageRoute(
         builder: (_) => DownloadManagementScreen(
           downloads: widget.protectedDownloads,
+          wenkuStore: widget.wenkuStore,
+          onWenkuChanged: widget.onWenkuChanged,
           onAction: handler,
           snapshotLoader: widget.downloadManagementSnapshotLoader,
           onOpenNovel: _openNovel,
@@ -660,10 +680,14 @@ class _NoveliaShellState extends State<NoveliaShell> {
     if (gateway == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => WenkuCatalogScreen(gateway: gateway),
+        builder: (_) => WenkuCatalogScreen(
+          gateway: gateway,
+          store: widget.wenkuStore ?? const WenkuEpubStore(),
+        ),
         settings: const RouteSettings(name: '/wenku'),
       ),
     );
+    widget.onWenkuChanged?.call();
   }
 
   List<CatalogNovel> get _catalogNovels => _feeds.catalog.novels;
@@ -759,6 +783,9 @@ class _NoveliaShellState extends State<NoveliaShell> {
         builder: (context, _) => _buildSearch(context),
       ),
       LibraryScreen(
+        wenkuStore: widget.wenkuStore,
+        wenkuDownloads: widget.wenkuDownloads,
+        onWenkuChanged: widget.onWenkuChanged,
         continuedReads: widget.continuedReads,
         protectedDownloads: widget.protectedDownloads,
         bookmarks: widget.bookmarks,
@@ -787,7 +814,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
                   _openReader(download.novel, null, download: download),
         onDownloadsManageRequested:
             widget.onDownloadManagementRequested == null ||
-                widget.protectedDownloads.isEmpty
+                (widget.protectedDownloads.isEmpty &&
+                    widget.wenkuDownloads.isEmpty)
             ? null
             : _openDownloadsManager,
       ),
@@ -806,6 +834,8 @@ class _NoveliaShellState extends State<NoveliaShell> {
         themeMode: widget.themeMode,
         onThemeModeChanged: widget.onThemeModeChanged,
         storageSummary: widget.storageSummary,
+        wenkuCount: widget.wenkuDownloads.length,
+        wenkuBytes: widget.wenkuDownloads.fold(0, (n, d) => n + d.byteCount),
         cacheLimitBytes: widget.cacheLimitBytes,
         onManageOfflineDownloads: widget.onDownloadManagementRequested == null
             ? null

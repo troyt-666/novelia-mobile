@@ -28,6 +28,7 @@ void main() {
       '(query, display_order, updated_at_us) VALUES (?, 0, ?);',
       ['旧搜索', t0.microsecondsSinceEpoch],
     );
+    database.execute('DROP TABLE remote_list_snapshots;');
     database.userVersion = 3;
 
     final repository = SqliteOfflineRepository.fromDatabase(database);

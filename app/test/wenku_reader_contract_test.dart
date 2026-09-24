@@ -150,27 +150,32 @@ void main() {
     );
   });
 
-  test('truncated cached EPUB is evicted instead of reused', () async {
-    final root = await Directory.systemTemp.createTemp('wenku-store-test-');
-    addTearDown(() => root.delete(recursive: true));
-    const request = WenkuEpubRequest(
-      novelId: 'novel-1',
-      volumeId: 'volume-1.epub',
-      order: WenkuBilingualOrder.chineseFirst,
-      providers: [WenkuTranslationProvider.sakura],
-      filename: 'volume-1.epub',
-    );
-    final bytes = _fixtureEpub();
-    final store = WenkuEpubStore(rootDirectory: () async => root);
-    final cached = await store.save(request, bytes);
-    await cached.file.writeAsBytes(
-      bytes.sublist(0, bytes.length ~/ 2),
-      flush: true,
-    );
+  test(
+    'truncated cached EPUB is not reused and survives until a valid replacement',
+    () async {
+      final root = await Directory.systemTemp.createTemp('wenku-store-test-');
+      addTearDown(() => root.delete(recursive: true));
+      const request = WenkuEpubRequest(
+        novelId: 'novel-1',
+        volumeId: 'volume-1.epub',
+        order: WenkuBilingualOrder.chineseFirst,
+        providers: [WenkuTranslationProvider.sakura],
+        filename: 'volume-1.epub',
+      );
+      final bytes = _fixtureEpub();
+      final store = WenkuEpubStore(rootDirectory: () async => root);
+      final cached = await store.save(request, bytes);
+      await cached.file.writeAsBytes(
+        bytes.sublist(0, bytes.length ~/ 2),
+        flush: true,
+      );
 
-    expect(await store.load(request), isNull);
-    expect(await cached.file.exists(), isFalse);
-  });
+      expect(await store.load(request), isNull);
+      expect(await cached.file.exists(), isTrue);
+      await store.save(request, bytes);
+      expect(await store.load(request), isNotNull);
+    },
+  );
 }
 
 Uint8List _fixtureEpub({

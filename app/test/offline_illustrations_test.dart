@@ -189,6 +189,7 @@ void main() {
       database.execute(
         'DROP INDEX missing_illustrations_idx; ALTER TABLE cached_chapter_payloads DROP COLUMN illustrations_complete; ALTER TABLE cached_chapter_payloads DROP COLUMN illustrations_json;',
       );
+      database.execute('DROP TABLE remote_list_snapshots;');
       database.userVersion = 8;
       final migrated = SqliteOfflineRepository.fromDatabase(
         database,

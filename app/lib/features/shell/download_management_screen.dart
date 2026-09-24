@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/offline/offline_models.dart';
 import '../discover/catalog_models.dart';
+import '../wenku/wenku_epub_store.dart';
+import '../wenku/wenku_download_tile.dart';
 import 'shell_view_models.dart';
 
 enum DownloadManagementAction { pause, resume, retry, remove }
@@ -22,11 +24,15 @@ class DownloadManagementScreen extends StatefulWidget {
     required this.downloads,
     required this.onAction,
     required this.onOpenNovel,
+    this.wenkuStore,
+    this.onWenkuChanged,
     this.snapshotLoader,
     this.refreshInterval = const Duration(milliseconds: 400),
     super.key,
   }) : assert(refreshInterval > Duration.zero);
 
+  final WenkuEpubStore? wenkuStore;
+  final VoidCallback? onWenkuChanged;
   final List<LibraryProtectedDownload> downloads;
   final DownloadManagementHandler onAction;
   final ValueChanged<CatalogNovel> onOpenNovel;
@@ -39,6 +45,9 @@ class DownloadManagementScreen extends StatefulWidget {
 }
 
 class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
+  List<WenkuDownloadedEpub> _wenku = const [];
+  bool _wenkuLoading = false;
+  bool _wenkuFailed = false;
   late List<LibraryProtectedDownload> _downloads;
   late String _downloadSignature;
   final Set<String> _busyGroups = <String>{};
@@ -48,6 +57,7 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(_refreshWenku());
     _downloads = List.of(widget.downloads);
     _downloadSignature = _signature(_downloads);
     if (widget.snapshotLoader != null) {
@@ -71,6 +81,24 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _refreshWenku() async {
+    final store = widget.wenkuStore;
+    if (store == null) return;
+    setState(() {
+      _wenkuLoading = true;
+      _wenkuFailed = false;
+    });
+    try {
+      final downloads = await store.listDownloads();
+      if (mounted) setState(() => _wenku = downloads);
+      widget.onWenkuChanged?.call();
+    } on Object {
+      if (mounted) setState(() => _wenkuFailed = true);
+    } finally {
+      if (mounted) setState(() => _wenkuLoading = false);
+    }
   }
 
   Future<void> _refreshDownloads() async {
@@ -183,7 +211,11 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
     return Scaffold(
       key: const ValueKey('downloads-management-screen'),
       appBar: AppBar(title: const Text('管理离线下载')),
-      body: _downloads.isEmpty
+      body:
+          _downloads.isEmpty &&
+              _wenku.isEmpty &&
+              !_wenkuLoading &&
+              !_wenkuFailed
           ? const Center(
               child: Text(
                 '还没有离线下载',
@@ -191,12 +223,34 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
               ),
             )
           : RefreshIndicator(
-              onRefresh: _refreshDownloads,
+              onRefresh: () async {
+                await _refreshDownloads();
+                await _refreshWenku();
+              },
               child: ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                itemCount: _downloads.length,
+                itemCount:
+                    _downloads.length +
+                    _wenku.length +
+                    (_wenkuLoading || _wenkuFailed ? 1 : 0),
                 separatorBuilder: (_, _) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
+                  if (index >= _downloads.length + _wenku.length) {
+                    return _wenkuFailed
+                        ? TextButton(
+                            onPressed: _refreshWenku,
+                            child: const Text('文库下载读取失败，重试'),
+                          )
+                        : const LinearProgressIndicator();
+                  }
+                  if (index >= _downloads.length) {
+                    return WenkuDownloadTile(
+                      store: widget.wenkuStore!,
+                      download: _wenku[index - _downloads.length],
+                      manage: true,
+                      onChanged: _refreshWenku,
+                    );
+                  }
                   final download = _downloads[index];
                   final busy = _busyGroups.contains(download.groupKey);
                   return _ManagedDownloadCard(

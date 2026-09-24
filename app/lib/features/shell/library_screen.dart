@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../core/model/reader_models.dart';
 import '../../core/offline/offline_models.dart';
 import '../discover/catalog_models.dart';
+import '../wenku/wenku_epub_store.dart';
+import '../wenku/wenku_download_tile.dart';
 import 'shell_view_models.dart';
 
 enum _LibrarySort { recent, title }
@@ -37,6 +39,9 @@ class LibraryScreen extends StatefulWidget {
     this.continuedReads = const [],
     this.protectedDownloads = const [],
     this.bookmarks = const [],
+    this.wenkuDownloads = const [],
+    this.wenkuStore,
+    this.onWenkuChanged,
     this.remoteFavorites = const RemoteFavoritesViewModel.unavailable(),
     this.isSignedIn,
     this.onSignInRequested,
@@ -53,6 +58,9 @@ class LibraryScreen extends StatefulWidget {
   final List<LibraryContinuedRead> continuedReads;
   final List<LibraryProtectedDownload> protectedDownloads;
   final List<LibraryBookmarkItem> bookmarks;
+  final List<WenkuDownloadedEpub> wenkuDownloads;
+  final WenkuEpubStore? wenkuStore;
+  final VoidCallback? onWenkuChanged;
   final RemoteFavoritesViewModel remoteFavorites;
   final bool? isSignedIn;
   final VoidCallback? onSignInRequested;
@@ -300,6 +308,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
     required String empty,
     required IndexedWidgetBuilder builder,
   }) {
+    final wenku = tab == 1 && widget.wenkuStore != null
+        ? widget.wenkuDownloads
+              .where(
+                (d) =>
+                    d.title.toLowerCase().contains(
+                      _search[tab].text.trim().toLowerCase(),
+                    ) &&
+                    switch (_filter) {
+                      _DownloadFilter.all => true,
+                      _DownloadFilter.complete => d.missingImages == 0,
+                      _DownloadFilter.incomplete ||
+                      _DownloadFilter.failed => d.missingImages > 0,
+                      _DownloadFilter.paused => false,
+                    },
+              )
+              .toList()
+        : <WenkuDownloadedEpub>[];
+    final total = count + wenku.length;
     final name = tab == 0 ? 'continue' : 'downloads';
     return CustomScrollView(
       key: PageStorageKey('library-$name-scroll'),
@@ -365,7 +391,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
-                      tab == 0 ? '$count 本' : '$count 项下载',
+                      tab == 0 ? '$count 本' : '$total 项下载',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     PopupMenuButton<_LibrarySort>(
@@ -422,11 +448,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
-          sliver: count == 0
+          sliver: total == 0
               ? SliverToBoxAdapter(child: _LibraryEmpty(message: empty))
               : SliverList.separated(
-                  itemCount: count,
-                  itemBuilder: builder,
+                  itemCount: total,
+                  itemBuilder: (context, index) => index < count
+                      ? builder(context, index)
+                      : WenkuDownloadTile(
+                          store: widget.wenkuStore!,
+                          download: wenku[index - count],
+                          onChanged: widget.onWenkuChanged ?? () {},
+                        ),
                   separatorBuilder: (_, _) => const SizedBox(height: 4),
                 ),
         ),

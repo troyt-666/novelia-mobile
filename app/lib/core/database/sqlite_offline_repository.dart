@@ -71,6 +71,31 @@ final class SqliteOfflineRepository
     if (_closeDatabase) _database.close();
   }
 
+  /// Device-local, credential-free views. Session changes never clear these.
+  Map<String, dynamic>? remoteListSnapshot(String key) {
+    _checkOpen();
+    final rows = _database.select(
+      'SELECT body_json FROM remote_list_snapshots WHERE snapshot_key = ?;',
+      [key],
+    );
+    if (rows.isEmpty) return null;
+    try {
+      return jsonDecode(rows.single['body_json'] as String)
+          as Map<String, dynamic>;
+    } on Object {
+      return null;
+    }
+  }
+
+  void saveRemoteListSnapshot(String key, Map<String, Object?> body) {
+    _checkOpen();
+    _database.execute(
+      'INSERT INTO remote_list_snapshots (snapshot_key, body_json) VALUES (?, ?) '
+      'ON CONFLICT(snapshot_key) DO UPDATE SET body_json = excluded.body_json;',
+      [key, jsonEncode(body)],
+    );
+  }
+
   @override
   void saveIntent(DownloadIntent intent) {
     _checkOpen();

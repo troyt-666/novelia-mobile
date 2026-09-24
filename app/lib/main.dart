@@ -20,7 +20,9 @@ import 'features/discover/catalog_models.dart';
 import 'features/backup/backup_screen.dart';
 import 'features/discover/rankings_screen.dart';
 import 'features/account/remote_novel_list_screen.dart';
+import 'features/account/remote_list_snapshots.dart';
 import 'features/reader/reader_screen.dart';
+import 'features/wenku/wenku_epub_store.dart';
 import 'features/shell/download_management_screen.dart';
 import 'features/shell/novelia_shell.dart';
 import 'features/shell/shell_view_models.dart';
@@ -92,6 +94,7 @@ Future<void> main() async {
         accountGateway: accountGateway,
         contentCoordinator: contentCoordinator,
         wenkuGateway: wenkuGateway,
+        wenkuStore: const WenkuEpubStore(),
         downloadCoordinator: downloadCoordinator,
         externalLinkLauncher: const MethodChannelExternalLinkLauncher(),
         updateChecker: Platform.operatingSystem == 'ohos'
@@ -122,6 +125,7 @@ class NoveliaReaderApp extends StatefulWidget {
     required this.contentCoordinator,
     this.appVersion = const AppVersion.unavailable(),
     this.wenkuGateway,
+    this.wenkuStore,
     this.downloadCoordinator,
     this.accountSessionController,
     this.accountGateway,
@@ -138,6 +142,7 @@ class NoveliaReaderApp extends StatefulWidget {
   final AppVersion appVersion;
   final NoveliaContentCoordinator contentCoordinator;
   final NoveliaWenkuGateway? wenkuGateway;
+  final WenkuEpubStore? wenkuStore;
   final NoveliaDownloadCoordinator? downloadCoordinator;
   final AccountSessionController? accountSessionController;
   final NoveliaAccountGateway? accountGateway;
@@ -161,6 +166,8 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   late int _initialDestination;
   late List<String> _initialRecentSearches;
   var _localDataRevision = 0;
+  List<WenkuDownloadedEpub> _wenkuDownloads = const [];
+  bool _repairingWenku = false;
   late String? _initialReaderNovelId;
   late ReadingPosition? _initialReaderPosition;
   bool _hasMountedShell = false;
@@ -174,6 +181,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
   var _favoriteFolderGeneration = 0;
   late final RemoteHistorySync _historySync;
+  RemoteListSnapshots get _remoteLists => RemoteListSnapshots(_repository);
 
   SqliteOfflineRepository get _repository => widget.repository;
 
@@ -219,10 +227,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       },
     );
     _library = _loadLibrarySnapshot();
+    _remoteFavorites = _remoteLists.folders;
     unawaited(_feeds.refreshCatalog());
     unawaited(_feeds.refreshRecentlyUpdated());
     unawaited(_feeds.refreshMostClicked());
     unawaited(_resumeDownloadIntents());
+    unawaited(_refreshWenku(repair: true));
   }
 
   @override
@@ -239,6 +249,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
+    unawaited(_refreshWenku(repair: true));
     // Search owns its current query, loaded pages and scroll position until
     // the reader explicitly changes the search criteria.
     unawaited(_feeds.refreshRecentlyUpdated());
@@ -255,6 +266,31 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     }
   }
 
+  Future<void> _refreshWenku({bool repair = false}) async {
+    final store = widget.wenkuStore;
+    if (store == null) return;
+    try {
+      final downloads = await store.listDownloads();
+      if (!mounted) return;
+      setState(() => _wenkuDownloads = downloads);
+      if (!repair || _repairingWenku) return;
+      _repairingWenku = true;
+      try {
+        for (final download in downloads.where((d) => d.missingImages > 0)) {
+          if (!mounted) return;
+          final complete = await store.repairImages(download);
+          final latest = await store.listDownloads();
+          if (mounted) setState(() => _wenkuDownloads = latest);
+          if (!complete) break;
+        }
+      } finally {
+        _repairingWenku = false;
+      }
+    } on Object {
+      // A failed background repair never prevents local reading.
+    }
+  }
+
   void _accountSessionChanged() {
     if (!mounted) return;
     final session = widget.accountSessionController?.snapshot;
@@ -264,7 +300,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       unawaited(_historySync.flush());
     } else {
       _favoriteFolderGeneration += 1;
-      _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
+      _remoteFavorites = _remoteLists.folders;
     }
     if (_catalogCriteria.contentLevel != CatalogContentLevel.general) {
       unawaited(_feeds.refreshCatalog(criteria: _catalogCriteria));
@@ -282,6 +318,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     try {
       final folders = await gateway.listFavoriteFolders();
       if (!mounted || generation != _favoriteFolderGeneration) return;
+      _remoteLists.saveFolders([
+        for (final folder in folders)
+          LibraryFavoriteFolder(id: folder.id, title: folder.title),
+      ]);
       setState(() {
         _remoteFavorites = folders.isEmpty
             ? const RemoteFavoritesViewModel.empty()
@@ -292,9 +332,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       });
     } on Object {
       if (!mounted || generation != _favoriteFolderGeneration) return;
-      setState(
-        () => _remoteFavorites = const RemoteFavoritesViewModel.unavailable(),
-      );
+      setState(() => _remoteFavorites = _remoteLists.folders);
     }
   }
 
@@ -344,14 +382,21 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       page: pageNumber - 1,
       filter: filter,
     );
-    return _mapAccountNovelPage(page, pageNumber);
+    final view = _mapAccountNovelPage(page, pageNumber);
+    _remoteLists.savePage(
+      RemoteListSnapshots.favoriteKey(folderId, pageNumber, filter),
+      view,
+    );
+    return view;
   }
 
   Future<RemoteNovelPageView> _loadReadingHistoryPage(int pageNumber) async {
     final gateway = widget.accountGateway;
     if (gateway == null) throw StateError('Account gateway is unavailable.');
     final page = await gateway.listReadHistory(page: pageNumber - 1);
-    return _mapAccountNovelPage(page, pageNumber);
+    final view = _mapAccountNovelPage(page, pageNumber);
+    _remoteLists.savePage(RemoteListSnapshots.historyKey(pageNumber), view);
+    return view;
   }
 
   RemoteNovelPageView _mapAccountNovelPage(
@@ -361,25 +406,17 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     const domainAdapter = NoveliaDomainAdapter();
     const cacheAdapter = NoveliaContentCacheAdapter();
     final fetchedAt = DateTime.now().toUtc();
-    final allowRestricted =
-        widget.accountSessionController?.snapshot.isSignedIn == true;
     final novels = <CatalogNovel>[];
     for (final outline in page.items) {
+      // The server already authorized this response; retain the local list.
+      final novel = domainAdapter.mapOutline(outline, allowRestricted: true);
+      novels.add(novel);
       try {
-        final novel = domainAdapter.mapOutline(
-          outline,
-          allowRestricted: allowRestricted,
+        _repository.upsertNovelOutline(
+          cacheAdapter.cacheOutline(novel, fetchedAt: fetchedAt),
         );
-        novels.add(novel);
-        try {
-          _repository.upsertNovelOutline(
-            cacheAdapter.cacheOutline(novel, fetchedAt: fetchedAt),
-          );
-        } on Object {
-          // A cache failure must not hide an otherwise valid account row.
-        }
-      } on NoveliaRestrictedContentException {
-        // A response arriving after sign-out must not expose restricted rows.
+      } on Object {
+        // A cache failure must not hide an otherwise valid account row.
       }
     }
     return RemoteNovelPageView(
@@ -950,8 +987,10 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         child: NoveliaShell(
           backupPageBuilder: (_) => BackupScreen(
             repository: _repository,
+            wenkuStore: widget.wenkuStore,
             onImported: () {
               if (!mounted) return;
+              unawaited(_refreshWenku());
               setState(() {
                 final settings = _repository.appSettings();
                 if (settings != null) {
@@ -970,11 +1009,15 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           localDataRevision: _localDataRevision,
           catalogController: _feeds,
           wenkuGateway: widget.wenkuGateway,
+          wenkuStore: widget.wenkuStore,
+          wenkuDownloads: _wenkuDownloads,
+          onWenkuChanged: _refreshWenku,
           appVersion: widget.appVersion,
           continuedReads: _library.continuedReads,
           protectedDownloads: _library.downloads,
           bookmarks: _library.bookmarks,
           remoteFavorites: _remoteFavorites,
+          remoteListSnapshots: _remoteLists,
           favoriteFolderLoader: widget.accountGateway == null
               ? null
               : _loadFavoriteFolderPage,

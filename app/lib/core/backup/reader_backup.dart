@@ -2,14 +2,18 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'wenku_backup_entry.dart';
+
 /// A portable logical snapshot. It never contains SQL, login credentials,
 /// remote-account state, transient download tasks, or a process restore route.
 class ReaderBackup {
   ReaderBackup({
     required this.createdAt,
     required this.includesContent,
+    List<WenkuBackupEntry> wenku = const [],
     required Map<String, List<Map<String, Object?>>> tables,
-  }) : tables = Map.unmodifiable(
+  }) : wenku = List.unmodifiable(wenku),
+       tables = Map.unmodifiable(
          tables.map(
            (key, rows) => MapEntry(
              key,
@@ -21,7 +25,7 @@ class ReaderBackup {
        );
 
   static const format = 'jfz-reader-backup';
-  static const version = 2;
+  static const version = 3;
   static const maxBytes = 128 * 1024 * 1024;
   static const tableNames = [
     'cached_novels',
@@ -35,6 +39,13 @@ class ReaderBackup {
     'cached_chapter_payloads',
     'offline_chapter_copies',
   ];
+  final List<WenkuBackupEntry> wenku;
+  ReaderBackup withWenku(List<WenkuBackupEntry> entries) => ReaderBackup(
+    createdAt: createdAt,
+    includesContent: includesContent,
+    tables: tables,
+    wenku: entries,
+  );
   final DateTime createdAt;
   final bool includesContent;
   final Map<String, List<Map<String, Object?>>> tables;
@@ -53,6 +64,7 @@ class ReaderBackup {
         'createdAt': createdAt.toUtc().toIso8601String(),
         'includesContent': includesContent,
         'tables': tables,
+        'wenku': wenku.map((entry) => entry.toJson()).toList(),
       }),
     );
     if (json.length > maxBytes) {
@@ -88,7 +100,7 @@ class ReaderBackup {
       if (map['format'] != format) {
         throw const BackupException('这不是 JFZ Reader 备份文件。');
       }
-      if (map['version'] != 1 && map['version'] != version) {
+      if (![1, 2, version].contains(map['version'])) {
         throw const BackupException('此备份版本暂不支持，请更新应用后再导入。');
       }
       final createdAt = DateTime.parse(map['createdAt'] as String);
@@ -117,7 +129,16 @@ class ReaderBackup {
               tables['offline_chapter_copies']!.isNotEmpty)) {
         throw const FormatException('Unexpected content');
       }
+      final wenku = (map['wenku'] as List? ?? const [])
+          .map(WenkuBackupEntry.fromJson)
+          .toList();
+      if (wenku.length > 5000 ||
+          wenku.map((e) => e.fileName).toSet().length != wenku.length ||
+          (!include && wenku.any((e) => e.bytes != null))) {
+        throw const FormatException('Invalid EPUB attachments');
+      }
       return ReaderBackup(
+        wenku: wenku,
         createdAt: createdAt,
         includesContent: include,
         tables: tables,
