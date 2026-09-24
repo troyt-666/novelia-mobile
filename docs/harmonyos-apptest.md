@@ -184,3 +184,46 @@ HAP 为 28,359,640 字节，SHA-256：
 与 GitHub 附件摘要一致；签名工具确认无 HAP 签名块。
 本次通过 390 项 Flutter 回归、静态检查、macOS 原生虚构数据流程和 10 项发布工具测试。
 未启动 Android 模拟器，也未执行鸿蒙真机更新安装。
+
+## 2026-09-25 · 第 22 版离线修复
+
+`1.0.0（22）` 的源码标签为 `v1.0.0+22`，提交 `66d36e1`；离线修复提交为
+`d6e463f` 和 `c7a0eeb`。本版移除本机数据的联网验证限制，修复离线续读与下载
+列表回退，持久保存网文和文库插图，并补齐文库下载管理、容量统计、备份及本机
+收藏/阅读历史列表快照。详细验证见[离线复查](offline-audit-2026-09-24.md)。
+
+2026-09-25 约 03:54（北京时间），AppTest 接受第 22 版提交。测试版本 ID 为
+`2046884154167037504`，软件包 ID 为 `2046883607481454144`。详情回读为“预审中”
+（`releaseState: 12`），尚未验证手机实际更新。沿用“内部测试”群组（1 人），
+未创建公开邀请链接或额外发送通知，测试截止为 2026-12-23 23:59:59（北京时间）。
+
+随后回读确认“应用上架审核通过”，状态已变为“正在测试”（`releaseState: 0`）。
+本次只验证后台发布状态，未在用户手机执行更新安装。
+
+签名 APP `JFZ-Reader-1.0.0-22-AppTest.app` 为 13,567,337 字节，SHA-256：
+`974276f9a9a86e706f09c920adbee09262f6cfef18b749c4987ee73d2f4468f1`。
+包名、版本、发布证书及 AppTest Profile 校验通过。
+
+从同次新建的未签名 APP 提取的 `JFZ-Reader-v1.0.0+22-harmony-unsigned.hap`
+为 28,589,124 字节，SHA-256：
+`fcafc3964e6539b04ad8531b147990a58ab3b0921797aaca954e502c5afada72`。
+签名工具确认没有 HAP 签名块，GitHub 附件摘要与本地相同。
+
+发布前通过 418 项 Flutter 回归、静态检查、macOS 原生断网图片与备份恢复流程、
+7 项版本/产物检查及 10 项 AppTest 发布工具测试。鸿蒙 release 构建和发布签名已
+完成，没有操作用户设备的安装或数据。
+
+AppTest 提交成功后，推送 `v1.0.0+22` 启动
+[GitHub 发布流程](https://github.com/troyt-666/novelia-mobile/actions/runs/36051286292)。
+全部检查、Android 签名 APK、iOS 未签名 IPA、macOS DMG、附件上传及更新源部署
+均成功。[第 22 版 Release](https://github.com/troyt-666/novelia-mobile/releases/tag/v1.0.0%2B22)
+包含上述三个平台与鸿蒙未签名 HAP 共四个附件。
+
+已回读公开的 `latest.json`、AltStore 源和 Sparkle appcast，均为 `1.0.0（22）`；
+下载地址、文件大小和 SHA-256 与 GitHub 附件一致，macOS 更新包含 Sparkle 签名。
+Android APK 为 66,114,880 字节，SHA-256：
+`5406ae1f20bd1afd7a450e4c9c3a0f454d83cd172c571577ca55ebf5c95512a3`；
+iOS IPA 为 10,468,081 字节，SHA-256：
+`d6e1750bad6f1d3e32751602afe689af9e192ef50cb0e59effb219be37335433`；
+macOS DMG 为 28,275,934 字节，SHA-256：
+`be3551c6cf628a4fe42d37b0a41de4af52a415ee4d9fa1ffcd7c73ad074ab07f`。
