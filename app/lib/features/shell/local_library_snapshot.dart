@@ -37,19 +37,13 @@ class LocalLibrarySnapshot {
         if (outline != null) {
           novels[id] = adapter.restoreOutline(outline, allowRestricted: true);
         }
-        final detail = repository.novelDetail(id);
-        if (detail != null) {
-          novels[id] = adapter.restoreDetails(detail, allowRestricted: true);
-        }
       } on Object {
         // One obsolete or corrupt title must not hide the rest of the shelf.
       }
     }
     for (final novel in knownNovels) {
       if (!novelIds.contains(novel.id)) continue;
-      if (novels[novel.id]?.hasChapterCatalog != true) {
-        novels[novel.id] = novel;
-      }
+      novels.putIfAbsent(novel.id, () => novel);
     }
     continuedReads = _libraryContinuedReads(novels, progress, repository);
     downloads = _libraryDownloads(
@@ -60,8 +54,9 @@ class LocalLibrarySnapshot {
       progress,
       savedBookmarks,
       repository.payloadIdsMissingIllustrations(),
+      repository,
     );
-    bookmarks = _libraryBookmarks(novels, savedBookmarks);
+    bookmarks = _libraryBookmarks(novels, savedBookmarks, repository);
     storageSummary = OfflineStorageSummary.fromCopies(copies);
   }
 
@@ -76,31 +71,41 @@ class LocalLibrarySnapshot {
     List<LocalReadingProgress> progress,
     SqliteOfflineRepository repository,
   ) {
-    return List.unmodifiable([
-      for (final item in progress)
-        if (novelsById[item.novelId] case final novel?)
-          LibraryContinuedRead(
-            novel: novel,
-            position: item.position,
-            progress: _readingFraction(repository, novel, item.position),
-            chapterLabel: _chapterLabel(novel, item.position.chapterId),
+    final result = <LibraryContinuedRead>[];
+    for (final item in progress) {
+      final novel = novelsById[item.novelId];
+      if (novel == null) continue;
+      final location = _chapterLocation(
+        repository,
+        novel,
+        item.position.chapterId,
+      );
+      result.add(
+        LibraryContinuedRead(
+          novel: novel,
+          position: item.position,
+          progress: _readingFraction(
+            repository,
+            novel.id,
+            location,
+            item.position,
           ),
-    ]);
+          chapterLabel: location?.title,
+        ),
+      );
+    }
+    return List.unmodifiable(result);
   }
 
   static double _readingFraction(
     SqliteOfflineRepository repository,
-    CatalogNovel novel,
+    String novelId,
+    LocalChapterLocation? location,
     ReadingPosition position,
   ) {
-    final chapters = novel.readerNovel?.chapters;
-    if (chapters == null || chapters.isEmpty) return 0;
-    final chapterIndex = chapters.indexWhere(
-      (chapter) => chapter.id == position.chapterId,
-    );
-    if (chapterIndex < 0) return 0;
+    if (location == null || location.chapterCount == 0) return 0;
     final blockCount = repository.chapterBlockCount(
-      novel.id,
+      novelId,
       position.chapterId,
     );
     final separator = position.blockId.lastIndexOf(':');
@@ -110,17 +115,32 @@ class LocalLibrarySnapshot {
     final chapterFraction = blockCount <= 0 || ordinal == null
         ? 0.0
         : ((ordinal + 1) / blockCount).clamp(0.0, 1.0);
-    return ((chapterIndex + chapterFraction) / chapters.length).clamp(0.0, 1.0);
+    return ((location.ordinal + chapterFraction) / location.chapterCount).clamp(
+      0.0,
+      1.0,
+    );
   }
 
-  static String? _chapterLabel(CatalogNovel novel, String chapterId) {
+  static LocalChapterLocation? _chapterLocation(
+    SqliteOfflineRepository repository,
+    CatalogNovel novel,
+    String chapterId,
+  ) {
+    final saved = repository.chapterLocation(novel.id, chapterId);
+    if (saved != null) return saved;
+    // In-memory catalog entries may not have reached the persistent cache yet.
     final chapters = novel.readerNovel?.chapters;
     if (chapters == null) return null;
-    for (final chapter in chapters) {
+    for (var index = 0; index < chapters.length; index++) {
+      final chapter = chapters[index];
       if (chapter.id == chapterId) {
-        return chapter.chineseTitle.isEmpty
-            ? chapter.japaneseTitle
-            : chapter.chineseTitle;
+        return LocalChapterLocation(
+          title: chapter.chineseTitle.isEmpty
+              ? chapter.japaneseTitle
+              : chapter.chineseTitle,
+          ordinal: index,
+          chapterCount: chapters.length,
+        );
       }
     }
     return null;
@@ -134,6 +154,7 @@ class LocalLibrarySnapshot {
     List<LocalReadingProgress> progress,
     List<LocalBookmark> bookmarks,
     Set<String> missingIllustrationPayloads,
+    SqliteOfflineRepository repository,
   ) {
     final lastActivity = <String, DateTime>{};
     for (final (novelId, time) in [
@@ -203,18 +224,20 @@ class LocalLibrarySnapshot {
       final intents = intentsByGroup[group] ?? const [];
       final copies = copiesByGroup[group] ?? const {};
       final tasks = tasksByGroup[group] ?? const {};
+      final chapterIds = {...copies.keys, ...tasks.keys}.toList();
       final catalog = novel.readerNovel?.chapters ?? const [];
-      final chapterOrder = {
-        for (var index = 0; index < catalog.length; index++)
-          catalog[index].id: index,
-      };
-      final chapterIds = {...copies.keys, ...tasks.keys}.toList()
-        ..sort((a, b) {
-          final aIndex = chapterOrder[a] ?? 1 << 30;
-          final bIndex = chapterOrder[b] ?? 1 << 30;
-          final order = aIndex.compareTo(bIndex);
-          return order == 0 ? a.compareTo(b) : order;
-        });
+      final chapterOrder = catalog.isEmpty
+          ? repository.chapterOrder(novel.id, chapterIds)
+          : {
+              for (var index = 0; index < catalog.length; index++)
+                catalog[index].id: index,
+            };
+      chapterIds.sort((a, b) {
+        final aIndex = chapterOrder[a] ?? 1 << 30;
+        final bIndex = chapterOrder[b] ?? 1 << 30;
+        final order = aIndex.compareTo(bIndex);
+        return order == 0 ? a.compareTo(b) : order;
+      });
       downloads.add(
         LibraryProtectedDownload(
           novel: novel,
@@ -285,6 +308,7 @@ class LocalLibrarySnapshot {
   static List<LibraryBookmarkItem> _libraryBookmarks(
     Map<String, CatalogNovel> novelsById,
     List<LocalBookmark> bookmarks,
+    SqliteOfflineRepository repository,
   ) {
     return List.unmodifiable([
       for (final bookmark in bookmarks)
@@ -293,7 +317,11 @@ class LocalLibrarySnapshot {
             id: bookmark.id,
             novel: novel,
             position: bookmark.position,
-            chapterLabel: _chapterLabel(novel, bookmark.position.chapterId),
+            chapterLabel: _chapterLocation(
+              repository,
+              novel,
+              bookmark.position.chapterId,
+            )?.title,
           ),
     ]);
   }

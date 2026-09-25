@@ -2,6 +2,19 @@ import '../model/reader_models.dart';
 
 enum ThemePreference { system, light, dark }
 
+/// Location in the local catalog, including retained offline chapters.
+class LocalChapterLocation {
+  const LocalChapterLocation({
+    required this.title,
+    required this.ordinal,
+    required this.chapterCount,
+  });
+
+  final String title;
+  final int ordinal;
+  final int chapterCount;
+}
+
 class LocalReadingProgress {
   const LocalReadingProgress({
     required this.novelId,

@@ -577,15 +577,27 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     }
   }
 
+  Future<CatalogNovel> _hydrateReaderNovel(CatalogNovel novel) async {
+    if (novel.hasChapterCatalog) return novel;
+    final local = _repository.novelDetail(novel.id);
+    if (local != null) {
+      // Opening a shelf row needs only this local TOC. Catalog refresh belongs
+      // to Details/download sync and must not become a prerequisite for reading.
+      return const NoveliaContentCacheAdapter().restoreDetails(
+        local,
+        allowRestricted: true,
+      );
+    }
+    return _loadNovelDetails(novel);
+  }
+
   Future<ReaderLaunchData> _loadReaderWindow(
     CatalogNovel novel,
     NovelChapter? selectedChapter,
     ReadingPosition? requestedPosition, {
     TranslationSource? translationSource,
   }) async {
-    final hydrated = novel.hasChapterCatalog
-        ? novel
-        : await _loadNovelDetails(novel);
+    final hydrated = await _hydrateReaderNovel(novel);
     final effectivePosition =
         requestedPosition ??
         (selectedChapter == null
@@ -616,18 +628,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   ) async {
     // Recheck the repository: a task may have been removed since this row was
     // painted. A different source's copy must not stand in for this group.
-    final current = _loadLibrarySnapshot().downloads
-        .where((item) => item.groupKey == download.groupKey)
-        .firstOrNull;
-    if (current == null) {
-      throw StateError('This download is no longer available.');
-    }
     final payloadsByChapter = <String, List<String>>{};
     for (final copy in _repository.listCopies(
-      novelId: current.novel.id,
+      novelId: download.novel.id,
       kind: OfflineCopyKind.offlineDownload,
     )) {
-      if (copy.translationSource != current.translationSource) continue;
+      if (copy.translationSource != download.translationSource) continue;
       final payloadId = copy.payloadId;
       if (payloadId != null) {
         payloadsByChapter.putIfAbsent(copy.chapterId, () => []).add(payloadId);
@@ -636,9 +642,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     if (payloadsByChapter.isEmpty) {
       throw StateError('No downloaded chapter is readable.');
     }
-    final novel = current.novel.hasChapterCatalog
-        ? current.novel
-        : await _loadNovelDetails(current.novel);
+    final novel = await _hydrateReaderNovel(download.novel);
     final chapters = novel.readerNovel!.chapters;
     final saved = _repository.readingProgressFor(novel.id)?.position;
     final savedChapter = chapters
@@ -652,9 +656,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     final target = candidates
         .where(
           (chapter) => (payloadsByChapter[chapter.id] ?? const []).any(
-            (id) =>
-                _repository.chapterPayloadById(id)?.japaneseBlocks.isNotEmpty ==
-                true,
+            _repository.hasReadableChapterPayload,
           ),
         )
         .firstOrNull;
@@ -666,7 +668,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
       novel,
       target,
       position,
-      translationSource: current.translationSource,
+      translationSource: download.translationSource,
     );
     final loadedTarget = data.novel.chapters
         .where((chapter) => chapter.id == target.id)
@@ -682,7 +684,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           ReadingPosition(chapterId: target.id, blockId: firstBlock.id),
       startAtChapterTitle: data.startAtChapterTitle,
       dataSource: data.dataSource,
-      initialTranslationSource: current.translationSource,
+      initialTranslationSource: download.translationSource,
     );
   }
 

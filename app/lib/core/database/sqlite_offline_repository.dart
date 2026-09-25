@@ -530,6 +530,121 @@ final class SqliteOfflineRepository
     return rows.isEmpty ? null : _outlineFromRow(rows.single);
   }
 
+  /// Shelf labels/progress do not need to hydrate every book's entire TOC.
+  LocalChapterLocation? chapterLocation(String novelId, String chapterId) {
+    _checkOpen();
+    final rows = _database.select(
+      'SELECT c.chinese_title, c.japanese_title, c.chapter_order, s.section_order '
+      'FROM cached_toc_chapters c JOIN cached_toc_sections s '
+      'ON c.novel_id = s.novel_id AND c.section_id = s.section_id '
+      'WHERE c.novel_id = ? AND c.chapter_id = ?;',
+      [novelId, chapterId],
+    );
+    final retained = _retainedChapterRows(novelId);
+    final remoteCount = _int(
+      _database.select(
+        'SELECT COUNT(*) AS count FROM cached_toc_chapters WHERE novel_id = ?;',
+        [novelId],
+      ).single['count'],
+    );
+    if (rows.isEmpty) {
+      final index = retained.indexWhere(
+        (row) => row['chapter_id'] == chapterId,
+      );
+      if (index < 0) return null;
+      return LocalChapterLocation(
+        title: _chapterTitle(retained[index]),
+        ordinal: remoteCount + index,
+        chapterCount: remoteCount + retained.length,
+      );
+    }
+    final row = rows.single;
+    final ordinal = _int(
+      _database.select(
+        'SELECT COUNT(*) AS count FROM cached_toc_chapters c '
+        'JOIN cached_toc_sections s '
+        'ON c.novel_id = s.novel_id AND c.section_id = s.section_id '
+        'WHERE c.novel_id = ? AND (s.section_order < ? '
+        'OR (s.section_order = ? AND c.chapter_order < ?));',
+        [
+          novelId,
+          row['section_order'],
+          row['section_order'],
+          row['chapter_order'],
+        ],
+      ).single['count'],
+    );
+    return LocalChapterLocation(
+      title: _chapterTitle(row),
+      ordinal: ordinal,
+      chapterCount: remoteCount + retained.length,
+    );
+  }
+
+  /// Orders just the chapters represented in a download group. No body or
+  /// unrelated book's catalog is read. Chunking also supports older SQLite
+  /// builds with a 999-variable limit.
+  Map<String, int> chapterOrder(String novelId, Iterable<String> chapterIds) {
+    _checkOpen();
+    final ids = chapterIds.toSet().toList();
+    final rows = <Row>[];
+    for (var offset = 0; offset < ids.length; offset += 400) {
+      final chunk = ids.skip(offset).take(400).toList();
+      rows.addAll(
+        _database.select(
+          'SELECT c.chapter_id, c.chapter_order, s.section_order '
+          'FROM cached_toc_chapters c JOIN cached_toc_sections s '
+          'ON c.novel_id = s.novel_id AND c.section_id = s.section_id '
+          'WHERE c.novel_id = ? '
+          'AND c.chapter_id IN (${List.filled(chunk.length, '?').join(',')});',
+          [novelId, ...chunk],
+        ),
+      );
+    }
+    rows.sort((a, b) {
+      final section = _int(
+        a['section_order'],
+      ).compareTo(_int(b['section_order']));
+      return section != 0
+          ? section
+          : _int(a['chapter_order']).compareTo(_int(b['chapter_order']));
+    });
+    final result = <String, int>{};
+    for (final row in rows) {
+      result[_string(row['chapter_id'])] = result.length;
+    }
+    if (result.length != ids.length) {
+      final requested = ids.toSet();
+      for (final row in _retainedChapterRows(novelId)) {
+        final id = _string(row['chapter_id']);
+        if (requested.contains(id)) result[id] = result.length;
+      }
+    }
+    return result;
+  }
+
+  static String _chapterTitle(Row row) {
+    final chinese = _string(row['chinese_title']);
+    return chinese.isEmpty ? _string(row['japanese_title']) : chinese;
+  }
+
+  List<Row> _retainedChapterRows(String novelId) {
+    final seen = <String>{};
+    return _database
+        .select(
+          'SELECT p.chapter_id, p.chapter_index, p.chinese_title, p.japanese_title, '
+          'p.published_at_us FROM cached_chapter_payloads p '
+          'WHERE p.novel_id = ? AND EXISTS (SELECT 1 FROM offline_chapter_copies c '
+          'WHERE c.payload_id = p.payload_id) AND NOT EXISTS '
+          '(SELECT 1 FROM cached_toc_chapters t '
+          'WHERE t.novel_id = p.novel_id AND t.chapter_id = p.chapter_id) '
+          'ORDER BY p.chapter_index, p.fetched_at_us DESC;',
+          [novelId],
+        )
+        .where((row) => seen.add(_string(row['chapter_id'])))
+        .toList();
+  }
+
   @override
   Set<String> payloadIdsMissingIllustrations({String? novelId}) {
     _checkOpen();
@@ -585,20 +700,9 @@ final class SqliteOfflineRepository
     }
     // A remote TOC can remove a chapter after it was downloaded. Keep a local
     // entry from the retained payload header, without decoding text or images.
-    final known = {
-      for (final section in sections)
-        for (final chapter in section.chapters) chapter.id,
-    };
     final retained = <CachedTocChapter>[];
-    for (final saved in _database.select(
-      'SELECT p.chapter_id, p.chapter_index, p.chinese_title, p.japanese_title, '
-      'p.published_at_us FROM cached_chapter_payloads p '
-      'WHERE p.novel_id = ? AND EXISTS (SELECT 1 FROM offline_chapter_copies c '
-      'WHERE c.payload_id = p.payload_id) ORDER BY p.chapter_index, p.fetched_at_us DESC;',
-      [novelId],
-    )) {
+    for (final saved in _retainedChapterRows(novelId)) {
       final id = _string(saved['chapter_id']);
-      if (!known.add(id)) continue;
       retained.add(
         CachedTocChapter(
           id: id,
@@ -666,6 +770,19 @@ final class SqliteOfflineRepository
           ).length;
   }
 
+  bool hasReadableChapterPayload(String payloadId) {
+    _checkOpen();
+    final rows = _database.select(
+      'SELECT japanese_blocks_json FROM cached_chapter_payloads WHERE payload_id = ?;',
+      [payloadId],
+    );
+    return rows.isNotEmpty &&
+        _decodeStringList(
+          rows.single['japanese_blocks_json'],
+          'japanese_blocks_json',
+        ).isNotEmpty;
+  }
+
   @override
   CachedChapterPayload? downloadedChapterPayload({
     required String novelId,
@@ -720,32 +837,43 @@ final class SqliteOfflineRepository
           detail.outline.id,
         ],
       );
+      // Foreground refresh and download resume often receive the same TOC.
+      // Compare stored metadata, not novelDetail(), which also adds retained
+      // offline chapters that are intentionally absent from the remote TOC.
+      if (_tocMatches(detail)) return;
       _database.execute('DELETE FROM cached_toc_sections WHERE novel_id = ?;', [
         detail.outline.id,
       ]);
-      for (
-        var sectionOrder = 0;
-        sectionOrder < detail.sections.length;
-        sectionOrder++
-      ) {
-        final section = detail.sections[sectionOrder];
-        _database.execute(
-          'INSERT INTO cached_toc_sections '
-          '(novel_id, section_id, section_order, title) VALUES (?, ?, ?, ?);',
-          [detail.outline.id, section.id, sectionOrder, section.title],
-        );
+      final insertSection = _database.prepare(
+        'INSERT INTO cached_toc_sections '
+        '(novel_id, section_id, section_order, title) VALUES (?, ?, ?, ?);',
+      );
+      final insertChapter = _database.prepare(
+        'INSERT INTO cached_toc_chapters '
+        '(novel_id, chapter_id, section_id, chapter_order, chapter_index, '
+        'chinese_title, japanese_title, published_at_us) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?);',
+      );
+      try {
         for (
-          var chapterOrder = 0;
-          chapterOrder < section.chapters.length;
-          chapterOrder++
+          var sectionOrder = 0;
+          sectionOrder < detail.sections.length;
+          sectionOrder++
         ) {
-          final chapter = section.chapters[chapterOrder];
-          _database.execute(
-            'INSERT INTO cached_toc_chapters '
-            '(novel_id, chapter_id, section_id, chapter_order, chapter_index, '
-            'chinese_title, japanese_title, published_at_us) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?);',
-            [
+          final section = detail.sections[sectionOrder];
+          insertSection.execute([
+            detail.outline.id,
+            section.id,
+            sectionOrder,
+            section.title,
+          ]);
+          for (
+            var chapterOrder = 0;
+            chapterOrder < section.chapters.length;
+            chapterOrder++
+          ) {
+            final chapter = section.chapters[chapterOrder];
+            insertChapter.execute([
               detail.outline.id,
               chapter.id,
               section.id,
@@ -756,11 +884,52 @@ final class SqliteOfflineRepository
               chapter.publishedAt == null
                   ? null
                   : _timestamp(chapter.publishedAt!),
-            ],
-          );
+            ]);
+          }
         }
+      } finally {
+        insertSection.close();
+        insertChapter.close();
       }
     });
+  }
+
+  bool _tocMatches(CachedNovelDetail detail) {
+    final sections = _database.select(
+      'SELECT section_id, title FROM cached_toc_sections '
+      'WHERE novel_id = ? ORDER BY section_order;',
+      [detail.outline.id],
+    );
+    if (sections.length != detail.sections.length) return false;
+    for (var i = 0; i < sections.length; i++) {
+      if (sections[i]['section_id'] != detail.sections[i].id ||
+          sections[i]['title'] != detail.sections[i].title) {
+        return false;
+      }
+    }
+    final chapters = _database.select(
+      'SELECT c.* FROM cached_toc_chapters c JOIN cached_toc_sections s '
+      'ON c.novel_id = s.novel_id AND c.section_id = s.section_id '
+      'WHERE c.novel_id = ? ORDER BY s.section_order, c.chapter_order;',
+      [detail.outline.id],
+    );
+    var index = 0;
+    for (final section in detail.sections) {
+      for (final chapter in section.chapters) {
+        if (index >= chapters.length) return false;
+        final row = chapters[index++];
+        if (row['section_id'] != section.id ||
+            row['chapter_id'] != chapter.id ||
+            row['chapter_index'] != chapter.index ||
+            row['chinese_title'] != chapter.chineseTitle ||
+            row['japanese_title'] != chapter.japaneseTitle ||
+            row['published_at_us'] !=
+                chapter.publishedAt?.microsecondsSinceEpoch) {
+          return false;
+        }
+      }
+    }
+    return index == chapters.length;
   }
 
   @override

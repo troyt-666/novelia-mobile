@@ -129,9 +129,17 @@ void main() {
       repository.upsertNovelDetail(shortened);
       final live = adapter.restoreDetails(shortened);
       final shelf = LocalLibrarySnapshot.load(repository, knownNovels: [live]);
-      final novel = shelf.downloads
-          .firstWhere((item) => item.novel.id == novelId)
-          .novel;
+      final download = shelf.downloads.firstWhere(
+        (item) => item.novel.id == novelId,
+      );
+      expect(
+        download.chapters.map((chapter) => chapter.chapterId),
+        contains('c2'),
+      );
+      // Shelf rows stay lightweight; opening the book hydrates only this TOC.
+      final novel = adapter.restoreDetails(
+        repository.novelDetail(download.novel.id)!,
+      );
       expect(
         novel.readerNovel!.chapters.map((chapter) => chapter.id),
         contains('c2'),
@@ -145,6 +153,18 @@ void main() {
       expect(
         shelf.bookmarks.firstWhere((item) => item.novel.id == novelId).position,
         offlineLatestPosition,
+      );
+      expect(
+        shelf.bookmarks
+            .firstWhere((item) => item.novel.id == novelId)
+            .chapterLabel,
+        '第2章',
+      );
+      expect(
+        shelf.continuedReads
+            .firstWhere((item) => item.novel.id == novelId)
+            .progress,
+        1,
       );
       final launch =
           await NoveliaReaderWindowFactory(
