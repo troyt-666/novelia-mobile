@@ -275,3 +275,47 @@ macOS DMG、附件上传和更新源部署均完成。Release 现含上述三个
 
 `JFZ-Reader-v1.0.0+23-macos.dmg` 为 28,299,109 字节，SHA-256：
 `8cb3bdcaf3d1665c70445e30ab817e9341937b828bd41d476a43893bf2ddd101`。
+
+## 2026-10-08 · 第 24 版评论服务迁移修复
+
+`1.0.0（24）` 的源码标签为 `v1.0.0+24`，发布提交 `82e25bb`，评论修复提交
+`93a69fd`。适配网站迁移到独立服务后的评论 API，恢复网络小说和文库小说的
+评论、回复、分页及时间解析，详见[评论服务迁移修复](comment-service-migration-2026-10-08.md)。
+
+约 04:01（北京时间），AppTest 接受第 24 版提交。测试版本 ID 为
+`2056310307449507392`，软件包 ID 为 `2056309785879404928`。沿用原有“内部测试”
+群组（1 人），软件包加密开启，未创建公开邀请链接或额外发送通知。
+测试截止时间为 2027-01-05 23:59:59（北京时间）。提交后详情从“预审中”进入
+“正在审核”，随后确认“应用上架审核通过”，状态为 **“正在测试”**（`releaseState: 0`）。
+
+签名 APP `JFZ-Reader-1.0.0-24-AppTest.app` 为 13,569,960 字节，SHA-256：
+`45abc5224d547f0845ad7552ffa0767e56d5655dbdd23762a6e42693dd6db790`。
+包名、构建号、release 模式、发布签名和 AppTest Profile 校验通过。
+
+从同次未签名 APP 提取的 `JFZ-Reader-v1.0.0+24-harmony-unsigned.hap`
+为 28,621,892 字节，SHA-256：
+`bd7823d345018270cf7762d3501aa91f75f2f2ffce710c2526838a2509f24848`。
+签名工具确认不含 HAP 签名块，GitHub 附件摘要与本地一致。
+
+发布前通过 **424 项完整 Flutter 回归**、**10 项 AppTest 工具测试**和静态检查。
+修复后的 Dart 网关匿名读取真实文库及网络小说的前两页均成功。
+本次没有执行用户手机更新安装或各平台原生 UI 验证。
+
+鸿蒙提交成功后，推送标签启动
+[GitHub 发布流程](https://github.com/troyt-666/novelia-mobile/actions/runs/37678974316)，
+[第 24 版 Release](https://github.com/troyt-666/novelia-mobile/releases/tag/v1.0.0%2B24)
+全部流程成功：云端检查、Android 签名 APK、iOS 未签名 IPA、macOS DMG、
+Release 附件上传及更新源部署均完成，共四个附件。
+
+已回读公开 `latest.json`、AltStore 源和 Sparkle appcast，全部为 **1.0.0（24）**。
+下载地址（规范化 URL 编码后）、大小和 SHA-256 与 GitHub 附件一致；
+Sparkle 签名和文件大小对应本版 DMG。
+
+`JFZ-Reader-v1.0.0+24-android.apk` 为 66,114,880 字节，SHA-256：
+`53ace55659b2213a5e3ccb9a427f396995bc94f26372fccbe5bd35032b6951dc`。
+
+`JFZ-Reader-v1.0.0+24-ios-unsigned.ipa` 为 10,477,419 字节，SHA-256：
+`ad19c98f3ec3b804ce517a2d025dbbd944b2eb3a7325a5fa014d406f3aa73b20`。
+
+`JFZ-Reader-v1.0.0+24-macos.dmg` 为 28,296,260 字节，SHA-256：
+`d1fbcc943914aee2177c2c11a38c665595e6ed9f7c1a7094df94c125b67c9003`。
