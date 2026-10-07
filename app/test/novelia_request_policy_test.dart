@@ -13,6 +13,7 @@ void main() {
       ),
       isTrue,
     );
+    expect(isAllowedNoveliaRequestUri(noveliaCommentsBaseUri), isTrue);
     expect(
       isAllowedNoveliaRequestUri(Uri.parse('http://127.0.0.1:8123/api/novel')),
       isTrue,
@@ -24,6 +25,12 @@ void main() {
   });
 
   test('rejects cleartext and off-allowlist hosts', () {
+    expect(
+      isAllowedNoveliaRequestUri(
+        noveliaCommentsBaseUri.replace(scheme: 'http'),
+      ),
+      isFalse,
+    );
     expect(
       isAllowedNoveliaRequestUri(Uri.parse('http://n.novelia.cc/api/novel')),
       isFalse,

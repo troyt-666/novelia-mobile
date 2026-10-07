@@ -102,13 +102,24 @@ class NoveliaJsonCodec {
     );
   }
 
-  NoveliaPage<NoveliaComment> decodeCommentPage(Object? json) {
+  NoveliaPage<NoveliaComment> decodeCommentPage(
+    Object? json, {
+    int pageSize = 10,
+  }) {
+    if (pageSize <= 0) throw ArgumentError.value(pageSize, 'pageSize');
     final root = _map(json, 'comment page');
+    final total = _integer(root['total'], 'comment total');
+    if (total < 0) {
+      throw const NoveliaGatewayException(
+        NoveliaGatewayFailureKind.invalidResponse,
+        'The comment total must not be negative.',
+      );
+    }
     return NoveliaPage(
       items: _list(root['items'], 'comment items')
           .map((item) => _decodeComment(_map(item, 'comment'), depth: 0))
           .toList(growable: false),
-      pageCount: _integer(root['pageNumber'], 'pageNumber'),
+      pageCount: (total + pageSize - 1) ~/ pageSize,
     );
   }
 
@@ -149,19 +160,30 @@ class NoveliaJsonCodec {
         'Novel Comment reply nesting exceeded the supported limit.',
       );
     }
-    final user = _map(value['user'], 'comment.user');
+    final status = _integer(value['status'], 'comment.status');
+    final createdAt = DateTime.tryParse(
+      _string(value['createdAt'], 'comment.createdAt'),
+    );
+    if (status < 0 || status > 2 || createdAt == null) {
+      throw const NoveliaGatewayException(
+        NoveliaGatewayFailureKind.invalidResponse,
+        'A Novel Comment had an invalid status or creation time.',
+      );
+    }
+    final replies = value['replies'] == null
+        ? const <Object?>[]
+        : _list(
+            _map(value['replies'], 'comment.replies')['items'],
+            'comment.replies.items',
+          );
     return NoveliaComment(
-      id: _string(value['id'], 'comment.id'),
-      username: _string(user['username'], 'comment.user.username'),
+      id: _integer(value['id'], 'comment.id').toString(),
+      username: _string(value['authorUsername'], 'comment.authorUsername'),
       content: _string(value['content'], 'comment.content'),
-      hidden: value['hidden'] == true,
-      createdAt:
-          _epochSeconds(value['createAt'], 'comment.createAt') ??
-          (throw const NoveliaGatewayException(
-            NoveliaGatewayFailureKind.invalidResponse,
-            'A Novel Comment was missing its creation time.',
-          )),
-      replies: _optionalList(value['replies'], 'comment.replies')
+      // Both hidden and deleted comments must suppress their original body.
+      hidden: status != 0,
+      createdAt: createdAt.toUtc(),
+      replies: replies
           .map(
             (reply) =>
                 _decodeComment(_map(reply, 'comment reply'), depth: depth + 1),
@@ -187,11 +209,6 @@ class NoveliaJsonCodec {
       NoveliaGatewayFailureKind.invalidResponse,
       'Expected $field to be a list.',
     );
-  }
-
-  static List<Object?> _optionalList(Object? value, String field) {
-    if (value == null) return const [];
-    return _list(value, field);
   }
 
   static String _string(Object? value, String field) {
@@ -257,16 +274,19 @@ class NoveliaJsonCodec {
 class HttpNoveliaGateway implements NoveliaGateway {
   HttpNoveliaGateway({
     Uri? baseUri,
+    Uri? commentsBaseUri,
     HttpClient? client,
     this.accessTokenProvider,
     this.requestTimeout = const Duration(seconds: 20),
     this.maximumResponseBytes = 32 * 1024 * 1024,
     this.codec = const NoveliaJsonCodec(),
   }) : baseUri = baseUri ?? Uri.parse('https://n.novelia.cc/api/'),
+       commentsBaseUri = commentsBaseUri ?? noveliaCommentsBaseUri,
        _client = client ?? HttpClient(),
        _ownsClient = client == null;
 
   final Uri baseUri;
+  final Uri commentsBaseUri;
   final Duration requestTimeout;
   final int maximumResponseBytes;
   final HttpClient _client;
@@ -321,14 +341,10 @@ class HttpNoveliaGateway implements NoveliaGateway {
     int pageSize = 10,
   }) async {
     final json = await _getJson(
-      'comment',
-      query: {
-        'page': '$page',
-        'pageSize': '$pageSize',
-        'site': key.commentSite,
-      },
+      commentsBaseUri.resolve(_segment(key.commentSite)).toString(),
+      query: {'page': '${page + 1}', 'page_size': '$pageSize'},
     );
-    return codec.decodeCommentPage(json);
+    return codec.decodeCommentPage(json, pageSize: pageSize);
   }
 
   void close() {

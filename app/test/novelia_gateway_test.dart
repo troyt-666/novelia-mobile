@@ -134,35 +134,136 @@ void main() {
     expect(chapter.blocks.single.illustrationUri, Uri.parse(imageUrl));
   });
 
-  test('decodes one bounded comment page with embedded replies', () {
+  test('decodes migrated comments, dates and embedded reply pages', () {
     final page = codec.decodeCommentPage({
+      'total': 11,
       'items': [
         {
-          'id': 'comment-1',
-          'user': {'username': '读者'},
+          'id': 123,
+          'authorUsername': '读者',
           'content': '节奏很好。',
-          'hidden': false,
-          'createAt': 1_787_000_000,
-          'numReplies': 1,
-          'replies': [
-            {
-              'id': 'reply-1',
-              'user': {'username': '另一位读者'},
-              'content': '同感。',
-              'hidden': false,
-              'createAt': 1_787_000_010,
-              'numReplies': 0,
-              'replies': <Object?>[],
-            },
-          ],
+          'status': 0,
+          'createdAt': '2026-10-07T13:27:04.123Z',
+          'replyCount': 1,
+          'replies': {
+            'total': 1,
+            'items': [
+              {
+                'id': 124,
+                'authorUsername': '另一位读者',
+                'content': '同感。',
+                'status': 1,
+                'createdAt': '2026-10-07T21:28:00+08:00',
+              },
+            ],
+          },
         },
       ],
-      'pageNumber': 2,
     });
 
     expect(key.commentSite, 'web-fixture-novel-1');
     expect(page.pageCount, 2);
-    expect(page.items.single.replies.single.id, 'reply-1');
+    expect(page.items.single.id, '123');
+    expect(page.items.single.username, '读者');
+    expect(page.items.single.hidden, isFalse);
+    expect(
+      page.items.single.createdAt,
+      DateTime.utc(2026, 10, 7, 13, 27, 4, 123),
+    );
+    final reply = page.items.single.replies.single;
+    expect(reply.id, '124');
+    expect(reply.hidden, isTrue);
+    expect(reply.createdAt, DateTime.utc(2026, 10, 7, 13, 28));
+    expect(reply.replies, isEmpty);
+  });
+
+  test('calculates comment pages from totals and requested page size', () {
+    for (final (total, size, pages) in [
+      (0, 10, 0),
+      (10, 10, 1),
+      (11, 10, 2),
+      (11, 5, 3),
+    ]) {
+      expect(
+        codec.decodeCommentPage({
+          'total': total,
+          'items': [],
+        }, pageSize: size).pageCount,
+        pages,
+      );
+    }
+  });
+
+  test('suppresses deleted comments and rejects malformed forum data', () {
+    final comment = <String, Object?>{
+      'id': 125,
+      'authorUsername': '读者',
+      'content': '已删除的正文',
+      'status': 2,
+      'createdAt': '2026-10-07T13:27:04Z',
+      'replies': {'total': 0, 'items': []},
+    };
+    expect(
+      codec
+          .decodeCommentPage({
+            'total': 1,
+            'items': [comment],
+          })
+          .items
+          .single
+          .hidden,
+      isTrue,
+    );
+    for (final override in [
+      {'createdAt': 'invalid'},
+      {'status': 3},
+      {'id': '125'},
+      {'replies': []},
+    ]) {
+      expect(
+        () => codec.decodeCommentPage({
+          'total': 1,
+          'items': [
+            {...comment, ...override},
+          ],
+        }),
+        throwsA(isA<NoveliaGatewayException>()),
+      );
+    }
+    expect(
+      () => codec.decodeCommentPage({'total': -1, 'items': []}),
+      throwsA(isA<NoveliaGatewayException>()),
+    );
+  });
+
+  test('web comments use the forum service and one-based pages', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final requests = <Uri>[];
+    final subscription = server.listen((request) async {
+      requests.add(request.uri);
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'total': 11, 'items': []}));
+      await request.response.close();
+    });
+    addTearDown(subscription.cancel);
+    final gateway = HttpNoveliaGateway(
+      commentsBaseUri: Uri.parse(
+        'http://127.0.0.1:${server.port}/api/v1/external/comment/novel/',
+      ),
+    );
+    addTearDown(gateway.close);
+    expect((await gateway.listComments(key)).pageCount, 2);
+    expect(
+      (await gateway.listComments(key, page: 1, pageSize: 5)).pageCount,
+      3,
+    );
+    expect(
+      requests.map((uri) => uri.path),
+      everyElement('/api/v1/external/comment/novel/web-fixture-novel-1'),
+    );
+    expect(requests.first.queryParameters, {'page': '1', 'page_size': '10'});
+    expect(requests.last.queryParameters, {'page': '2', 'page_size': '5'});
   });
 
   test('fails closed when an aligned source changes type', () {

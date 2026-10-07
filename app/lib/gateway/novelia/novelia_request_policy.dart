@@ -2,7 +2,16 @@ import 'dart:io';
 
 /// Production Novelia hosts. Loopback remains allowed so tests can inject
 /// local HTTP servers. HTTPS is required for every non-loopback host.
-const noveliaAllowedHosts = <String>{'n.novelia.cc', 'auth.novelia.cc'};
+const noveliaAllowedHosts = <String>{
+  'n.novelia.cc',
+  'auth.novelia.cc',
+  'forum.novelia.cc',
+};
+
+/// Novel comment endpoint verified against the October 2026 deployment.
+final noveliaCommentsBaseUri = Uri.parse(
+  'https://forum.novelia.cc/api/v1/external/comment/novel/',
+);
 
 bool isAllowedNoveliaRequestUri(Uri uri) {
   final host = uri.host.trim();

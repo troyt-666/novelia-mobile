@@ -111,13 +111,20 @@ void main() {
         authorization: request.headers.value(HttpHeaders.authorizationHeader),
       ));
       request.response.headers.contentType = ContentType.json;
-      request.response.write('{"items":[],"pageNumber":2}');
+      request.response.write(
+        request.uri.path.contains('/external/comment/')
+            ? '{"items":[],"total":20}'
+            : '{"items":[],"pageNumber":2}',
+      );
       await request.response.close();
     });
     addTearDown(subscription.cancel);
     String? token = 'fixture-session-one';
     final gateway = HttpNoveliaWenkuGateway(
       baseUri: Uri.parse('http://127.0.0.1:${server.port}/api/'),
+      commentsBaseUri: Uri.parse(
+        'http://127.0.0.1:${server.port}/api/v1/external/comment/novel/',
+      ),
       accessTokenProvider: ({bool forceRefresh = false}) => token,
     );
     addTearDown(gateway.close);
@@ -275,7 +282,7 @@ void main() {
   }
 
   test(
-    'Wenku comments use the shared endpoint with a Wenku site and zero-based pages',
+    'Wenku comments use the forum endpoint with a Wenku subject and one-based pages',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
@@ -285,22 +292,26 @@ void main() {
         request.response.headers.contentType = ContentType.json;
         request.response.write(
           jsonEncode({
-            'pageNumber': 3,
+            'total': 21,
             'items': [
               {
-                'id': 'fixture-comment',
-                'user': {'username': '虚构读者'},
+                'id': 123,
+                'authorUsername': '虚构读者',
+                'status': 0,
                 'content': '虚构评论',
-                'createAt': 1789689600,
-                'replies': [
-                  {
-                    'id': 'fixture-reply',
-                    'user': {'username': '虚构回复者'},
-                    'content': '',
-                    'hidden': true,
-                    'createAt': 1789689601,
-                  },
-                ],
+                'createdAt': '2026-10-07T13:27:04Z',
+                'replies': {
+                  'total': 1,
+                  'items': [
+                    {
+                      'id': 124,
+                      'authorUsername': '虚构回复者',
+                      'content': '',
+                      'status': 1,
+                      'createdAt': '2026-10-07T13:28:04Z',
+                    },
+                  ],
+                },
               },
             ],
           }),
@@ -309,22 +320,19 @@ void main() {
       });
       addTearDown(subscription.cancel);
       final gateway = HttpNoveliaWenkuGateway(
-        baseUri: Uri.parse('http://127.0.0.1:${server.port}/api/'),
+        commentsBaseUri: Uri.parse(
+          'http://127.0.0.1:${server.port}/api/v1/external/comment/novel/',
+        ),
       );
       addTearDown(gateway.close);
       final first = await gateway.listComments('fixture-wenku');
       await gateway.listComments('fixture-wenku', page: 1, pageSize: 5);
-      expect(requests.map((uri) => uri.path), ['/api/comment', '/api/comment']);
-      expect(requests.first.queryParameters, {
-        'site': 'wenku-fixture-wenku',
-        'page': '0',
-        'pageSize': '10',
-      });
-      expect(requests.last.queryParameters, {
-        'site': 'wenku-fixture-wenku',
-        'page': '1',
-        'pageSize': '5',
-      });
+      expect(
+        requests.map((uri) => uri.path),
+        everyElement('/api/v1/external/comment/novel/wenku-fixture-wenku'),
+      );
+      expect(requests.first.queryParameters, {'page': '1', 'page_size': '10'});
+      expect(requests.last.queryParameters, {'page': '2', 'page_size': '5'});
       expect(first.pageCount, 3);
       expect(first.items.single.content, '虚构评论');
       expect(first.items.single.replies.single.hidden, isTrue);

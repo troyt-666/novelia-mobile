@@ -166,16 +166,19 @@ class WenkuJsonCodec {
 class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
   HttpNoveliaWenkuGateway({
     Uri? baseUri,
+    Uri? commentsBaseUri,
     HttpClient? client,
     this.requestTimeout = const Duration(seconds: 30),
     this.maximumEpubBytes = 64 * 1024 * 1024,
     this.codec = const WenkuJsonCodec(),
     this.accessTokenProvider,
   }) : baseUri = baseUri ?? Uri.parse('https://n.novelia.cc/api/'),
+       commentsBaseUri = commentsBaseUri ?? noveliaCommentsBaseUri,
        _client = client ?? HttpClient(),
        _ownsClient = client == null;
 
   final Uri baseUri;
+  final Uri commentsBaseUri;
   final Duration requestTimeout;
   final int maximumEpubBytes;
   final WenkuJsonCodec codec;
@@ -201,13 +204,10 @@ class HttpNoveliaWenkuGateway implements NoveliaWenkuGateway {
     int pageSize = 10,
   }) async => const NoveliaJsonCodec().decodeCommentPage(
     await _getJson(
-      'comment',
-      query: {
-        'site': 'wenku-$novelId',
-        'page': '$page',
-        'pageSize': '$pageSize',
-      },
+      commentsBaseUri.resolve(_segment('wenku-$novelId')).toString(),
+      query: {'page': '${page + 1}', 'page_size': '$pageSize'},
     ),
+    pageSize: pageSize,
   );
 
   @override
