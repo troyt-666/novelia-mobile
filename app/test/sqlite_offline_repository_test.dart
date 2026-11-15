@@ -13,6 +13,41 @@ void main() {
   final t0 = DateTime.utc(2026, 8, 17, 8);
 
   group('database schema', () {
+    test(
+      'v10 migration preserves data and indexes exact chapter reads and touches',
+      () {
+        final database = NoveliaDatabase.openInMemory();
+        addTearDown(database.close);
+        final repository = SqliteOfflineRepository.fromDatabase(database);
+        addTearDown(repository.close);
+        _saveCacheCopy(repository, id: 'kept', chapterId: 'c1', storedAt: t0);
+        database.execute('DROP INDEX offline_copies_chapter_idx;');
+        database.userVersion = 10;
+        NoveliaDatabase.initialize(database);
+        expect(repository.copyById('kept')!.chapterId, 'c1');
+        expect(database.userVersion, NoveliaDatabase.currentSchemaVersion);
+        final updatePlan = database.select(
+          'EXPLAIN QUERY PLAN UPDATE offline_chapter_copies SET last_read_at_us = ? '
+          'WHERE novel_id = ? AND chapter_id = ? AND last_read_at_us < ?;',
+          [2, 'novel', 'c1', 2],
+        );
+        expect(
+          updatePlan.map((r) => r['detail']).join(),
+          contains('novel_id=? AND chapter_id=?'),
+        );
+        final readPlan = database.select(
+          'EXPLAIN QUERY PLAN SELECT p.* FROM offline_chapter_copies c '
+          'JOIN cached_chapter_payloads p ON p.payload_id = c.payload_id '
+          'WHERE c.novel_id = ? AND c.chapter_id = ? AND c.translation_source = ? '
+          'AND c.copy_kind = ? ORDER BY c.stored_at_us DESC, c.id DESC LIMIT 1;',
+          ['novel', 'c1', 'sakura', 'offlineDownload'],
+        );
+        final details = readPlan.map((r) => r['detail']).join();
+        expect(details, contains('novel_id=? AND chapter_id=?'));
+        expect(details, isNot(contains('TEMP B-TREE')));
+        expect(repository.passesIntegrityCheck, isTrue);
+      },
+    );
     test('new in-memory database opens at current healthy schema', () {
       final repository = SqliteOfflineRepository.openInMemory();
       addTearDown(repository.close);
@@ -90,6 +125,29 @@ void main() {
   });
 
   group('durable offline repository', () {
+    test(
+      'reader exit saves progress and recency without reopening the route',
+      () {
+        final repository = SqliteOfflineRepository.openInMemory();
+        addTearDown(repository.close);
+        _saveCacheCopy(repository, id: 'c1', chapterId: 'c1', storedAt: t0);
+        repository.saveLastRoute(
+          LastRouteState(routeName: '/library', updatedAt: t0),
+        );
+        final progress = LocalReadingProgress(
+          novelId: 'novel',
+          position: const ReadingPosition(chapterId: 'c1', blockId: 'b3'),
+          updatedAt: t0.add(const Duration(seconds: 3)),
+        );
+        repository.saveReaderPosition(progress, restoreRoute: false);
+        expect(
+          repository.readingProgressFor('novel')!.position,
+          progress.position,
+        );
+        expect(repository.copyById('c1')!.lastReadAt, progress.updatedAt);
+        expect(repository.lastRoute()!.routeName, '/library');
+      },
+    );
     test('reader stop commits progress, cache time and route atomically', () {
       final database = sqlite3.openInMemory();
       addTearDown(database.close);
@@ -641,6 +699,11 @@ void _saveLocalState(SqliteOfflineRepository repository, DateTime now) {
 
 void _createVersion5SettingsFixture(Database database, DateTime now) {
   database.execute('''
+    CREATE TABLE offline_chapter_copies (
+      id TEXT NOT NULL PRIMARY KEY, novel_id TEXT NOT NULL,
+      chapter_id TEXT NOT NULL, copy_kind TEXT NOT NULL,
+      translation_source TEXT NOT NULL, stored_at_us INTEGER NOT NULL
+    );
     CREATE TABLE cached_chapter_payloads (
       payload_id TEXT NOT NULL PRIMARY KEY,
       novel_id TEXT NOT NULL,

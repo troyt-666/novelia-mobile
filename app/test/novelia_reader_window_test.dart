@@ -7,8 +7,90 @@ import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
 import 'package:jfzreader/gateway/novelia/novelia_domain_adapter.dart';
 import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 import 'package:jfzreader/gateway/novelia/novelia_reader_window.dart';
+import 'package:jfzreader/gateway/novelia/novelia_reader_cache.dart';
 
 void main() {
+  test(
+    'switching back to the same source cannot accept an older cache request',
+    () async {
+      final metadata = _metadata('c1', 1);
+      final old = Completer<NoveliaReaderCacheResult>();
+      var gptReads = 0;
+      final launch =
+          await NoveliaReaderWindowFactory(
+            contentCoordinator: _WindowCoordinator(const {}),
+            cacheLoader: (_, _, source) {
+              if (source == TranslationSource.gpt && ++gptReads == 1) {
+                return old.future;
+              }
+              return Future.value(
+                NoveliaReaderCacheResult(_loaded(metadata), downloaded: true),
+              );
+            },
+          ).create(
+            novel: _novel([metadata]),
+            selectedChapter: null,
+            requestedPosition: null,
+            translationSource: TranslationSource.sakura,
+          );
+      final updates = <NovelChapter>[];
+      launch.dataSource!.addChapterUpdateListener(updates.add);
+      launch.dataSource!.onTranslationSourceChanged!(TranslationSource.gpt);
+      launch.dataSource!.onTranslationSourceChanged!(TranslationSource.youdao);
+      launch.dataSource!.onTranslationSourceChanged!(TranslationSource.gpt);
+      await _waitUntil(() => updates.isNotEmpty);
+      expect(gptReads, 2);
+      expect(updates, hasLength(1));
+      old.complete(
+        NoveliaReaderCacheResult(_pendingLoaded(metadata), downloaded: true),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(updates, hasLength(1));
+    },
+  );
+  test(
+    'async protected reads stay offline and rapid source changes reject old results',
+    () async {
+      final metadata = _metadata('c1', 1);
+      final coordinator = _WindowCoordinator(const {});
+      final gpt = Completer<NoveliaReaderCacheResult>();
+      final sources = <TranslationSource>[];
+      final launch =
+          await NoveliaReaderWindowFactory(
+            contentCoordinator: coordinator,
+            cacheLoader: (_, _, source) {
+              sources.add(source);
+              if (source == TranslationSource.gpt) return gpt.future;
+              return Future.value(
+                NoveliaReaderCacheResult(_loaded(metadata), downloaded: true),
+              );
+            },
+          ).create(
+            novel: _novel([metadata]),
+            selectedChapter: null,
+            requestedPosition: null,
+            translationSource: TranslationSource.sakura,
+          );
+      expect(launch.novel.chapters.single.id, 'c1');
+      final updates = <NovelChapter>[];
+      launch.dataSource!.addChapterUpdateListener(updates.add);
+      launch.dataSource!.onTranslationSourceChanged!(TranslationSource.gpt);
+      launch.dataSource!.onTranslationSourceChanged!(TranslationSource.youdao);
+      await _waitUntil(() => updates.isNotEmpty);
+      expect(sources, [
+        TranslationSource.sakura,
+        TranslationSource.gpt,
+        TranslationSource.youdao,
+      ]);
+      expect(updates, hasLength(1));
+      gpt.complete(
+        NoveliaReaderCacheResult(_pendingLoaded(metadata), downloaded: true),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(updates, hasLength(1));
+      expect(coordinator.chapterCalls, isEmpty);
+    },
+  );
   test(
     'long reading sessions reuse recent chapters and reload evicted bodies',
     () async {

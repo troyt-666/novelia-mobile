@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
@@ -7,6 +9,45 @@ import 'package:jfzreader/features/shell/shell_view_models.dart';
 import 'package:jfzreader/fixtures/catalog_fixture.dart';
 
 void main() {
+  testWidgets('covered download management stops polling until it is visible', (
+    tester,
+  ) async {
+    var loads = 0;
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        home: DownloadManagementScreen(
+          downloads: const [],
+          onAction: (_, _) async => null,
+          onOpenNovel: (_) {},
+          snapshotLoader: () {
+            loads++;
+            return [];
+          },
+          refreshInterval: const Duration(milliseconds: 50),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loads, greaterThan(0));
+    navigator.currentState!.push<void>(
+      MaterialPageRoute(
+        builder: (_) => const Scaffold(body: Text('Reader fixture')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final coveredLoads = loads;
+    await tester.pump(const Duration(seconds: 2));
+    expect(loads, coveredLoads);
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(loads, greaterThan(coveredLoads));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   LibraryProtectedDownload download({required bool enabled}) {
     return LibraryProtectedDownload(
       novel: fixtureCatalogNovels.first,
@@ -137,6 +178,45 @@ void main() {
       find.byKey(const ValueKey('downloads-management-empty')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a stale asynchronous poll cannot undo a completed pause', (
+    tester,
+  ) async {
+    final pending = Completer<List<LibraryProtectedDownload>>();
+    final initial = download(enabled: true);
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagementScreen(
+          downloads: [initial],
+          snapshotLoader: () => pending.future,
+          refreshInterval: const Duration(hours: 1),
+          onAction: (_, _) async => download(enabled: false),
+          onOpenNovel: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(ValueKey('pause-download-${initial.groupKey}')),
+    );
+    await tester.pumpAndSettle();
+    final resume = find.byKey(ValueKey('resume-download-${initial.groupKey}'));
+    expect(resume, findsOneWidget);
+    pending.complete([initial]);
+    await tester.pumpAndSettle();
+    expect(resume, findsOneWidget);
+    expect(
+      find.byKey(ValueKey('pause-download-${initial.groupKey}')),
+      findsNothing,
+    );
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('refreshes live snapshots and exposes download progress phases', (

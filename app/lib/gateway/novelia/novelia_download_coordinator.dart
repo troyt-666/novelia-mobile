@@ -182,21 +182,24 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
   }
 
   Iterable<_StoredRefreshCandidate> _refreshCandidates(String intentId) sync* {
+    final intent = offlineRepository.intentById(intentId);
+    if (intent == null) return;
+    final copies = {
+      for (final copy in offlineRepository.listCopies(
+        novelId: intent.novelId,
+        kind: OfflineCopyKind.offlineDownload,
+      ))
+        copy.id: copy,
+    };
     for (final task in offlineRepository.listTasks(intentId: intentId)) {
       if (task.state != DownloadTaskState.stored || task.storedCopyId == null) {
         continue;
       }
-      final copy = offlineRepository.copyById(task.storedCopyId!);
+      final copy = copies[task.storedCopyId];
       if (copy == null ||
           copy.kind != OfflineCopyKind.offlineDownload ||
           copy.translationBytes != null ||
           copy.payloadId == null) {
-        continue;
-      }
-      final payload = contentRepository.chapterPayloadById(copy.payloadId!);
-      final translation = payload?.translationFor(task.translationSource);
-      if (translation?.availability != TranslationAvailability.pending &&
-          translation?.availability != TranslationAvailability.invalid) {
         continue;
       }
       yield _StoredRefreshCandidate(task: task, copy: copy);
@@ -300,11 +303,30 @@ class AsyncNoveliaDownloadCoordinator implements NoveliaDownloadCoordinator {
       }
     }
 
-    final count = maximumStoredRefreshesPerRun.clamp(0, candidates.length);
-    final batch = <_StoredRefreshCandidate>[
-      for (var offset = 0; offset < count; offset++)
-        candidates[(start + offset) % candidates.length],
-    ];
+    final batch = <_StoredRefreshCandidate>[];
+    // Apply the refresh budget before decoding chapter bodies. A long book
+    // with thousands of pending chapters must not parse every body per resume.
+    for (
+      var offset = 0;
+      offset < candidates.length && batch.length < maximumStoredRefreshesPerRun;
+      offset++
+    ) {
+      final candidate = candidates[(start + offset) % candidates.length];
+      final payload = contentRepository.chapterPayloadById(
+        candidate.copy.payloadId!,
+      );
+      final availability = payload
+          ?.translationFor(candidate.task.translationSource)
+          ?.availability;
+      if (availability == TranslationAvailability.pending ||
+          availability == TranslationAvailability.invalid) {
+        batch.add(candidate);
+      }
+    }
+    if (batch.isEmpty) {
+      _storedRefreshCursorByIntent.remove(intentId);
+      return const [];
+    }
     _storedRefreshCursorByIntent[intentId] = batch.last.task.id;
     return List.unmodifiable(batch);
   }

@@ -69,6 +69,7 @@ class ReaderScreen extends StatefulWidget {
     this.initialPosition,
     this.startAtChapterTitle = false,
     this.onPositionChanged,
+    this.onFlushProgress,
     this.onExitPosition,
     this.initialBookmarkedBlockIds = const {},
     this.initialBookmarks = const [],
@@ -86,6 +87,7 @@ class ReaderScreen extends StatefulWidget {
   final ReadingPosition? initialPosition;
   final bool startAtChapterTitle;
   final ValueChanged<ReadingPosition>? onPositionChanged;
+  final VoidCallback? onFlushProgress;
   final ValueChanged<ReadingPosition>? onExitPosition;
   final Set<String> initialBookmarkedBlockIds;
   final List<ReadingPosition> initialBookmarks;
@@ -112,6 +114,9 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   late List<NovelChapter> _loadedChapters;
   late List<ReaderStreamItem> _items;
+  Object? _catalogIdentity;
+  List<ReaderChapterCatalogEntry> _cachedCatalog = const [];
+  Map<String, int> _catalogIndices = const {};
   late Map<String, int> _itemIndices;
   final Map<String, GlobalKey> _itemKeys = {};
   final Map<String, (Record, Widget)> _itemWidgets = {};
@@ -343,18 +348,29 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   List<ReaderChapterCatalogEntry> get _chapterCatalog {
     final remoteCatalog = widget.chapterDataSource?.catalog;
-    if (remoteCatalog != null) return remoteCatalog;
-    return [
-      for (final chapter in _loadedChapters)
-        ReaderChapterCatalogEntry.fromChapter(chapter),
-    ];
+    final identity = remoteCatalog ?? _loadedChapters;
+    if (!identical(identity, _catalogIdentity)) {
+      _catalogIdentity = identity;
+      _cachedCatalog =
+          remoteCatalog ??
+          [
+            for (final chapter in _loadedChapters)
+              ReaderChapterCatalogEntry.fromChapter(chapter),
+          ];
+      _catalogIndices = {
+        for (var i = 0; i < _cachedCatalog.length; i++) _cachedCatalog[i].id: i,
+      };
+    }
+    return _cachedCatalog;
+  }
+
+  Map<String, int> get _chapterOrder {
+    _chapterCatalog;
+    return _catalogIndices;
   }
 
   void _rebuildStream() {
-    final order = {
-      for (var index = 0; index < _chapterCatalog.length; index++)
-        _chapterCatalog[index].id: index,
-    };
+    final order = _chapterOrder;
     _loadedChapters.sort((a, b) {
       final aOrder = order[a.id];
       final bOrder = order[b.id];
@@ -500,7 +516,10 @@ class _ReaderScreenState extends State<ReaderScreen>
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       _chromeDismissTimer?.cancel();
-      if (!_restoring) _captureAnchor(updateUi: false);
+      if (!_restoring) {
+        _captureAnchor(updateUi: false);
+        widget.onFlushProgress?.call();
+      }
     }
   }
 
@@ -925,11 +944,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     ReaderLoadDirection? direction,
     String? requiredChapterId,
   }) {
-    final catalog = _chapterCatalog;
-    final catalogOrder = {
-      for (var index = 0; index < catalog.length; index++)
-        catalog[index].id: index,
-    };
+    final catalogOrder = _chapterOrder;
     final seen = <String>{};
     for (final chapter in window.chapters) {
       if (!seen.add(chapter.id)) {
@@ -1834,6 +1849,9 @@ class _ReaderScreenState extends State<ReaderScreen>
     // semantic target. Only a newer navigation supersedes its progress.
     if (_lastPosition case final position?) {
       _recordPosition(position);
+      // Explicit chapter/bookmark navigation is a durable restore point,
+      // unlike a burst of short page-turn animations.
+      widget.onFlushProgress?.call();
     }
     _refreshChrome();
   }
@@ -2201,9 +2219,7 @@ class _ReaderScreenState extends State<ReaderScreen>
         _anchorBlockId.value != null &&
         _bookmarks.contains(_anchorBlockId.value);
     final catalog = _chapterCatalog;
-    final currentCatalogIndex = catalog.indexWhere(
-      (chapter) => chapter.id == currentChapter?.id,
-    );
+    final currentCatalogIndex = _chapterOrder[currentChapter?.id] ?? -1;
     var chapterProgress = 0.0;
     if (currentChapter != null && currentChapter.blocks.isNotEmpty) {
       final blockIndex = currentChapter.blocks.indexWhere(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SelectedContent;
@@ -158,6 +159,25 @@ class _FakeOrientationController implements ReaderOrientationController {
   }
 }
 
+class _CountedCatalog extends ListBase<ReaderChapterCatalogEntry> {
+  _CountedCatalog(this.entries);
+  final List<ReaderChapterCatalogEntry> entries;
+  int reads = 0;
+  @override
+  int get length => entries.length;
+  @override
+  set length(int value) => throw UnsupportedError('read only');
+  @override
+  ReaderChapterCatalogEntry operator [](int index) {
+    reads++;
+    return entries[index];
+  }
+
+  @override
+  void operator []=(int index, ReaderChapterCatalogEntry value) =>
+      throw UnsupportedError('read only');
+}
+
 void main() {
   Future<void> pumpReader(
     WidgetTester tester, {
@@ -165,6 +185,7 @@ void main() {
     ReadingPosition? initialPosition,
     bool startAtChapterTitle = false,
     ValueChanged<ReadingPosition>? onPositionChanged,
+    VoidCallback? onFlushProgress,
     ValueChanged<ReadingPosition>? onExitPosition,
     ReaderBookmarkChanged? onBookmarkChanged,
     Set<String> initialBookmarkedBlockIds = const {},
@@ -188,6 +209,7 @@ void main() {
           initialPosition: initialPosition,
           startAtChapterTitle: startAtChapterTitle,
           onPositionChanged: onPositionChanged,
+          onFlushProgress: onFlushProgress,
           onExitPosition: onExitPosition,
           initialBookmarkedBlockIds: initialBookmarkedBlockIds,
           initialBookmarks: initialBookmarks,
@@ -1467,8 +1489,8 @@ void main() {
       addTearDown(tester.view.resetSystemGestureInsets);
       for (final notify in <VoidCallback>[
         tester.binding.handleMetricsChanged,
-        () => tester.view.systemGestureInsets =
-            const FakeViewPadding(bottom: 24),
+        () =>
+            tester.view.systemGestureInsets = const FakeViewPadding(bottom: 24),
       ]) {
         notify();
         for (var frame = 0; frame < 4; frame++) {
@@ -1538,55 +1560,54 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a touch before resize layout keeps control of scrolling',
-    (tester) async {
-      final chapter = _windowChapter(1, blockCount: 24);
-      final block = chapter.blocks[12];
-      final reported = <ReadingPosition>[];
-      await pumpReader(
-        tester,
-        novel: _windowNovel([chapter]),
-        initialPosition: ReadingPosition(
-          chapterId: chapter.id,
-          blockId: block.id,
-          intraBlockOffset: 250,
-        ),
-        onPositionChanged: reported.add,
-      );
-      final anchor = find.byKey(ValueKey('block:${block.id}'));
-      final top = tester.getTopLeft(anchor).dy;
-      tester.view.physicalSize = const Size(430, 800);
-      final gesture = await tester.startGesture(const Offset(215, 500));
-      // The touch is held, before Scrollable has recognized a drag.
-      for (var frame = 0; frame < 4; frame++) {
-        await tester.pump();
-        expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
-      }
-      await gesture.moveBy(const Offset(0, -20));
+  testWidgets('a touch before resize layout keeps control of scrolling', (
+    tester,
+  ) async {
+    final chapter = _windowChapter(1, blockCount: 24);
+    final block = chapter.blocks[12];
+    final reported = <ReadingPosition>[];
+    await pumpReader(
+      tester,
+      novel: _windowNovel([chapter]),
+      initialPosition: ReadingPosition(
+        chapterId: chapter.id,
+        blockId: block.id,
+        intraBlockOffset: 250,
+      ),
+      onPositionChanged: reported.add,
+    );
+    final anchor = find.byKey(ValueKey('block:${block.id}'));
+    final top = tester.getTopLeft(anchor).dy;
+    tester.view.physicalSize = const Size(430, 800);
+    final gesture = await tester.startGesture(const Offset(215, 500));
+    // The touch is held, before Scrollable has recognized a drag.
+    for (var frame = 0; frame < 4; frame++) {
       await tester.pump();
-      await gesture.moveBy(const Offset(0, -40));
-      await tester.pump();
-      expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
-      await gesture.up();
-      await tester.pumpAndSettle();
-      expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
+      expect(tester.getTopLeft(anchor).dy, closeTo(top, 1));
+    }
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, -40));
+    await tester.pump();
+    expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(anchor).dy, closeTo(top - 40, 1));
 
-      // Input can start and finish before the resized viewport is laid out.
-      tester.view.physicalSize = const Size(430, 850);
-      final quickSwipe = await tester.startGesture(const Offset(215, 500));
-      await quickSwipe.moveBy(const Offset(0, -20));
-      await quickSwipe.moveBy(const Offset(0, -40));
-      await quickSwipe.up();
-      final finalPixels = _readerScrollable(tester).position.pixels;
-      await tester.pumpAndSettle();
-      expect(_readerScrollable(tester).position.pixels, closeTo(finalPixels, 1));
-      final saved = reported.last;
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      await tester.pump();
-      expect(reported.last, saved);
-    },
-  );
+    // Input can start and finish before the resized viewport is laid out.
+    tester.view.physicalSize = const Size(430, 850);
+    final quickSwipe = await tester.startGesture(const Offset(215, 500));
+    await quickSwipe.moveBy(const Offset(0, -20));
+    await quickSwipe.moveBy(const Offset(0, -40));
+    await quickSwipe.up();
+    final finalPixels = _readerScrollable(tester).position.pixels;
+    await tester.pumpAndSettle();
+    expect(_readerScrollable(tester).position.pixels, closeTo(finalPixels, 1));
+    final saved = reported.last;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(reported.last, saved);
+  });
 
   testWidgets('resizing lets a reader fling finish before saving its anchor', (
     tester,
@@ -2174,6 +2195,81 @@ void main() {
       find.byKey(const ValueKey('translation-state-pending-c1')),
       findsNothing,
     );
+  });
+
+  testWidgets(
+    'bookmark scrolling does not rebuild the catalog or all bookmark rows',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final catalog = _CountedCatalog([
+        for (var i = 0; i < 1000; i++)
+          ReaderChapterCatalogEntry(
+            id: 'c$i',
+            index: i,
+            chineseTitle: '章节 $i',
+            japaneseTitle: '第 $i 話',
+          ),
+      ]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReaderChapterCatalogSheet(
+              catalog: catalog,
+              activeChapterId: 'c500',
+              loadedChapterIds: {},
+              loadedChapters: [],
+              bookmarks: [
+                for (var i = 0; i < 100; i++)
+                  ReadingPosition(chapterId: 'c$i', blockId: 'c$i:0'),
+              ],
+              settings: const ReaderSettings(),
+              onBookmarkRemoved: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('reader-navigation-bookmarks')),
+      );
+      await tester.pumpAndSettle();
+      catalog.reads = 0;
+      for (var i = 0; i < 8; i++) {
+        await tester.drag(
+          find.byKey(const ValueKey('reader-bookmarks-list')),
+          const Offset(0, -450),
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(catalog.reads, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('backgrounding captures the viewport before flushing progress', (
+    tester,
+  ) async {
+    final events = <String>[];
+    await pumpReader(
+      tester,
+      onPositionChanged: (_) => events.add('position'),
+      onFlushProgress: () => events.add('flush'),
+    );
+    final gesture = await tester.startGesture(const Offset(215, 750));
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, -450));
+    await tester.pump();
+    events.clear();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    expect(events, ['position', 'flush']);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 
   for (final current in [0, 703, 999]) {

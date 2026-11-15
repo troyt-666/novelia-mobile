@@ -5,6 +5,7 @@ import 'package:jfzreader/core/database/app_database.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
+import 'package:jfzreader/core/offline/content_repository.dart';
 import 'package:jfzreader/core/offline/offline_models.dart';
 import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_cache_adapter.dart';
@@ -1031,6 +1032,49 @@ void main() {
     );
 
     test(
+      'pending refresh budget bounds body decoding before network requests',
+      () async {
+        final store = _openStore();
+        final chapterIds = [for (var i = 0; i < 30; i++) 'c$i'];
+        store.saveIntent(
+          NovelDownloadIntent(
+            id: 'intent',
+            novelId: _key.stableId,
+            translationSource: TranslationSource.sakura,
+            createdAt: now,
+          ),
+        );
+        final gateway = _FakeGateway(
+          catalogPage: const NoveliaPage(items: [], pageCount: 0),
+          details: _details(chapterIds: chapterIds),
+          chapters: {
+            for (final id in chapterIds) id: _payload(id, sakura: const []),
+          },
+        );
+        await AsyncNoveliaDownloadCoordinator(
+          gateway: gateway,
+          contentRepository: store,
+          offlineRepository: store,
+          clock: () => now,
+        ).synchronizeIntent('intent');
+        gateway.chapterCalls.clear();
+        gateway.chapters
+            .clear(); // Fail fetches so the test isolates candidate reads.
+        final counted = _CountingRefreshContent(store);
+        final run = await AsyncNoveliaDownloadCoordinator(
+          gateway: gateway,
+          contentRepository: counted,
+          offlineRepository: store,
+          maximumStoredRefreshesPerRun: 2,
+          clock: () => now.add(const Duration(minutes: 1)),
+        ).synchronizeIntent('intent');
+        expect(counted.bodyReads, 2);
+        expect(gateway.chapterCalls, hasLength(2));
+        expect(run.refreshFailureCount, 2);
+      },
+    );
+
+    test(
       'rotates bounded refreshes so candidates beyond the limit run',
       () async {
         const chapterIds = ['c0', 'c1', 'c2', 'c3', 'c4'];
@@ -1383,4 +1427,27 @@ SqliteOfflineRepository _openStore() {
   final store = SqliteOfflineRepository.openInMemory();
   addTearDown(store.close);
   return store;
+}
+
+class _CountingRefreshContent implements ContentRepository {
+  _CountingRefreshContent(this.repository);
+  final SqliteOfflineRepository repository;
+  int bodyReads = 0;
+  @override
+  CachedChapterPayload? chapterPayloadById(String id) {
+    bodyReads++;
+    return repository.chapterPayloadById(id);
+  }
+
+  @override
+  Set<String> payloadIdsMissingIllustrations({String? novelId}) =>
+      repository.payloadIdsMissingIllustrations(novelId: novelId);
+  @override
+  List<CachedNovelOutline> listCachedNovels({Iterable<String>? novelIds}) =>
+      repository.listCachedNovels(novelIds: novelIds);
+  @override
+  void upsertNovelDetail(CachedNovelDetail detail) =>
+      repository.upsertNovelDetail(detail);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

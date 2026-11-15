@@ -472,14 +472,24 @@ class ReaderChapterCatalogSheet extends StatefulWidget {
 
 class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
   late final List<ReadingPosition> _bookmarks;
+  late List<({String? title, ReaderChapterCatalogEntry? chapter})> _catalogRows;
 
   @override
   void initState() {
     super.initState();
     _bookmarks = List.of(widget.bookmarks);
+    _catalogRows = _buildRows();
   }
 
-  List<({String? title, ReaderChapterCatalogEntry? chapter})> get _rows {
+  @override
+  void didUpdateWidget(covariant ReaderChapterCatalogSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.catalog, widget.catalog)) {
+      _catalogRows = _buildRows();
+    }
+  }
+
+  List<({String? title, ReaderChapterCatalogEntry? chapter})> _buildRows() {
     final grouped = widget.catalog.any(
       (entry) => entry.sectionTitle != null && entry.sectionTitle!.isNotEmpty,
     );
@@ -512,6 +522,7 @@ class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
     })
   >
   get _bookmarkRows {
+    if (_bookmarks.isEmpty) return const [];
     final chaptersById = {
       for (final chapter in widget.loadedChapters) chapter.id: chapter,
     };
@@ -551,7 +562,8 @@ class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = _rows;
+    final rows = _catalogRows;
+    final bookmarkRows = _bookmarkRows;
     final activeRow = rows
         .indexWhere((row) => row.chapter?.id == widget.activeChapterId)
         .clamp(0, rows.length);
@@ -642,7 +654,7 @@ class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
                       ),
                     ],
                   ),
-                  _bookmarkRows.isEmpty
+                  bookmarkRows.isEmpty
                       ? const Center(
                           child: Text(
                             '还没有书签',
@@ -651,9 +663,9 @@ class _ChapterCatalogSheetState extends State<ReaderChapterCatalogSheet> {
                         )
                       : ListView.builder(
                           key: const ValueKey('reader-bookmarks-list'),
-                          itemCount: _bookmarkRows.length,
+                          itemCount: bookmarkRows.length,
                           itemBuilder: (context, index) {
-                            final bookmark = _bookmarkRows[index];
+                            final bookmark = bookmarkRows[index];
                             return ListTile(
                               key: ValueKey(
                                 'reader-bookmark-${bookmark.position.blockId}',

@@ -53,6 +53,8 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
   final Set<String> _busyGroups = <String>{};
   Timer? _refreshTimer;
   bool _refreshing = false;
+  bool _routeVisible = false;
+  int _actionGeneration = 0;
 
   @override
   void initState() {
@@ -61,12 +63,20 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
     _downloads = List.of(widget.downloads);
     _downloadSignature = _signature(_downloads);
     if (widget.snapshotLoader != null) {
-      unawaited(_refreshDownloads());
       _refreshTimer = Timer.periodic(
         widget.refreshInterval,
         (_) => unawaited(_refreshDownloads()),
       );
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = ModalRoute.of(context)?.isCurrent ?? true;
+    if (_routeVisible == visible) return;
+    _routeVisible = visible;
+    if (visible) unawaited(_refreshDownloads());
   }
 
   @override
@@ -103,11 +113,14 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
 
   Future<void> _refreshDownloads() async {
     final loader = widget.snapshotLoader;
-    if (loader == null || _refreshing) return;
+    if (loader == null || _refreshing || !_routeVisible) return;
     _refreshing = true;
+    final generation = _actionGeneration;
     try {
       final latest = await Future<List<LibraryProtectedDownload>>.sync(loader);
-      if (mounted) _replaceDownloads(latest);
+      if (mounted && _routeVisible && generation == _actionGeneration) {
+        _replaceDownloads(latest);
+      }
     } on Object {
       // Keep the last truthful snapshot. Actions surface their own failures.
     } finally {
@@ -154,6 +167,7 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
   ) async {
     final key = download.groupKey;
     if (!_busyGroups.add(key)) return;
+    _actionGeneration++;
     setState(() {});
     try {
       final updated = await widget.onAction(action, download);
@@ -174,6 +188,9 @@ class _DownloadManagementScreenState extends State<DownloadManagementScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(content: Text('下载操作失败，请稍后重试')));
     } finally {
+      // An asynchronous poll from before or during the action must not undo
+      // its completed pause, retry, or removal result.
+      _actionGeneration++;
       if (mounted) setState(() => _busyGroups.remove(key));
     }
   }

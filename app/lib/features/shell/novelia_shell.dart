@@ -105,6 +105,7 @@ class NoveliaShell extends StatefulWidget {
     this.onRecentSearchesChanged,
     this.initialReaderNovelId,
     this.initialReaderPosition,
+    this.onReaderOpening,
     this.onReaderOpened,
     this.onReaderClosed,
     super.key,
@@ -161,6 +162,7 @@ class NoveliaShell extends StatefulWidget {
   final ValueChanged<List<String>>? onRecentSearchesChanged;
   final String? initialReaderNovelId;
   final ReadingPosition? initialReaderPosition;
+  final VoidCallback? onReaderOpening;
   final ReaderRouteOpened? onReaderOpened;
   final VoidCallback? onReaderClosed;
 
@@ -512,6 +514,7 @@ class _NoveliaShellState extends State<NoveliaShell> {
     LibraryProtectedDownload? download,
   }) async {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    widget.onReaderOpening?.call();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ReaderLaunchLoaderScreen(

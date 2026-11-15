@@ -43,6 +43,23 @@ final class SqliteOfflineRepository
     return SqliteOfflineRepository._(NoveliaDatabase.openInMemory(), true);
   }
 
+  /// Owns a separate, read-only connection pinned to one committed snapshot.
+  /// Readers must close it after the projection; it never runs migrations.
+  static SqliteOfflineRepository openReadSnapshot(String filePath) {
+    final database = sqlite3.open(filePath, mode: OpenMode.readOnly);
+    try {
+      database.execute('PRAGMA busy_timeout = 5000;');
+      database.execute('BEGIN DEFERRED;');
+      if (database.userVersion != NoveliaDatabase.currentSchemaVersion) {
+        throw StateError('Initialize the database before reading a snapshot.');
+      }
+      return SqliteOfflineRepository._(database, true);
+    } catch (_) {
+      database.close();
+      rethrow;
+    }
+  }
+
   /// Adopts or borrows an existing connection and migrates it to the current
   /// schema. This is primarily useful for migration and integration tests.
   static SqliteOfflineRepository fromDatabase(
@@ -56,6 +73,16 @@ final class SqliteOfflineRepository
   final Database _database;
   final bool _closeDatabase;
   bool _closed = false;
+
+  /// An independently openable path, or null for an in-memory database.
+  String? get databasePath {
+    _checkOpen();
+    final row = _database
+        .select('PRAGMA database_list;')
+        .firstWhere((row) => row['name'] == 'main');
+    final path = row['file'] as String;
+    return path.isEmpty ? null : path;
+  }
 
   int get schemaVersion => _database.userVersion;
 
@@ -163,13 +190,20 @@ final class SqliteOfflineRepository
     return _transaction(() {
       final intent = _requireIntent(intentId);
       final created = <DownloadTask>[];
+      final existingIds = {
+        for (final row in _database.select(
+          'SELECT id FROM download_tasks WHERE intent_id = ?;',
+          [intentId],
+        ))
+          row['id'] as String,
+      };
       for (final chapterId in intent.targetChapterIds(knownChapterIds)) {
         final taskId = _taskId(
           intentId: intent.id,
           chapterId: chapterId,
           sourceName: intent.translationSource.name,
         );
-        if (_taskById(taskId) != null) continue;
+        if (!existingIds.add(taskId)) continue;
         final task = DownloadTask.queued(
           id: taskId,
           intentId: intent.id,
@@ -195,12 +229,13 @@ final class SqliteOfflineRepository
       final intent = _requireIntent(intentId);
       if (!intent.enabled) return const <DownloadTask>[];
       final replacements = <DownloadTask>[
-        for (final task in _listTasks(intentId: intentId))
-          if (task.isActive ||
-              task.state == DownloadTaskState.paused ||
-              (task.state == DownloadTaskState.failed &&
-                  task.failure?.retryable == true))
-            task.requeueForRestart(now),
+        for (final row in _database.select(
+          "SELECT * FROM download_tasks WHERE intent_id = ? AND "
+          "(state IN ('fetching', 'validating', 'storing', 'paused') OR "
+          "(state = 'failed' AND failure_retryable = 1)) ORDER BY id;",
+          [intentId],
+        ))
+          _taskFromRow(row).requeueForRestart(now),
       ];
       for (final task in replacements) {
         _updateTask(task);
@@ -1141,7 +1176,10 @@ final class SqliteOfflineRepository
   }
 
   /// Persist a reader stop with one commit and one consistent restore point.
-  void saveReaderPosition(LocalReadingProgress progress) {
+  void saveReaderPosition(
+    LocalReadingProgress progress, {
+    bool restoreRoute = true,
+  }) {
     _checkOpen();
     _transaction(() {
       saveReadingProgress(progress);
@@ -1150,14 +1188,16 @@ final class SqliteOfflineRepository
         progress.position.chapterId,
         progress.updatedAt,
       );
-      saveLastRoute(
-        LastRouteState(
-          routeName: '/reader',
-          novelId: progress.novelId,
-          position: progress.position,
-          updatedAt: progress.updatedAt,
-        ),
-      );
+      if (restoreRoute) {
+        saveLastRoute(
+          LastRouteState(
+            routeName: '/reader',
+            novelId: progress.novelId,
+            position: progress.position,
+            updatedAt: progress.updatedAt,
+          ),
+        );
+      }
     });
   }
 

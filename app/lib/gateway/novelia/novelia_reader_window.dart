@@ -4,12 +4,17 @@ import '../../core/model/reader_models.dart';
 import '../../features/discover/catalog_models.dart';
 import 'novelia_content_coordinator.dart';
 import 'novelia_gateway.dart';
+import 'novelia_reader_cache.dart';
 
 /// Creates a bounded initial reader window and its dynamic chapter data source.
 class NoveliaReaderWindowFactory {
-  const NoveliaReaderWindowFactory({required this.contentCoordinator});
+  const NoveliaReaderWindowFactory({
+    required this.contentCoordinator,
+    this.cacheLoader,
+  });
 
   final NoveliaContentCoordinator contentCoordinator;
+  final NoveliaReaderCacheLoader? cacheLoader;
 
   ReaderLaunchLoader loaderFor(TranslationSource translationSource) {
     return (novel, selectedChapter, requestedPosition) => create(
@@ -40,6 +45,7 @@ class NoveliaReaderWindowFactory {
     late final _NoveliaReaderWindowSession session;
     session = _NoveliaReaderWindowSession(
       contentCoordinator: contentCoordinator,
+      cacheLoader: cacheLoader,
       novel: novel,
       translationSource: translationSource,
       chapters: catalogChapters,
@@ -118,6 +124,7 @@ class _NoveliaReaderWindowSession {
 
   _NoveliaReaderWindowSession({
     required this.contentCoordinator,
+    required this.cacheLoader,
     required this.novel,
     required this.translationSource,
     required this.chapters,
@@ -128,6 +135,7 @@ class _NoveliaReaderWindowSession {
        };
 
   final NoveliaContentCoordinator contentCoordinator;
+  final NoveliaReaderCacheLoader? cacheLoader;
   final CatalogNovel novel;
   TranslationSource translationSource;
   final List<NovelChapter> chapters;
@@ -136,13 +144,16 @@ class _NoveliaReaderWindowSession {
   final Map<String, NovelChapter> _loaded = <String, NovelChapter>{};
   final Map<String, Future<NovelChapter?>> _loading =
       <String, Future<NovelChapter?>>{};
-  final Set<String> _refreshing = <String>{};
+  final Set<(String, int)> _refreshing = {};
+  final Set<String> _sourceReloadIds = {};
   final Set<String> _downloaded = <String>{};
   final Set<String> _unavailable = <String>{};
   int _prefetchGeneration = 0;
+  int _translationGeneration = 0;
 
   NovelChapter? _remember(NovelChapter? chapter) {
     if (chapter == null) return null;
+    _sourceReloadIds.remove(chapter.id);
     _loaded.remove(chapter.id);
     _loaded[chapter.id] = chapter;
     while (_loaded.length > _maximumCachedChapters) {
@@ -161,16 +172,35 @@ class _NoveliaReaderWindowSession {
   void _selectTranslationSource(TranslationSource source) {
     if (source == translationSource) return;
     translationSource = source;
+    final generation = ++_translationGeneration;
     _prefetchGeneration++;
-    final loadedIds = _loaded.keys.toList();
+    final loadedIds = {..._sourceReloadIds, ..._loaded.keys}.toList();
+    _sourceReloadIds
+      ..clear()
+      ..addAll(
+        loadedIds.skip(
+          (loadedIds.length - _maximumCachedChapters).clamp(
+            0,
+            loadedIds.length,
+          ),
+        ),
+      );
     _loaded.clear();
     _downloaded.clear();
     _unavailable.clear();
-    for (final id in loadedIds) {
-      final cached = _readCached(chapters[_indexById[id]!]);
-      if (cached == null) continue;
+    void accept(NovelChapter? cached) {
+      if (cached == null || generation != _translationGeneration) return;
       _remember(cached);
       dataSource.notifyChapterUpdated(cached);
+    }
+
+    for (final id in loadedIds) {
+      final cached = _readCached(chapters[_indexById[id]!]);
+      if (cached is Future<NovelChapter?>) {
+        unawaited(cached.then<void>(accept).catchError((Object _) {}));
+      } else {
+        accept(cached);
+      }
     }
   }
 
@@ -197,11 +227,11 @@ class _NoveliaReaderWindowSession {
     final afterIndex = targetIndex + 1;
     final loadedByIndex = <int, NovelChapter>{targetIndex: target};
     if (beforeIndex >= 0) {
-      final before = _loadCachedOptional(beforeIndex);
+      final before = await _loadCachedOptional(beforeIndex);
       if (before != null) loadedByIndex[beforeIndex] = before;
     }
     if (afterIndex < chapters.length) {
-      final after = _loadCachedOptional(afterIndex);
+      final after = await _loadCachedOptional(afterIndex);
       if (after != null) loadedByIndex[afterIndex] = after;
     }
     _scheduleForwardPrefetch(targetIndex);
@@ -303,7 +333,10 @@ class _NoveliaReaderWindowSession {
   Future<NovelChapter?> _loadRequiredOnce(int index) async {
     final metadata = chapters[index];
 
-    final cached = _readCached(metadata);
+    final generation = _translationGeneration;
+    final source = translationSource;
+    final cached = await _readCached(metadata);
+    if (generation != _translationGeneration) return _loadRequiredOnce(index);
     if (cached != null) {
       _remember(cached);
       _unavailable.remove(metadata.id);
@@ -311,13 +344,12 @@ class _NoveliaReaderWindowSession {
       return cached;
     }
 
-    final source = translationSource;
     final response = await contentCoordinator.loadChapter(
       novel,
       chapterId: metadata.id,
       cacheTranslationSource: source,
     );
-    if (source != translationSource) return _loadRequiredOnce(index);
+    if (generation != _translationGeneration) return _loadRequiredOnce(index);
     final loaded = response.data;
     if (loaded != null && loaded.id == metadata.id) {
       _remember(loaded);
@@ -373,11 +405,13 @@ class _NoveliaReaderWindowSession {
     );
   }
 
-  NovelChapter? _loadCachedOptional(int index) {
+  Future<NovelChapter?> _loadCachedOptional(int index) async {
     final metadata = chapters[index];
     final memory = _loaded[metadata.id];
     if (memory != null) return _remember(memory);
-    final cached = _readCached(metadata);
+    final generation = _translationGeneration;
+    final cached = await _readCached(metadata);
+    if (generation != _translationGeneration) return _loadCachedOptional(index);
     if (cached == null) return null;
     _remember(cached);
     _unavailable.remove(metadata.id);
@@ -398,7 +432,8 @@ class _NoveliaReaderWindowSession {
     return chapter;
   }
 
-  NovelChapter? _readCached(NovelChapter metadata) {
+  FutureOr<NovelChapter?> _readCached(NovelChapter metadata) {
+    if (cacheLoader != null) return _readCachedInBackground(metadata);
     final downloaded = _readDownloaded(metadata);
     if (downloaded != null) return downloaded;
     if (contentCoordinator is! NoveliaChapterCacheReader) return null;
@@ -407,11 +442,24 @@ class _NoveliaReaderWindowSession {
     return cached != null && cached.id == metadata.id ? cached : null;
   }
 
+  Future<NovelChapter?> _readCachedInBackground(NovelChapter metadata) async {
+    final generation = _translationGeneration;
+    final source = translationSource;
+    final result = await cacheLoader!(novel.id, metadata.id, source);
+    if (generation != _translationGeneration ||
+        result.chapter?.id != metadata.id) {
+      return null;
+    }
+    if (result.downloaded) _downloaded.add(metadata.id);
+    return result.chapter;
+  }
+
   void _scheduleRefresh(NovelChapter metadata) {
     // Protected snapshots are refreshed only by their download coordinator.
     if (_downloaded.contains(metadata.id)) return;
-    if (!_refreshing.add(metadata.id)) return;
     final source = translationSource;
+    final generation = _translationGeneration;
+    if (!_refreshing.add((metadata.id, generation))) return;
     unawaited(
       Future<void>(() async {
         try {
@@ -420,7 +468,7 @@ class _NoveliaReaderWindowSession {
             chapterId: metadata.id,
             cacheTranslationSource: source,
           );
-          if (source != translationSource) return;
+          if (generation != _translationGeneration) return;
           final refreshed = response.data;
           if (refreshed != null && refreshed.id == metadata.id) {
             final previous = _loaded[metadata.id];
@@ -438,7 +486,7 @@ class _NoveliaReaderWindowSession {
         } on Object {
           // Cached content is already readable; revalidation is best effort.
         } finally {
-          _refreshing.remove(metadata.id);
+          _refreshing.remove((metadata.id, generation));
         }
       }),
     );

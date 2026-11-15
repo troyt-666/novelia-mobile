@@ -1,3 +1,5 @@
+import 'dart:isolate';
+
 import '../../core/database/sqlite_offline_repository.dart';
 import '../../core/database/local_state_repository.dart';
 import '../../core/model/reader_models.dart';
@@ -6,9 +8,26 @@ import '../../gateway/novelia/novelia_content_cache_adapter.dart';
 import '../discover/catalog_models.dart';
 import 'shell_view_models.dart';
 
+typedef LibrarySnapshotLoader =
+    Future<LocalLibrarySnapshot> Function(List<CatalogNovel> knownNovels);
+
 /// A shelf projection loaded on local-data changes, never during widget build.
 /// Device-local reading data is independent of website login and catalog access.
 class LocalLibrarySnapshot {
+  /// SQL, row decoding, grouping and sorting all run away from the UI isolate.
+  /// Capture only sendable inputs, never the caller's live SQLite connection.
+  static Future<LocalLibrarySnapshot> loadInBackground(
+    String databasePath, {
+    List<CatalogNovel> knownNovels = const [],
+  }) => Isolate.run(() {
+    final repository = SqliteOfflineRepository.openReadSnapshot(databasePath);
+    try {
+      return LocalLibrarySnapshot.load(repository, knownNovels: knownNovels);
+    } finally {
+      repository.close();
+    }
+  });
+
   LocalLibrarySnapshot.load(
     SqliteOfflineRepository repository, {
     required Iterable<CatalogNovel> knownNovels,

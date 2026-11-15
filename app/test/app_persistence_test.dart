@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jfzreader/core/database/local_state_repository.dart';
+import 'package:jfzreader/core/database/app_database.dart';
 import 'package:jfzreader/core/database/sqlite_offline_repository.dart';
 import 'package:jfzreader/core/model/reader_models.dart';
 import 'package:jfzreader/core/offline/content_models.dart';
@@ -13,6 +14,7 @@ import 'package:jfzreader/features/discover/catalog_models.dart';
 import 'package:jfzreader/gateway/novelia/novelia_content_coordinator.dart';
 import 'package:jfzreader/gateway/novelia/novelia_gateway.dart';
 import 'package:jfzreader/features/shell/novelia_shell.dart';
+import 'package:jfzreader/features/reader/reader_screen.dart';
 
 import 'support/fixture_content_coordinator.dart';
 
@@ -38,6 +40,67 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'rapid reader callbacks use one transaction and exit leaves no delayed route',
+    (tester) async {
+      final db = NoveliaDatabase.openInMemory();
+      addTearDown(db.close);
+      final repository = SqliteOfflineRepository.fromDatabase(db);
+      await pumpApp(tester, repository);
+      await tester.tap(
+        find.byKey(ValueKey('open-details-${fixtureNovel.id}')).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('start-reading-button')));
+      await tester.pumpAndSettle();
+      db.execute('CREATE TEMP TABLE progress_writes (kind TEXT);');
+      db.execute(
+        "CREATE TEMP TRIGGER count_progress_insert AFTER INSERT ON reading_progress BEGIN INSERT INTO progress_writes VALUES ('insert'); END;",
+      );
+      db.execute(
+        "CREATE TEMP TRIGGER count_progress_update AFTER UPDATE ON reading_progress BEGIN INSERT INTO progress_writes VALUES ('update'); END;",
+      );
+      final reader = tester.widget<ReaderScreen>(find.byType(ReaderScreen));
+      for (var i = 0; i < 8; i++) {
+        reader.onPositionChanged!(
+          ReadingPosition(
+            chapterId: 'chapter-1',
+            blockId: 'c1-0',
+            intraBlockOffset: i,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(db.select('SELECT * FROM progress_writes'), isEmpty);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(db.select('SELECT * FROM progress_writes'), hasLength(1));
+      expect(
+        repository
+            .readingProgressFor(fixtureNovel.id)!
+            .position
+            .intraBlockOffset,
+        7,
+      );
+      reader.onPositionChanged!(
+        const ReadingPosition(chapterId: 'chapter-1', blockId: 'c1-1'),
+      );
+      reader.onFlushProgress!();
+      expect(
+        repository.readingProgressFor(fixtureNovel.id)!.position.blockId,
+        'c1-1',
+      );
+      await tester.tap(find.byKey(const ValueKey('reader-back-button')));
+      await tester.pumpAndSettle();
+      final route = repository.lastRoute()!.routeName;
+      expect(route, isNot('/reader'));
+      await tester.pump(const Duration(seconds: 3));
+      expect(repository.lastRoute()!.routeName, route);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('search survives details, browser resume and tab switches', (
     tester,

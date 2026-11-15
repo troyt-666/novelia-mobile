@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 final class NoveliaDatabase {
   NoveliaDatabase._();
 
-  static const int currentSchemaVersion = 10;
+  static const int currentSchemaVersion = 11;
   static const String defaultFileName = 'jfzreader.sqlite3';
 
   static Future<Database> openApplicationSupport({
@@ -139,6 +139,16 @@ final class NoveliaDatabase {
           'snapshot_key TEXT NOT NULL PRIMARY KEY, body_json TEXT NOT NULL);',
         );
         database.userVersion = 10;
+      });
+    }
+    if (database.userVersion == 10) {
+      _transaction(database, () {
+        database.execute(
+          'CREATE INDEX IF NOT EXISTS offline_copies_chapter_idx '
+          'ON offline_chapter_copies (novel_id, chapter_id, copy_kind, '
+          'translation_source, stored_at_us DESC, id DESC);',
+        );
+        database.userVersion = 11;
       });
     }
   }

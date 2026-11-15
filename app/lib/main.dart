@@ -9,6 +9,7 @@ import 'core/account/account_models.dart';
 import 'core/account/remote_history_sync.dart';
 import 'core/account/secure_session_store.dart';
 import 'core/database/local_state_repository.dart';
+import 'core/database/reader_progress_writer.dart';
 import 'core/database/sqlite_offline_repository.dart';
 import 'core/model/reader_models.dart';
 import 'core/offline/offline_models.dart';
@@ -40,6 +41,7 @@ import 'gateway/novelia/novelia_domain_adapter.dart';
 import 'gateway/novelia/novelia_gateway.dart';
 import 'gateway/novelia/novelia_wenku_gateway.dart';
 import 'gateway/novelia/novelia_reader_window.dart';
+import 'gateway/novelia/novelia_reader_cache.dart';
 
 const _defaultCacheLimitBytes = 256 * 1024 * 1024;
 
@@ -86,10 +88,26 @@ Future<void> main() async {
       canAccessRestrictedContent: () =>
           accountSessionController.snapshot.isSignedIn,
     );
+    repository.evictCacheTo(
+      maxBytes:
+          repository.appSettings()?.cacheLimitBytes ?? _defaultCacheLimitBytes,
+    );
+    final libraryPath = repository.databasePath!;
+    final initialLibrary = await LocalLibrarySnapshot.loadInBackground(
+      libraryPath,
+    );
     runApp(
       NoveliaReaderApp(
         appVersion: appVersion,
         repository: repository,
+        initialLibrarySnapshot: initialLibrary,
+        readerCacheLoader: (novelId, chapterId, source) =>
+            BackgroundReaderCache.load(libraryPath, novelId, chapterId, source),
+        librarySnapshotLoader: (novels) =>
+            LocalLibrarySnapshot.loadInBackground(
+              libraryPath,
+              knownNovels: novels,
+            ),
         accountSessionController: accountSessionController,
         accountGateway: accountGateway,
         contentCoordinator: contentCoordinator,
@@ -123,6 +141,9 @@ class NoveliaReaderApp extends StatefulWidget {
   const NoveliaReaderApp({
     required this.repository,
     required this.contentCoordinator,
+    this.initialLibrarySnapshot,
+    this.librarySnapshotLoader,
+    this.readerCacheLoader,
     this.appVersion = const AppVersion.unavailable(),
     this.wenkuGateway,
     this.wenkuStore,
@@ -139,6 +160,12 @@ class NoveliaReaderApp extends StatefulWidget {
   });
 
   final SqliteOfflineRepository repository;
+
+  /// Production supplies an initial worker snapshot and an asynchronous loader.
+  /// Embedded/in-memory fixtures can use the synchronous repository fallback.
+  final LocalLibrarySnapshot? initialLibrarySnapshot;
+  final LibrarySnapshotLoader? librarySnapshotLoader;
+  final NoveliaReaderCacheLoader? readerCacheLoader;
   final AppVersion appVersion;
   final NoveliaContentCoordinator contentCoordinator;
   final NoveliaWenkuGateway? wenkuGateway;
@@ -160,6 +187,11 @@ class NoveliaReaderApp extends StatefulWidget {
 class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     with WidgetsBindingObserver {
   late LocalLibrarySnapshot _library;
+  bool _readerOpen = false;
+  bool _libraryDirty = false;
+  int _libraryGeneration = 0;
+  Future<void>? _libraryRefresh;
+  Future<void>? _downloadResume;
   late ThemeMode _themeMode;
   late ReaderSettings _readerSettings;
   late int _cacheLimitBytes;
@@ -181,6 +213,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   var _remoteFavorites = const RemoteFavoritesViewModel.unavailable();
   var _favoriteFolderGeneration = 0;
   late final RemoteHistorySync _historySync;
+  late final ReaderProgressWriter _progressWriter;
   RemoteListSnapshots get _remoteLists => RemoteListSnapshots(_repository);
 
   SqliteOfflineRepository get _repository => widget.repository;
@@ -189,6 +222,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _progressWriter = ReaderProgressWriter(
+      savePosition: _repository.saveReaderPosition,
+      saveExitPosition: (progress) =>
+          _repository.saveReaderPosition(progress, restoreRoute: false),
+      onError: (error, _) => debugPrint('Reading progress save failed: $error'),
+    );
     _historySync = RemoteHistorySync(
       repository: _repository,
       sessionController: widget.accountSessionController,
@@ -210,10 +249,13 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     _initialDestination = _destinationForRoute(route?.routeName);
     _currentDestination = _initialDestination;
     final restoreReader = route?.routeName == '/reader';
+    _readerOpen = restoreReader;
     _initialReaderNovelId = restoreReader ? route?.novelId : null;
     _initialReaderPosition = restoreReader ? route?.position : null;
 
-    _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
+    if (widget.initialLibrarySnapshot == null) {
+      _repository.evictCacheTo(maxBytes: _cacheLimitBytes);
+    }
     _feeds = NoveliaCatalogController(
       contentCoordinator: widget.contentCoordinator,
       baseQuery: widget.catalogQuery,
@@ -226,7 +268,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         }
       },
     );
-    _library = _loadLibrarySnapshot();
+    _library =
+        widget.initialLibrarySnapshot ??
+        LocalLibrarySnapshot.load(_repository, knownNovels: _catalogNovels);
     _remoteFavorites = _remoteLists.folders;
     unawaited(_feeds.refreshCatalog());
     unawaited(_feeds.refreshRecentlyUpdated());
@@ -237,6 +281,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
 
   @override
   void dispose() {
+    _progressWriter.dispose();
     WidgetsBinding.instance.removeObserver(this);
     widget.accountSessionController?.removeListener(_accountSessionChanged);
     _feeds.dispose();
@@ -606,6 +651,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     final data =
         await NoveliaReaderWindowFactory(
           contentCoordinator: widget.contentCoordinator,
+          cacheLoader: widget.readerCacheLoader,
         ).create(
           novel: hydrated,
           selectedChapter: selectedChapter,
@@ -708,11 +754,31 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     );
   }
 
-  Future<void> _resumeDownloadIntents() async {
+  Future<void> _resumeDownloadIntents() {
+    final active = _downloadResume;
+    if (active != null) return active;
+    late final Future<void> resume;
+    resume = _runDownloadResume().whenComplete(() {
+      if (identical(_downloadResume, resume)) _downloadResume = null;
+      // A sweep may change many books. Publish one shelf after the sweep,
+      // or keep it dirty until the reader has left the foreground.
+      if (mounted && _libraryDirty) _refreshLibrary();
+    });
+    _downloadResume = resume;
+    return resume;
+  }
+
+  Future<void> _runDownloadResume() async {
     final coordinator = widget.downloadCoordinator;
     if (coordinator == null) return;
     for (final intent in _repository.listIntents()) {
-      if (!intent.enabled) continue;
+      if (!mounted) return;
+      // Explicit actions already in flight satisfy an automatic resume. They
+      // must not be queued again just because the app became active.
+      if (_repository.intentById(intent.id)?.enabled != true ||
+          _activeDownloadSyncs.contains(intent.id)) {
+        continue;
+      }
       await _synchronizeIntent(intent.id, retryFailures: true);
     }
   }
@@ -783,6 +849,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
   }
 
   void _saveTopLevelRoute(int destination) {
+    _progressWriter.flush();
     _currentDestination = destination;
     if (destination == 2) unawaited(_refreshFavoriteFolders());
     _repository.saveLastRoute(
@@ -791,22 +858,26 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
         updatedAt: DateTime.now().toUtc(),
       ),
     );
-    _refreshLibrary();
+    _refreshLibrary(force: true);
   }
 
   void _saveReaderPosition(
     ReaderNovel novel,
     ReadingPosition position, {
     bool syncRemoteHistory = true,
+    bool immediately = false,
   }) {
     final now = DateTime.now().toUtc();
-    _repository.saveReaderPosition(
-      LocalReadingProgress(
-        novelId: novel.id,
-        position: position,
-        updatedAt: now,
-      ),
+    final progress = LocalReadingProgress(
+      novelId: novel.id,
+      position: position,
+      updatedAt: now,
     );
+    if (immediately) {
+      _progressWriter.saveNow(progress);
+    } else {
+      _progressWriter.schedule(progress);
+    }
     if (syncRemoteHistory) _historySync.record(novel, position, now);
   }
 
@@ -816,7 +887,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
     DateTime? savedAt,
   ]) {
     final now = savedAt ?? DateTime.now().toUtc();
-    _repository.saveReadingProgress(
+    _progressWriter.finish(
       LocalReadingProgress(
         novelId: novel.id,
         position: position,
@@ -922,18 +993,79 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
 
     _refreshLibrary();
     if (action == DownloadManagementAction.remove) return null;
+    await _flushLibrary(force: true);
+    if (!mounted) return null;
     final updated = _library.downloads;
     return updated
         .where((candidate) => candidate.groupKey == download.groupKey)
         .firstOrNull;
   }
 
-  LocalLibrarySnapshot _loadLibrarySnapshot() =>
-      LocalLibrarySnapshot.load(_repository, knownNovels: _catalogNovels);
+  Future<LocalLibrarySnapshot> _loadLibrarySnapshot() {
+    final loader = widget.librarySnapshotLoader;
+    return loader != null
+        ? loader(_catalogNovels)
+        : Future.sync(
+            () => LocalLibrarySnapshot.load(
+              _repository,
+              knownNovels: _catalogNovels,
+            ),
+          );
+  }
 
-  void _refreshLibrary() {
+  bool get _canRefreshLibrary =>
+      !_readerOpen && (_downloadResume == null || _currentDestination == 2);
+
+  void _refreshLibrary({bool force = false}) {
     if (!mounted) return;
-    setState(() => _library = _loadLibrarySnapshot());
+    _libraryDirty = true;
+    _libraryGeneration++;
+    if (!force && !_canRefreshLibrary) return;
+    unawaited(
+      _flushLibrary(force: force).catchError((Object error) {
+        // Retain the last usable shelf and retry on the next invalidation.
+        debugPrint('Library refresh failed: $error');
+      }),
+    );
+  }
+
+  Future<void> _flushLibrary({bool force = false}) {
+    if (!mounted ||
+        _readerOpen ||
+        !_libraryDirty ||
+        (!force && !_canRefreshLibrary)) {
+      return Future.value();
+    }
+    final active = _libraryRefresh;
+    if (active != null) {
+      return force ? active.then((_) => _flushLibrary(force: true)) : active;
+    }
+    late final Future<void> refresh;
+    refresh = _readDirtyLibrary(force: force).whenComplete(() {
+      if (identical(_libraryRefresh, refresh)) _libraryRefresh = null;
+    });
+    _libraryRefresh = refresh;
+    return refresh;
+  }
+
+  Future<void> _readDirtyLibrary({required bool force}) async {
+    while (mounted &&
+        !_readerOpen &&
+        _libraryDirty &&
+        (force || _canRefreshLibrary)) {
+      final generation = _libraryGeneration;
+      final snapshot = await _loadLibrarySnapshot();
+      if (!mounted) return;
+      if (_readerOpen) return;
+      // A write after this read began invalidates its result. Never replace a
+      // newer progress/deletion with an older background projection.
+      if (generation != _libraryGeneration) continue;
+      if (!force && !_canRefreshLibrary) return;
+      setState(() {
+        _library = snapshot;
+        _libraryDirty = false;
+      });
+    }
   }
 
   @override
@@ -1099,6 +1231,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
           onThemeModeChanged: _setThemeMode,
           onDestinationChanged: _saveTopLevelRoute,
           onRecentSearchesChanged: _repository.saveRecentSearches,
+          onReaderOpening: () => _readerOpen = true,
           onReaderOpened: (_, data) {
             _initialReaderNovelId = null;
             final readerNovel = data.novel;
@@ -1108,10 +1241,12 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
                 readerNovel,
                 position,
                 syncRemoteHistory: false,
+                immediately: true,
               );
             }
           },
           onReaderClosed: () {
+            _readerOpen = false;
             _initialReaderNovelId = null;
             _saveTopLevelRoute(_currentDestination);
           },
@@ -1119,10 +1254,9 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               ? null
               : _downloadNovel,
           onDownloadManagementRequested: _manageDownload,
-          downloadManagementSnapshotLoader: () {
+          downloadManagementSnapshotLoader: () async {
             // Download Management explicitly requests current task progress.
-            _library = _loadLibrarySnapshot();
-            return _library.downloads;
+            return (await _loadLibrarySnapshot()).downloads;
           },
           readerBuilder: (context, data) {
             final novel = data.novel;
@@ -1153,6 +1287,7 @@ class _NoveliaReaderAppState extends State<NoveliaReaderApp>
               onSettingsChanged: _setReaderSettings,
               onPositionChanged: (position) =>
                   _saveReaderPosition(novel, position),
+              onFlushProgress: _progressWriter.flush,
               onExitPosition: (position) => _saveProgressOnly(novel, position),
               onBookmarkChanged: (position, bookmarked) =>
                   _saveBookmark(novel, position, bookmarked),
