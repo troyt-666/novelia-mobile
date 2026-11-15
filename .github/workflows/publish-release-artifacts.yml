@@ -157,7 +157,7 @@ jobs:
   ios:
     name: Build unsigned iOS IPA
     needs: checks
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Check out release tag
         uses: actions/checkout@v7
@@ -225,7 +225,7 @@ jobs:
   macos:
     name: Build macOS DMG
     needs: checks
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Check out release tag
         uses: actions/checkout@v7
