@@ -319,3 +319,57 @@ Sparkle 签名和文件大小对应本版 DMG。
 
 `JFZ-Reader-v1.0.0+24-macos.dmg` 为 28,296,260 字节，SHA-256：
 `d1fbcc943914aee2177c2c11a38c665595e6ed9f7c1a7094df94c125b67c9003`。
+
+## 2026-11-15 · 第 25 版阅读与大书库性能修复
+
+`1.0.0（25）` 的应用源码标签为 `v1.0.0+25`，发布提交为 `9b54596`，
+修复提交为 `5c38829`。本版合并重复的前台恢复同步，在阅读和目录打开期间延后
+书架刷新，将书架及章节缓存读取、解码和校验移到后台，并暂停被覆盖的下载管理页
+轮询。密集翻页的进度落盘使用 500ms 静默窗口、最长 2 秒间隔；退出、切后台和
+明确的章节／书签跳转立即保存。数据库迁移至版本 11，增加章节复合索引；同时
+减少目录、书签和下载恢复的重复计算，并防止过期的异步结果覆盖新状态。
+
+发布包从该提交的干净源码快照构建，所有受 Git 管理的文件与同提交的独立检出
+逐字节一致；未包含工作区中原有的旧书单迁移工具、测试和个人迁移材料。
+独立检出的 **451 项 Flutter 回归**、静态检查和 **10 项 AppTest 工具测试**通过。
+原工作区另有两项既存迁移测试，总数为 453。本轮没有操作用户手机或采集鸿蒙
+真机帧率；此前 Mac 调试测试的耗时不代表鸿蒙发布版的实际表现。
+
+2026-11-15 20:47 UTC 左右，AppTest 接受第 25 版提交。测试版本 ID 为
+`2084599670381749568`，软件包 ID 为 `2084599136144882496`。沿用原有“内部测试”
+群组（1 人），软件包加密开启，未创建公开邀请链接或额外发送通知。测试期限为
+2026-11-15 08:00:00 UTC 至 2027-02-13 07:59:59 UTC。
+随后审核意见回读显示“应用上架审核通过”；`releaseState` 仍返回 `7`，因此只确认
+提交和审核结果，不据此宣称已经完成手机更新或确认 AppTest 端可安装。
+
+签名 APP `JFZ-Reader-1.0.0-25-AppTest.app` 为 13,575,661 字节，SHA-256：
+`d7451122fb1078b343c2998148bc23fa5640da8695444a1106fb29f4e934051a`。
+包名、构建号、release 模式、发布签名和 AppTest Profile 校验通过。
+
+从同次未签名 APP 提取的 `JFZ-Reader-v1.0.0+25-harmony-unsigned.hap`
+为 28,621,968 字节，SHA-256：
+`764accc9667e2d83501c5fdc6f009cb8c4d3f78b43589e0c9313ac3a6ae1a75b`。
+签名工具确认不含 HAP 签名块，GitHub 上传后的附件摘要与本地一致；包内 Dart AOT
+也确认包含新章节索引和进度合并实现。
+
+[第 25 版 GitHub Release](https://github.com/troyt-666/novelia-mobile/releases/tag/v1.0.0%2B25)
+已创建。初次发布任务因 GitHub 停用 `macos-14` 而取消 Apple 构建；按照
+[官方迁移公告](https://github.com/actions/runner-images/issues/13518)，在主分支提交
+`ef76cb3` 中将两个 Apple 任务切换到 `macos-15`。随后通过 `workflow_dispatch`
+启动[修正后的发布流程](https://github.com/troyt-666/novelia-mobile/actions/runs/43760478171)，
+其应用检出仍指向同一个 `v1.0.0+25` 标签。
+
+修正后的发布流程全部成功：云端检查、Android 签名 APK、iOS 未签名 IPA、
+macOS DMG、Release 附件上传及 GitHub Pages 更新源部署均完成，共四个附件。
+2026-11-15 21:03 UTC 回读 `latest.json`、AltStore 源和 Sparkle appcast，全部为
+**1.0.0（25）**；下载地址、大小和 SHA-256 与 GitHub 附件一致。
+
+另下载 Android、iOS、macOS 产物核对文件哈希；Android APK 发布签名校验通过，
+证书不是 Android Debug；iOS 主应用无签名且包名／版本号正确；macOS DMG 的
+Ed25519 更新签名通过仓库内固定公钥验证。
+
+| 安装包 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `JFZ-Reader-v1.0.0+25-android.apk` | 66,131,268 | `c608a49893e5f821a59cba680878ec33ade01f2022c1bab2e357c36fb56dbe0b` |
+| `JFZ-Reader-v1.0.0+25-ios-unsigned.ipa` | 10,475,028 | `68ba271c468b71dec0040153268591087d4f91ffe2e259641ffab403439ec2bc` |
+| `JFZ-Reader-v1.0.0+25-macos.dmg` | 28,302,845 | `2b07c3dd5eb3e53bf9661b41fcc8e215ea50cfd07c2f52bdfc7a2220a27e681d` |
